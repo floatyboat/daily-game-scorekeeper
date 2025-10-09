@@ -15,10 +15,10 @@ SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
 
 # Define games and their display info
 games = [
-    ('connections', '🔗 Connections', 'mistakes'),
-    ('bandle', '🎵 Bandle', 'guesses'),
-    ('pips', '🎯 Pips', 'time'),
-    ('sports_connections', '⚽ Sports Connections', 'mistakes'),
+    ('connections', '🔗 Connections', 'mistakes', '/4'),
+    ('bandle', '🎵 Bandle', 'guesses', '/6'),
+    ('pips', '🎯 Pips', 'time', ''),
+    ('sports', '⚽ Sports Connections', 'mistakes', '/4'),
 ]
 medals = ['🥇', '🥈', '🥉']
 
@@ -86,7 +86,7 @@ else:
     yesterday = (datetime.utcnow() - timedelta(days=1)).strftime('%B %d, %Y')
     message = f"📊 **Daily Game Scoreboard** - {yesterday}\n\n"
 
-    for game_key, game_title, metric in games:
+    for game_key, game_title, metric, total in games:
         # Get players who played this game
         if game_key not in results or not results[game_key]:
             continue
@@ -128,7 +128,7 @@ else:
             
             # Join tied players
             players_str = ", ".join(tied_players)
-            message += f"{medal} {players_str}: {score_str}\n"
+            message += f"{medal} {players_str}: {score_str}{total} {metric}\n"
             
             prev_score = current_score
             i = j
