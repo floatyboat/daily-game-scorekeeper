@@ -10,8 +10,17 @@ DISCORD_API_BASE = 'https://discord.com/api/v10'
 CHANNEL_ID = os.getenv('CHANNEL_ID')
 CONNECTIONS_START_DATE = datetime(2023, 6, 12)
 BANDLE_START_DATE = datetime(2022, 8, 18)
-PIPS_START_DATE = datetime(2025, 8, 15)
+PIPS_START_DATE = datetime(2025, 8, 18)
 SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
+
+# Define games and their display info
+games = [
+    ('connections', '🔗 Connections', 'mistakes'),
+    ('bandle', '🎵 Bandle', 'guesses'),
+    ('pips', '🎯 Pips', 'time'),
+    ('sports_connections', '⚽ Sports Connections', 'mistakes'),
+]
+medals = ['🥇', '🥈', '🥉']
 
 def get_connections_results(content):
     squares = re.findall(r'[🟨🟩🟦🟪🟡🟢🔵🟣]', content)
@@ -51,61 +60,80 @@ results = defaultdict(lambda: defaultdict(dict))
 connections_search = rf'Connections.*?Puzzle #{connections_puzzle_number}'
 bandle_search = rf'Bandle #{bandle_puzzle_number} (\d+|X)/6'
 sports_search = rf'Connections: Sports Edition\n Puzzle #{sports_puzzle_number}'
+pips_search = rf'Pips #{pips_puzzle_number} Hard'
 
 for msg in messages:
     content = msg['content']
     author = msg['author']['id']
     if re.search(connections_search, content, re.IGNORECASE | re.DOTALL):
-        results[author]['connections'] = get_connections_results(content)
+        results['connections'][author] = get_connections_results(content)
     elif re.search(bandle_search, content, re.IGNORECASE):
         bandle_match = re.search(bandle_search, content, re.IGNORECASE)
         score = bandle_match.group(1)
-        results[author]['bandle'] = 7 if score == 'X' else int(score)
+        results['bandle'][author] = 7 if score == 'X' else int(score)
     elif re.search(sports_search, content, re.IGNORECASE):    
-        results[author]['sports'] = get_connections_results(content)
+        results['sports'][author] = get_connections_results(content)
+    elif re.search(pips_search, content, re.IGNORECASE):
+        pips_match = re.search(r'(\d+):(\d+)', content, re.IGNORECASE)
+        minutes = int(pips_match.group(1))
+        seconds = int(pips_match.group(2))
+        total_seconds = minutes * 60 + seconds
+        results['pips'][author] = total_seconds
 
-# Calculate total scores (lower is better for all these games)
-standings = []
-for user, games in results.items():
-    total = sum(games.values())
-    standings.append({
-        'user': user,
-        'total': total,
-        'games': games
-    })
+if not results:
+    message = "📊 **Daily Game Scoreboard**\n\nNo results found for yesterday!"
+else:
+    yesterday = (datetime.utcnow() - timedelta(days=1)).strftime('%B %d, %Y')
+    message = f"📊 **Daily Game Scoreboard** - {yesterday}\n\n"
 
-# Sort by total score (ascending - lower is better)
-standings.sort(key=lambda x: x['total'])
-
-# Build scoreboard message
-yesterday = (datetime.utcnow() - timedelta(days=1)).strftime('%B %d, %Y')
-message = f"📊 **Daily Game Scoreboard** - {yesterday}\n\n"
-
-medals = ['🥇', '🥈', '🥉']
-for i, entry in enumerate(standings):
-    medal = medals[i] if i < 3 else f"#{i+1}"
-    user = entry['user']
-    total = entry['total']
-    games = entry['games']
-    
-    game_details = []
-    if 'sports' in games:
-        game_details.append(f"Sports: {games['sports']}")
-    if 'connections' in games:
-        game_details.append(f"Connections: {games['connections']}")
-    if 'bandle' in games:
-        game_details.append(f"Bandle: {games['bandle']}")
-    if 'pips' in games:
-        game_details.append(f"Pips: {games['pips']}")
-    
-    details = " | ".join(game_details)
-    message += f"{medal} **<@{user}>** - {total} points\n   {details}\n\n"
-
-"""Post message to Discord channel"""
-headers = {
-    'Authorization': f'Bot {DISCORD_BOT_TOKEN}',
-    'Content-Type': 'application/json'
-}
+    for game_key, game_title, metric in games:
+        # Get players who played this game
+        if game_key not in results or not results[game_key]:
+            continue
+        
+        # Sort players by score (ascending - lower is better)
+        players = sorted(results[game_key].items(), key=lambda x: x[1])
+        
+        message += f"**{game_title}**\n"
+        
+        # Group players by score for ties
+        rank = 0
+        prev_score = None
+        i = 0
+        
+        while i < len(players):
+            current_score = players[i][1]
+            
+            # If score changed, update rank
+            if current_score != prev_score:
+                rank = i + 1
+            
+            # Find all players with this score
+            tied_players = [f'<@{players[i][0]}>']
+            j = i + 1
+            while j < len(players) and players[j][1] == current_score:
+                tied_players.append(f'<@{players[j][0]}>')
+                j += 1
+            
+            # Format medal/rank
+            medal = medals[rank - 1] if rank <= 3 else f"  {rank}."
+            
+            # Format score
+            if metric == 'time':
+                minutes = current_score // 60
+                seconds = current_score % 60
+                score_str = f"{minutes}:{seconds:02d}"
+            else:
+                score_str = str(current_score)
+            
+            # Join tied players
+            players_str = ", ".join(tied_players)
+            message += f"{medal} {players_str}: {score_str}\n"
+            
+            prev_score = current_score
+            i = j
+        
+        message += "\n"
 
 url = f'{DISCORD_API_BASE}/channels/{CHANNEL_ID}/messages'
 payload = {'content': message, 'allowed_mentions': {'parse': ['users']}}
