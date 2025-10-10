@@ -13,6 +13,10 @@ CONNECTIONS_START_DATE = datetime(2023, 6, 12)
 BANDLE_START_DATE = datetime(2022, 8, 18)
 PIPS_START_DATE = datetime(2025, 8, 18)
 SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
+CONNECTIONS_LINK = 'https://www.nytimes.com/games/connections'
+BANDLE_LINK = 'https://bandle.app/daily'
+PIPS_LINK = 'https://www.nytimes.com/games/pips'
+SPORTS_CONNECTIONS_LINK = 'https://www.nytimes.com/athletic/connections-sports-edition'
 yesterday = datetime.now() - timedelta(days=1)
 connections_puzzle_number = (yesterday - CONNECTIONS_START_DATE).days + 1
 bandle_puzzle_number = (yesterday - BANDLE_START_DATE).days + 1
@@ -70,10 +74,10 @@ def parse_game_results(messages):
 def format_message(results):
     # Define games and their display info
     games = [
-        ('connections', '🔗 Connections', 'connections', 4, connections_puzzle_number),
-        ('bandle', '🎵 Bandle', 'guesses', 6, bandle_puzzle_number),
-        ('pips', '🧩 Pips', 'time', 0, pips_puzzle_number),
-        ('sports', '⚽ Sports Connections', 'connections', 4, sports_puzzle_number),
+        ('connections', '🔗', 'Connections', 'connections', 4, connections_puzzle_number, CONNECTIONS_LINK),
+        ('bandle', '🎵', 'Bandle', 'guesses', 6, bandle_puzzle_number, BANDLE_LINK),
+        ('pips', '🧩', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
+        ('sports', '⚽', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK),
     ]
     medals = ['🥇', '🥈', '🥉']
     if not results:
@@ -81,7 +85,7 @@ def format_message(results):
     else:
         message = f"📊 **Daily Game Scoreboard** - {yesterday.strftime('%B %d, %Y')}\n\n"
 
-        for game_key, game_title, metric, total, puzzle in games:
+        for game_key, game_emoji, game_title, metric, total, puzzle, link in games:
             # Get players who played this game
             if game_key not in results or not results[game_key]:
                 continue
@@ -94,7 +98,7 @@ def format_message(results):
             else:
                 players = sorted(results[game_key].items(), key=lambda x: x[1])
             
-            message += f"**{game_title} #{puzzle}**\n"
+            message += f"**{game_emoji} [{game_title}]({link}) #{puzzle}**\n"
             
             # Group players by score for ties
             rank = 0
@@ -153,7 +157,8 @@ def send_message(channel_id, message):
     }
 
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages'
-    payload = {'content': message, 'allowed_mentions': {'parse': ['users']}}
+    # send messages, allow user mentions, disallow embeds
+    payload = {'content': message, 'allowed_mentions': {'parse': ['users']}, 'flags': 4}
 
     response = requests.post(url, headers=headers, json=payload)
 
