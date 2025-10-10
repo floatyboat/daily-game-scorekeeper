@@ -40,8 +40,23 @@ def get_connections_results(content):
         rows = [squares[i:i+4] for i in range(0, len(squares), 4)]
         solved_groups = sum(1 for row in rows if len(set(row)) == 1)
         mistakes = len(rows) - solved_groups
-        return (mistakes, solved_groups)
-    return 69
+         # Check for vertical connections (4 rows, all failed, but vertical match)
+        is_vertical = False
+        if len(rows) == 4 and solved_groups == 0:
+            # Check each column for all same emoji
+            all_columns_match = True
+            for col in range(4):
+                column = [rows[row][col] for row in range(4)]
+                if len(set(column)) != 1:
+                    all_columns_match = False
+                    break
+            is_vertical = all_columns_match
+        
+        if is_vertical:
+            return (-1, 0) 
+        else:
+            return (mistakes, solved_groups)
+    return (69, 0)
 
 def parse_game_results(messages):
     results = defaultdict(lambda: defaultdict(dict))
@@ -129,7 +144,9 @@ def format_message(results):
                     score_str = f"{minutes}:{seconds:02d}"
                 elif metric == 'connections':
                     mistakes, solved = current_score
-                    if mistakes == total:
+                    if mistakes == -1:
+                        score_str = "VERTICAL! 🎯"
+                    elif mistakes == total:
                         score_str = f"{mistakes}/{total} mistakes ({solved} solved)"
                         if solved == 0:
                             medal = '💩'
