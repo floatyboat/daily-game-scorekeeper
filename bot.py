@@ -74,17 +74,16 @@ def parse_game_results(messages):
 def format_message(results):
     # Define games and their display info
     games = [
-        ('connections', '🔗 Connections', 'mistakes', '/4'),
-        ('bandle', '🎵 Bandle', 'guesses', '/6'),
-        ('pips', '🎯 Pips', 'time', ''),
-        ('sports', '⚽ Sports Connections', 'mistakes', '/4'),
+        ('connections', '🔗 Connections', 'mistakes', '4'),
+        ('bandle', '🎵 Bandle', 'guesses', '6'),
+        ('pips', '🧩 Pips', 'time', ''),
+        ('sports', '⚽ Sports Connections', 'mistakes', '4'),
     ]
     medals = ['🥇', '🥈', '🥉']
     if not results:
         message = "📊 **Daily Game Scoreboard**\n\nNo results found for yesterday!"
     else:
-        yesterday = (datetime.utcnow() - timedelta(days=1)).strftime('%B %d, %Y')
-        message = f"📊 **Daily Game Scoreboard** - {yesterday}\n\n"
+        message = f"📊 **Daily Game Scoreboard** - {yesterday.strftime('%B %d, %Y')}\n\n"
 
         for game_key, game_title, metric, total in games:
             # Get players who played this game
@@ -116,7 +115,7 @@ def format_message(results):
                     j += 1
                 
                 # Format medal/rank
-                medal = medals[rank - 1] if rank <= 3 else f"{rank}."
+                medal = medals[rank - 1] if rank <= len(medals) else f"{rank}. "
                 
                 # Format score
                 if metric == 'time':
@@ -124,11 +123,13 @@ def format_message(results):
                     seconds = current_score % 60
                     score_str = f"{minutes}:{seconds:02d}"
                 else:
-                    score_str = str(current_score)
+                    score_str = f"{str(current_score)}/{total} {metric}"
+                    if current_score >= int(total):
+                        medal = '💩'
                 
                 # Join tied players
                 players_str = ", ".join(tied_players)
-                message += f"{medal} {players_str}: {score_str}{total} {metric}\n"
+                message += f"{medal} {players_str}: {score_str}\n"
                 
                 prev_score = current_score
                 i = j
