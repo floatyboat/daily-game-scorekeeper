@@ -116,7 +116,7 @@ def format_message(results):
                     j += 1
                 
                 # Format medal/rank
-                medal = medals[rank - 1] if rank <= 3 else f"  {rank}."
+                medal = medals[rank - 1] if rank <= 3 else f"{rank}."
                 
                 # Format score
                 if metric == 'time':
