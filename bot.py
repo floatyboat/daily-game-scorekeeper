@@ -34,13 +34,9 @@ def get_connections_results(content):
     squares = re.findall(r'[🟨🟩🟦🟪🟡🟢🔵🟣]', content)
     if len(squares) % 4 == 0:
         rows = [squares[i:i+4] for i in range(0, len(squares), 4)]
-        
-        # Count rows where all 4 emojis are the same (solved groups)
         solved_groups = sum(1 for row in rows if len(set(row)) == 1)
-        
-        # Mistakes = total rows - solved groups
         mistakes = len(rows) - solved_groups
-        return mistakes
+        return (mistakes, solved_groups)
     return 69
 
 def parse_game_results(messages):
@@ -74,10 +70,10 @@ def parse_game_results(messages):
 def format_message(results):
     # Define games and their display info
     games = [
-        ('connections', '🔗 Connections', 'mistakes', '4'),
-        ('bandle', '🎵 Bandle', 'guesses', '6'),
-        ('pips', '🧩 Pips', 'time', ''),
-        ('sports', '⚽ Sports Connections', 'mistakes', '4'),
+        ('connections', '🔗 Connections', 'connections', 4, connections_puzzle_number),
+        ('bandle', '🎵 Bandle', 'guesses', 6, bandle_puzzle_number),
+        ('pips', '🧩 Pips', 'time', 0, pips_puzzle_number),
+        ('sports', '⚽ Sports Connections', 'connections', 4, sports_puzzle_number),
     ]
     medals = ['🥇', '🥈', '🥉']
     if not results:
@@ -85,15 +81,20 @@ def format_message(results):
     else:
         message = f"📊 **Daily Game Scoreboard** - {yesterday.strftime('%B %d, %Y')}\n\n"
 
-        for game_key, game_title, metric, total in games:
+        for game_key, game_title, metric, total, puzzle in games:
             # Get players who played this game
             if game_key not in results or not results[game_key]:
                 continue
             
-            # Sort players by score (ascending - lower is better)
-            players = sorted(results[game_key].items(), key=lambda x: x[1])
+            # Sort players by score
+            # For connections: sort by (mistakes, -solved_groups) so fewer mistakes first, then more solved
+            # For others: sort by score ascending (lower is better)
+            if metric == 'connections':
+                players = sorted(results[game_key].items(), key=lambda x: (x[1][0], -x[1][1]))
+            else:
+                players = sorted(results[game_key].items(), key=lambda x: x[1])
             
-            message += f"**{game_title}**\n"
+            message += f"**{game_title} #{puzzle}**\n"
             
             # Group players by score for ties
             rank = 0
@@ -122,9 +123,17 @@ def format_message(results):
                     minutes = current_score // 60
                     seconds = current_score % 60
                     score_str = f"{minutes}:{seconds:02d}"
+                elif metric == 'connections':
+                    mistakes, solved = current_score
+                    if mistakes == total:
+                        score_str = f"{mistakes}/{total} mistakes ({solved} solved)"
+                        if solved == 0:
+                            medal = '💩'
+                    else:
+                        score_str = f"{mistakes}/{total} mistakes"
                 else:
                     score_str = f"{str(current_score)}/{total} {metric}"
-                    if current_score >= int(total):
+                    if current_score > total:
                         medal = '💩'
                 
                 # Join tied players
