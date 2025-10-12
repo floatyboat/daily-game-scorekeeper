@@ -158,7 +158,7 @@ def format_message(results):
                         medal = '💩'
                 
                 # Join tied players
-                players_str = ", ".join(tied_players)
+                players_str = " ".join(tied_players)
                 message += f"{medal} {players_str}: {score_str}\n"
                 
                 prev_score = current_score
