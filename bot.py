@@ -94,7 +94,7 @@ def format_message(results):
         ('pips', '🧩', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
         ('sports', '⚽', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK),
     ]
-    medals = ['🥇', '🥈', '🥉']
+    medals = ['🥇']
     if not results:
         message = "📊 **Daily Game Scoreboard**\n\nNo results found for yesterday!"
     else:
@@ -135,7 +135,7 @@ def format_message(results):
                     j += 1
                 
                 # Format medal/rank
-                medal = medals[rank - 1] if rank <= len(medals) else f"{rank}. "
+                medal = medals[rank - 1] if rank <= len(medals) else f"  "
                 
                 # Format score
                 if metric == 'time':
@@ -147,19 +147,19 @@ def format_message(results):
                     if mistakes == -1:
                         score_str = "VERTICAL! 🎯"
                     elif mistakes == total:
-                        score_str = f"{mistakes}/{total} mistakes ({solved} solved)"
+                        score_str = f"{mistakes}/{total}-{solved}"
                         if solved == 0:
                             medal = '💩'
                     else:
-                        score_str = f"{mistakes}/{total} mistakes"
+                        score_str = f"{mistakes}/{total}"
                 else:
-                    score_str = f"{str(current_score)}/{total} {metric}"
+                    score_str = f"{str(current_score)}/{total}"
                     if current_score > total:
                         medal = '💩'
                 
                 # Join tied players
-                players_str = ", ".join(tied_players)
-                message += f"{medal} {players_str}: {score_str}\n"
+                players_str = " ".join(tied_players)
+                message += f"{medal} {score_str}: {players_str} \n"
                 
                 prev_score = current_score
                 i = j
