@@ -92,9 +92,9 @@ def format_message(results):
         ('connections', '🔗', 'Connections', 'connections', 4, connections_puzzle_number, CONNECTIONS_LINK),
         ('bandle', '🎵', 'Bandle', 'guesses', 6, bandle_puzzle_number, BANDLE_LINK),
         ('pips', '🧩', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
-        ('sports', '⚽', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK),
+        ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK),
     ]
-    medals = ['🥇', '🥈', '🥉']
+    medals = ['👑', '🥈', '🥉']
     if not results:
         message = "📊 **Daily Game Scoreboard**\n\nNo results found for yesterday!"
     else:
@@ -145,7 +145,7 @@ def format_message(results):
                 elif metric == 'connections':
                     mistakes, solved = current_score
                     if mistakes == -1:
-                        score_str = "VERTICAL! 🎯"
+                        score_str = "VERT 🧗"
                     elif mistakes == total:
                         score_str = f"{mistakes}/{total} mistakes ({solved} solved)"
                         if solved == 0:
