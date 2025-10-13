@@ -181,10 +181,20 @@ def send_message(channel_id, message):
 
     return response
 
-messages = get_messages(INPUT_CHANNEL_ID)
+def lambda_handler(event, context):
+    # Get messages from the channel
+    messages = get_messages(INPUT_CHANNEL_ID)
 
-results = parse_game_results(messages)
+    results = parse_game_results(messages)
 
-output = format_message(results)
+    output = format_message(results)
 
-response = send_message(OUTPUT_CHANNEL_ID, output)
+    response = send_message(OUTPUT_CHANNEL_ID, output)
+
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Scoreboard posted!')
+    }
+
+if __name__ == '__main__':
+    print(lambda_handler('', ''))
