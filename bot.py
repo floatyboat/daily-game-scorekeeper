@@ -94,7 +94,7 @@ def format_message(results):
         ('pips', '🧩', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK),
     ]
-    medals = ['👑', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
+    medals = ['👑', '🥈', '🥉']
     if not results:
         message = "📊 **Daily Game Scoreboard**\n\nNo results found for yesterday!"
     else:
@@ -113,7 +113,7 @@ def format_message(results):
             else:
                 players = sorted(results[game_key].items(), key=lambda x: x[1])
             
-            message += f"**{game_emoji} [{game_title}]({link}) #{puzzle}**\n"
+            message += f"**[{game_title}]({link}) {game_emoji} #{puzzle}**\n"
             
             # Group players by score for ties
             rank = 0
@@ -135,7 +135,7 @@ def format_message(results):
                     j += 1
                 
                 # Format medal/rank
-                medal = medals[rank - 1] if rank <= len(medals) else f"{rank}. "
+                medal = medals[rank - 1] if rank <= len(medals) else f""
                 
                 # Format score
                 if metric == 'time':
