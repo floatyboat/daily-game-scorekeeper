@@ -94,7 +94,7 @@ def format_message(results):
         ('pips', '🧩', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK),
     ]
-    medals = ['👑', '🥈', '🥉']
+    medals = ['👑', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
     if not results:
         message = "📊 **Daily Game Scoreboard**\n\nNo results found for yesterday!"
     else:
