@@ -135,7 +135,7 @@ def format_message(results):
                     j += 1
                 
                 # Format medal/rank
-                medal = medals[rank - 1] if rank <= len(medals) else f""
+                medal = f"{medals[rank - 1]} " if rank <= len(medals) else f""
                 
                 # Format score
                 if metric == 'time':
@@ -159,7 +159,7 @@ def format_message(results):
                 
                 # Join tied players
                 players_str = " ".join(tied_players)
-                message += f"{medal} {players_str}: {score_str}\n"
+                message += f"{medal}{players_str}: {score_str}\n"
                 
                 prev_score = current_score
                 i = j
