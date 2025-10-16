@@ -62,7 +62,7 @@ def parse_game_results(messages):
     results = defaultdict(lambda: defaultdict(dict))
 
     connections_search = rf'Connections.*?Puzzle #{connections_puzzle_number}'
-    bandle_search = rf'Bandle #{bandle_puzzle_number} (\d+|X)/6'
+    bandle_search = rf'Bandle #{bandle_puzzle_number} (\d+|x)/6'
     sports_search = rf'Connections: Sports Edition\n Puzzle #{sports_puzzle_number}'
     pips_search = rf'Pips #{pips_puzzle_number} Hard'
 
@@ -74,7 +74,7 @@ def parse_game_results(messages):
         elif re.search(bandle_search, content, re.IGNORECASE):
             bandle_match = re.search(bandle_search, content, re.IGNORECASE)
             score = bandle_match.group(1)
-            results['bandle'][author] = 7 if score == 'X' else int(score)
+            results['bandle'][author] = 7 if score == 'x' else int(score)
         elif re.search(sports_search, content, re.IGNORECASE):    
             results['sports'][author] = get_connections_results(content)
         elif re.search(pips_search, content, re.IGNORECASE):
@@ -153,9 +153,10 @@ def format_message(results):
                     else:
                         score_str = f"{mistakes}/{total} mistakes"
                 else:
-                    score_str = f"{str(current_score)}/{total} {metric}"
                     if current_score > total:
                         medal = '💩'
+                        current_score = 'X'
+                    score_str = f"{str(current_score)}/{total} {metric}"
                 
                 # Join tied players
                 players_str = " ".join(tied_players)
