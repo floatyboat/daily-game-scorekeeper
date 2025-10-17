@@ -99,6 +99,7 @@ def format_message(results):
         message = "📊 **Daily Game Scoreboard**\n\nNo results found for yesterday!"
     else:
         message = f"📊 **Daily Game Scoreboard** - {yesterday.strftime('%B %d, %Y')}\n\n"
+        # sort game order by number of players
         games.sort(key=lambda x: len(results.get(x[0], {})), reverse=True)
         for game_key, game_emoji, game_title, metric, total, puzzle, link in games:
             # Get players who played this game
