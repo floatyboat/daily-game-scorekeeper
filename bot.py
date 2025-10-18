@@ -91,14 +91,15 @@ def format_message(results):
     games = [
         ('connections', '🔗', 'Connections', 'connections', 4, connections_puzzle_number, CONNECTIONS_LINK),
         ('bandle', '🎵', 'Bandle', 'guesses', 6, bandle_puzzle_number, BANDLE_LINK),
-        ('pips', '🧩', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
+        ('pips', '🎲', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK),
     ]
     medals = ['👑', '🥈', '🥉']
+    message = "🧮 **Daily Game Scoreboard**"
     if not results:
-        message = "📊 **Daily Game Scoreboard**\n\nNo results found for yesterday!"
+        message += "\n\nNo results found for yesterday!"
     else:
-        message = f"📊 **Daily Game Scoreboard** - {yesterday.strftime('%B %d, %Y')}\n\n"
+        message += f" - {yesterday.strftime('%B %d, %Y')}\n\n"
         # sort game order by number of players
         games.sort(key=lambda x: len(results.get(x[0], {})), reverse=True)
         for game_key, game_emoji, game_title, metric, total, puzzle, link in games:
