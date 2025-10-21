@@ -17,6 +17,7 @@ CONNECTIONS_LINK = 'https://www.nytimes.com/games/connections'
 BANDLE_LINK = 'https://bandle.app/daily'
 PIPS_LINK = 'https://www.nytimes.com/games/pips'
 SPORTS_CONNECTIONS_LINK = 'https://www.nytimes.com/athletic/connections-sports-edition'
+bandle_total = 6
 yesterday = datetime.now() - timedelta(days=1)
 connections_puzzle_number = (yesterday - CONNECTIONS_START_DATE).days + 1
 bandle_puzzle_number = (yesterday - BANDLE_START_DATE).days + 1
@@ -59,10 +60,11 @@ def get_connections_results(content):
     return (69, 0)
 
 def parse_game_results(messages):
+    global bandle_total
     results = defaultdict(lambda: defaultdict(dict))
 
     connections_search = rf'Connections.*?Puzzle #{connections_puzzle_number}'
-    bandle_search = rf'Bandle #{bandle_puzzle_number} (\d+|x)/6'
+    bandle_search = rf'Bandle #{bandle_puzzle_number} (\d+|x)/(\d+)'
     sports_search = rf'Connections: Sports Edition\n Puzzle #{sports_puzzle_number}'
     pips_search = rf'Pips #{pips_puzzle_number} Hard'
 
@@ -74,6 +76,7 @@ def parse_game_results(messages):
         elif re.search(bandle_search, content, re.IGNORECASE):
             bandle_match = re.search(bandle_search, content, re.IGNORECASE)
             score = bandle_match.group(1)
+            bandle_total = int(bandle_match.group(2))
             results['bandle'][author] = 7 if score == 'x' else int(score)
         elif re.search(sports_search, content, re.IGNORECASE):    
             results['sports'][author] = get_connections_results(content)
@@ -89,10 +92,10 @@ def parse_game_results(messages):
 def format_message(results):
     # Define games and their display info
     games = [
+        ('bandle', '🎵', 'Bandle', 'guesses', bandle_total, bandle_puzzle_number, BANDLE_LINK),
         ('connections', '🔗', 'Connections', 'connections', 4, connections_puzzle_number, CONNECTIONS_LINK),
-        ('bandle', '🎵', 'Bandle', 'guesses', 6, bandle_puzzle_number, BANDLE_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
-        ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK),
+        ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK)
     ]
     medals = ['👑', '🥈', '🥉']
     message = "🧮 **Daily Game Scoreboard**"
