@@ -205,10 +205,10 @@ def lambda_handler(event, context):
 
     if 'test' in event:
         send_message(TEST_CHANNEL_ID, output)
-        response = f'Scorboard posted to {TEST_CHANNEL_ID}. This was a test.'
+        response = f'TEST Scoreboard posted'
     else:
         send_message(OUTPUT_CHANNEL_ID, output)
-        response = f'Scorboard posted to {OUTPUT_CHANNEL_ID}.'
+        response = f'Scorboard posted'
 
     return {
         'statusCode': 200,
