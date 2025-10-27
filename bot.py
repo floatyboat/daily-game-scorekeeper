@@ -11,14 +11,10 @@ BANDLE_LINK = 'https://bandle.app/daily'
 PIPS_LINK = 'https://www.nytimes.com/games/pips'
 SPORTS_CONNECTIONS_LINK = 'https://www.nytimes.com/athletic/connections-sports-edition'
 
-TEST=bool(os.getenv('TEST'))
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
 OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
-if TEST: 
-    OUTPUT_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
-else:
-    OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
+TEST_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
 
 CONNECTIONS_START_DATE = datetime(2023, 6, 12)
 BANDLE_START_DATE = datetime(2022, 8, 18)
@@ -206,11 +202,12 @@ def lambda_handler(event, context):
 
     output = format_message(results)
 
-    send_message(OUTPUT_CHANNEL_ID, output)
-
-    response = f'Scorboard posted to {OUTPUT_CHANNEL_ID}.'
-    if TEST:
-        response += 'This was a test.'
+    if 'test' in event:
+        send_message(TEST_CHANNEL_ID, output)
+        response = f'Scorboard posted to {TEST_CHANNEL_ID}. This was a test.'
+    else:
+        send_message(OUTPUT_CHANNEL_ID, output)
+        response = f'Scorboard posted to {OUTPUT_CHANNEL_ID}.'
 
     return {
         'statusCode': 200,
