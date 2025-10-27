@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'api.py'  # Only trigger when your Python file changes
+      - 'bot.py'  # Only trigger when your Python file changes
       - '.github/workflows/deploy.yml'  # Or when this workflow changes
 
 jobs:
@@ -14,7 +14,7 @@ jobs:
     env:
       AWS_DEFAULT_REGION: us-east-1
       LAMBDA_FUNCTION_NAME: daily-game-score
-      FILE_NAME: api.py
+      FILE_NAME: bot.py
     
     steps:
     - name: Checkout code
