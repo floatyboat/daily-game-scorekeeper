@@ -5,18 +5,26 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import re
 
-DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 DISCORD_API_BASE = 'https://discord.com/api/v10'
-INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
-OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
-CONNECTIONS_START_DATE = datetime(2023, 6, 12)
-BANDLE_START_DATE = datetime(2022, 8, 18)
-PIPS_START_DATE = datetime(2025, 8, 18)
-SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
 CONNECTIONS_LINK = 'https://www.nytimes.com/games/connections'
 BANDLE_LINK = 'https://bandle.app/daily'
 PIPS_LINK = 'https://www.nytimes.com/games/pips'
 SPORTS_CONNECTIONS_LINK = 'https://www.nytimes.com/athletic/connections-sports-edition'
+
+TEST=bool(os.getenv('TEST'))
+DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
+OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
+if TEST: 
+    OUTPUT_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
+else:
+    OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
+
+CONNECTIONS_START_DATE = datetime(2023, 6, 12)
+BANDLE_START_DATE = datetime(2022, 8, 18)
+PIPS_START_DATE = datetime(2025, 8, 18)
+SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
+
 bandle_total = 6
 yesterday = datetime.now() - timedelta(days=1)
 connections_puzzle_number = (yesterday - CONNECTIONS_START_DATE).days + 1
@@ -198,11 +206,15 @@ def lambda_handler(event, context):
 
     output = format_message(results)
 
-    response = send_message(OUTPUT_CHANNEL_ID, output)
+    send_message(OUTPUT_CHANNEL_ID, output)
+
+    response = f'Scorboard posted to {OUTPUT_CHANNEL_ID}.'
+    if TEST:
+        response += 'This was a test.'
 
     return {
         'statusCode': 200,
-        'body': json.dumps('Scoreboard posted!')
+        'body': json.dumps(response)
     }
 
 if __name__ == '__main__':
