@@ -46,25 +46,25 @@ def get_connections_results(content):
         rows = [squares[i:i+4] for i in range(0, len(squares), 4)]
         solved_groups = sum(1 for row in rows if len(set(row)) == 1)
         mistakes = len(rows) - solved_groups
-        """
+
         # Check for vertical connections (4 rows, all failed, but vertical match)
         # commented out, broken
         is_vertical = False
         if len(rows) == 4 and solved_groups == 0:
             # Check each column for all same emoji
-            all_columns_match = True
+            vert = set()
             for col in range(4):
                 column = [rows[row][col] for row in range(4)]
-                if len(set(column)) != 1:
-                    all_columns_match = False
+                if len(set(column)) == 1:
+                    vert.add(column[0])
+                else:
                     break
-            is_vertical = all_columns_match
+            is_vertical = len(vert) == 4
         
-        #if is_vertical:
-         #   return (-1, 0) 
-        #else:
-        """
-        return (mistakes, solved_groups)
+        if is_vertical:
+            return (-1, 0) 
+        else:
+            return (mistakes, solved_groups)
     return (69, 0)
 
 def parse_game_results(messages):
