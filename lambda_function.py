@@ -1,7 +1,8 @@
 import json
 import os
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from dateutil import parser
 from collections import defaultdict
 import re
 
@@ -30,6 +31,7 @@ bandle_puzzle_number = (yesterday - BANDLE_START_DATE).days + 1
 sports_puzzle_number = (yesterday - SPORTS_CONNECTIONS_START_DATE).days + 1
 pips_puzzle_number = (yesterday - PIPS_START_DATE).days + 1
 maptap_number = yesterday.strftime('%B %d')
+globle_number = yesterday.strftime('%B %d')
 
 def get_messages(channel_id):
     headers = {
@@ -40,6 +42,27 @@ def get_messages(channel_id):
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages?limit=100'
     response = requests.get(url, headers=headers)
     return response.json()
+
+def was_yesterday(iso_timestamp):
+    try:
+        timestamp = parser.isoparse(iso_timestamp)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Invalid ISO8601 timestamp: {iso_timestamp}") from e
+    
+    msg_timezone = timestamp.tzinfo
+    # If no timezone specified, use UTC
+    if msg_timezone is None:
+        msg_timezone = timezone.utc
+
+    now = datetime.now(msg_timezone)
+    yesterday_start = (now - timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    yesterday_end = yesterday_start + timedelta(days=1)
+
+    timestamp_in_ref_tz = timestamp.astimezone(msg_timezone)
+
+    return yesterday_start <= timestamp_in_ref_tz < yesterday_end
 
 
 def get_connections_results(content):
@@ -78,8 +101,12 @@ def parse_game_results(messages):
     sports_search = rf'Connections: Sports Edition\n Puzzle #{sports_puzzle_number}'
     pips_search = rf'Pips #{pips_puzzle_number} Hard'
     maptap_search = rf'www.MapTap.gg {maptap_number}'
+    globle_search = r'I guessed today’s Globle in (\d+) tries'
 
     for msg in messages:
+        if not was_yesterday(msg['timestamp']):
+            continue
+
         content = msg['content']
         author = msg['author']['id']
         if re.search(connections_search, content, re.IGNORECASE | re.DOTALL):
@@ -100,7 +127,9 @@ def parse_game_results(messages):
         elif re.search(maptap_search, content, re.IGNORECASE):
             score = (re.search(r'Final Score: (\d+)', content, re.IGNORECASE)).group(1)
             results['maptap'][author] = int(score)
-
+        elif re.search(globle_search, content, re.IGNORECASE): 
+            score = re.search(globle_search, content, re.IGNORECASE).group(1)
+            results['globle'][author] = int(score)
 
     return results
 
@@ -109,6 +138,7 @@ def format_message(results):
     games = [
         ('bandle', '🎵', 'Bandle', 'guesses', bandle_total, bandle_puzzle_number, BANDLE_LINK),
         ('connections', '🔗', 'Connections', 'connections', 4, connections_puzzle_number, CONNECTIONS_LINK),
+        ('globle', '🌍', 'Globle', 'guesses', 0, globle_number, GLOBLE_LINK),
         ('maptap', '📍', 'MapTap', 'score', 0, maptap_number, MAPTAP_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK)
@@ -176,12 +206,15 @@ def format_message(results):
                     else:
                         score_str = f"{mistakes}/{total} mistakes"
                 elif metric == 'score':
-                    score_str = f"{current_score}"
+                    score_str = f"{str(current_score)}"
                 else: #guesses
-                    if current_score > total:
-                        medal = '💩'
-                        current_score = 'X'
-                    score_str = f"{str(current_score)}/{total} {metric}"
+                    if total == 0:
+                        score_str = f"{str(current_score)} {metric}"
+                    else:
+                        if current_score > total:
+                            medal = '💩'
+                            current_score = 'X'
+                        score_str = f"{str(current_score)}/{total} {metric}"
                 
                 # Join tied players
                 players_str = " ".join(tied_players)
