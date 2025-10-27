@@ -2,7 +2,7 @@ name: Deploy Lambda Function
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
     paths:
       - 'bot.py'  # Only trigger when your Python file changes
       - '.github/workflows/deploy.yml'  # Or when this workflow changes
@@ -30,7 +30,7 @@ jobs:
     - name: Package Lambda function
       run: |
         echo "📦 Creating deployment package..."
-        zip function.zip ${{ env.FILE_NAME }}.py
+        zip function.zip ${{ env.FILE_NAME }}
         echo "✅ Package created: $(ls -lh function.zip | awk '{print $5}')"
     
     - name: Deploy to Lambda
