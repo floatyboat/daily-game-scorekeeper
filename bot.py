@@ -21,7 +21,6 @@ BANDLE_START_DATE = datetime(2022, 8, 18)
 PIPS_START_DATE = datetime(2025, 8, 18)
 SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
 
-
 bandle_total = 6
 yesterday = datetime.now() - timedelta(days=1)
 connections_puzzle_number = (yesterday - CONNECTIONS_START_DATE).days + 1
