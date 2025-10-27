@@ -1,0 +1,75 @@
+name: Deploy Lambda Function
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'api.py'  # Only trigger when your Python file changes
+      - '.github/workflows/deploy.yml'  # Or when this workflow changes
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+      LAMBDA_FUNCTION_NAME: daily-game-score
+      FILE_NAME: api.py
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_DEFAULT_REGION }}
+    
+    - name: Package Lambda function
+      run: |
+        echo "📦 Creating deployment package..."
+        zip function.zip ${{ env.FILE_NAME }}.py
+        echo "✅ Package created: $(ls -lh function.zip | awk '{print $5}')"
+    
+    - name: Deploy to Lambda
+      run: |
+        echo "🚀 Deploying to Lambda function: $LAMBDA_FUNCTION_NAME"
+        aws lambda update-function-code \
+          --function-name $LAMBDA_FUNCTION_NAME \
+          --zip-file fileb://function.zip \
+          --output json | jq '.LastModified'
+    
+    - name: Wait for deployment
+      run: |
+        echo "⏳ Waiting for Lambda update to complete..."
+        aws lambda wait function-updated \
+          --function-name $LAMBDA_FUNCTION_NAME
+        echo "✅ Deployment complete!"
+    
+    - name: Run test event
+      run: |
+        echo "🧪 Testing Lambda function..."
+        
+        # Create test payload
+        echo '{"test": "Hello from GitHub Actions!"}' > test-event.json
+        
+        # Invoke Lambda
+        aws lambda invoke \
+          --function-name $LAMBDA_FUNCTION_NAME \
+          --payload file://test-event.json \
+          --cli-binary-format raw-in-base64-out \
+          response.json
+        
+        # Display results
+        echo "📋 Lambda response:"
+        cat response.json | jq '.'
+        
+        # Check for success
+        if cat response.json | jq -e '.statusCode == 200' > /dev/null 2>&1; then
+          echo "✅ Test passed!"
+        else
+          echo "❌ Test failed - check the response above"
+          exit 1
+        fi
