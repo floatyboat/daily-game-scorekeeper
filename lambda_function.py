@@ -10,12 +10,13 @@ CONNECTIONS_LINK = 'https://www.nytimes.com/games/connections'
 BANDLE_LINK = 'https://bandle.app/daily'
 PIPS_LINK = 'https://www.nytimes.com/games/pips'
 SPORTS_CONNECTIONS_LINK = 'https://www.nytimes.com/athletic/connections-sports-edition'
+MAPTAP_LINK = 'https://maptap.gg'
+GLOBLE_LINK = 'https://globle.org/'
 
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
 OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
 TEST_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
-
 
 CONNECTIONS_START_DATE = datetime(2023, 6, 12)
 BANDLE_START_DATE = datetime(2022, 8, 18)
@@ -28,6 +29,7 @@ connections_puzzle_number = (yesterday - CONNECTIONS_START_DATE).days + 1
 bandle_puzzle_number = (yesterday - BANDLE_START_DATE).days + 1
 sports_puzzle_number = (yesterday - SPORTS_CONNECTIONS_START_DATE).days + 1
 pips_puzzle_number = (yesterday - PIPS_START_DATE).days + 1
+maptap_number = yesterday.strftime('%B %d')
 
 def get_messages(channel_id):
     headers = {
@@ -75,6 +77,7 @@ def parse_game_results(messages):
     bandle_search = rf'Bandle #{bandle_puzzle_number} (\d+|x)/(\d+)'
     sports_search = rf'Connections: Sports Edition\n Puzzle #{sports_puzzle_number}'
     pips_search = rf'Pips #{pips_puzzle_number} Hard'
+    maptap_search = rf'www.MapTap.gg {maptap_number}'
 
     for msg in messages:
         content = msg['content']
@@ -94,6 +97,10 @@ def parse_game_results(messages):
             seconds = int(pips_match.group(2))
             total_seconds = minutes * 60 + seconds
             results['pips'][author] = total_seconds
+        elif re.search(maptap_search, content, re.IGNORECASE):
+            score = (re.search(r'Final Score: (\d+)', content, re.IGNORECASE)).group(1)
+            results['maptap'][author] = int(score)
+
 
     return results
 
@@ -102,6 +109,7 @@ def format_message(results):
     games = [
         ('bandle', '🎵', 'Bandle', 'guesses', bandle_total, bandle_puzzle_number, BANDLE_LINK),
         ('connections', '🔗', 'Connections', 'connections', 4, connections_puzzle_number, CONNECTIONS_LINK),
+        ('maptap', '📍', 'MapTap', 'score', 0, maptap_number, MAPTAP_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK)
     ]
@@ -123,6 +131,8 @@ def format_message(results):
             # For others: sort by score ascending (lower is better)
             if metric == 'connections':
                 players = sorted(results[game_key].items(), key=lambda x: (x[1][0], -x[1][1]))
+            elif metric == 'score':
+                players = sorted(results[game_key].items(), key=lambda x: (-x[1]))
             else:
                 players = sorted(results[game_key].items(), key=lambda x: x[1])
             
@@ -165,7 +175,9 @@ def format_message(results):
                             medal = '💩'
                     else:
                         score_str = f"{mistakes}/{total} mistakes"
-                else:
+                elif metric == 'score':
+                    score_str = f"{current_score}"
+                else: #guesses
                     if current_score > total:
                         medal = '💩'
                         current_score = 'X'
