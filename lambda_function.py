@@ -22,7 +22,7 @@ CONNECTIONS_START_DATE = datetime(2023, 6, 12)
 BANDLE_START_DATE = datetime(2022, 8, 18)
 PIPS_START_DATE = datetime(2025, 8, 18)
 SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
-MAPTAP_START_DATE = datetime(2024, 6, 21)
+MAPTAP_START_DATE = datetime(2024, 6, 22)
 
 bandle_total = 6
 yesterday = datetime.now() - timedelta(days=1)
@@ -32,7 +32,6 @@ sports_puzzle_number = (yesterday - SPORTS_CONNECTIONS_START_DATE).days + 1
 pips_puzzle_number = (yesterday - PIPS_START_DATE).days + 1
 maptap_number = (yesterday - MAPTAP_START_DATE).days + 1
 maptap_date = yesterday.strftime('%B %d')
-
 
 def get_messages(channel_id):
     headers = {
