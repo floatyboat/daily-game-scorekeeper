@@ -25,7 +25,7 @@ SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
 MAPTAP_START_DATE = datetime(2024, 6, 21)
 
 bandle_total = 6
-yesterday = datetime.now() #- timedelta(days=1)
+yesterday = datetime.now() - timedelta(days=1)
 connections_puzzle_number = (yesterday - CONNECTIONS_START_DATE).days + 1
 bandle_puzzle_number = (yesterday - BANDLE_START_DATE).days + 1
 sports_puzzle_number = (yesterday - SPORTS_CONNECTIONS_START_DATE).days + 1
