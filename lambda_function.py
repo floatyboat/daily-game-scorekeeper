@@ -22,14 +22,17 @@ CONNECTIONS_START_DATE = datetime(2023, 6, 12)
 BANDLE_START_DATE = datetime(2022, 8, 18)
 PIPS_START_DATE = datetime(2025, 8, 18)
 SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
+MAPTAP_START_DATE = datetime(2024, 6, 21)
 
 bandle_total = 6
-yesterday = datetime.now() - timedelta(days=1)
+yesterday = datetime.now() #- timedelta(days=1)
 connections_puzzle_number = (yesterday - CONNECTIONS_START_DATE).days + 1
 bandle_puzzle_number = (yesterday - BANDLE_START_DATE).days + 1
 sports_puzzle_number = (yesterday - SPORTS_CONNECTIONS_START_DATE).days + 1
 pips_puzzle_number = (yesterday - PIPS_START_DATE).days + 1
-maptap_number = yesterday.strftime('%B %d')
+maptap_number = (yesterday - MAPTAP_START_DATE).days + 1
+maptap_date = yesterday.strftime('%B %d')
+
 
 def get_messages(channel_id):
     headers = {
@@ -77,7 +80,7 @@ def parse_game_results(messages):
     bandle_search = rf'Bandle #{bandle_puzzle_number} (\d+|x)/(\d+)'
     sports_search = rf'Connections: Sports Edition\n Puzzle #{sports_puzzle_number}'
     pips_search = rf'Pips #{pips_puzzle_number} Hard'
-    maptap_search = rf'www.MapTap.gg {maptap_number}'
+    maptap_search = rf'www.MapTap.gg {maptap_date}'
 
     for msg in messages:
         content = msg['content']
@@ -136,7 +139,7 @@ def format_message(results):
             else:
                 players = sorted(results[game_key].items(), key=lambda x: x[1])
             
-            message += f"**[{game_title}]({link}) {game_emoji} #{puzzle}**\n"
+            message += f"**[{game_title}]({link}) {game_emoji} {f'#{puzzle}' if puzzle else ''}**\n"
             
             # Group players by score for ties
             rank = 0
