@@ -27,11 +27,11 @@ MAPTAP_START_DATE = datetime(2024, 6, 22)
 
 bandle_total = 6
 yesterday = datetime.now() - timedelta(days=1)
-connections_puzzle_number = (yesterday - CONNECTIONS_START_DATE).days + 1
-bandle_puzzle_number = (yesterday - BANDLE_START_DATE).days + 1
-sports_puzzle_number = (yesterday - SPORTS_CONNECTIONS_START_DATE).days + 1
-pips_puzzle_number = (yesterday - PIPS_START_DATE).days + 1
-maptap_number = (yesterday - MAPTAP_START_DATE).days + 1
+connections_puzzle_number = int((yesterday - CONNECTIONS_START_DATE).days + 1)
+bandle_puzzle_number = int((yesterday - BANDLE_START_DATE).days + 1)
+sports_puzzle_number = int((yesterday - SPORTS_CONNECTIONS_START_DATE).days + 1)
+pips_puzzle_number = int((yesterday - PIPS_START_DATE).days + 1)
+maptap_number = int((yesterday - MAPTAP_START_DATE).days + 1)
 maptap_date = yesterday.strftime('%B %d')
 globle_number = yesterday.strftime('%B %d')
 
@@ -51,10 +51,7 @@ def was_yesterday(iso_timestamp):
     except (ValueError, TypeError) as e:
         raise ValueError(f"Invalid ISO8601 timestamp: {iso_timestamp}") from e
     
-    msg_timezone = timestamp.tzinfo
-    # If no timezone specified, use UTC
-    if msg_timezone is None:
-        msg_timezone = timezone.utc
+    msg_timezone = timezone(timedelta(hours=-8))
 
     now = datetime.now(msg_timezone)
     yesterday_start = (now - timedelta(days=1)).replace(
@@ -168,7 +165,7 @@ def format_message(results):
             else:
                 players = sorted(results[game_key].items(), key=lambda x: x[1])
             
-            message += f"**[{game_title}]({link}) {game_emoji} {f'#{puzzle}' if puzzle else ''}**\n"
+            message += f"**[{game_title}]({link}) {game_emoji} {f'#{puzzle}' if type(puzzle) == int else f'{puzzle}'}**\n"
             
             # Group players by score for ties
             rank = 0
