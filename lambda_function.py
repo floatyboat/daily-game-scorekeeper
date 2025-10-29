@@ -12,7 +12,7 @@ BANDLE_LINK = 'https://bandle.app/daily'
 PIPS_LINK = 'https://www.nytimes.com/games/pips'
 SPORTS_CONNECTIONS_LINK = 'https://www.nytimes.com/athletic/connections-sports-edition'
 MAPTAP_LINK = 'https://maptap.gg'
-GLOBLE_LINK = 'https://globle.org/'
+GLOBLE_LINK = 'https://globle.org'
 
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
@@ -27,6 +27,18 @@ SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
 MAPTAP_START_DATE = datetime(2024, 6, 22)
 
 bandle_total = 6
+
+# variables for games that don't include an identifier for each day
+UTC_OFFSET = int(os.getenv('UTC_OFFSET') or 0)
+TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
+HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
+MSG_TIMEZONE = timezone(timedelta(hours=UTC_OFFSET))
+NOW_OFFSET = datetime.now(MSG_TIMEZONE)
+YESTERDAY_START = (NOW_OFFSET - timedelta(days=1)).replace(
+        hour=HOURS_AFTER_MIDNIGHT, minute=0, second=0, microsecond=0
+    )
+YESTERDAY_END = YESTERDAY_START + timedelta(hours=TIME_WINDOW_HOURS)
+
 yesterday = datetime.now() - timedelta(days=1)
 connections_puzzle_number = int((yesterday - CONNECTIONS_START_DATE).days + 1)
 bandle_puzzle_number = int((yesterday - BANDLE_START_DATE).days + 1)
@@ -58,36 +70,10 @@ def was_yesterday(iso_timestamp):
         timestamp = parser.isoparse(iso_timestamp)
     except (ValueError, TypeError) as e:
         raise ValueError(f"Invalid ISO8601 timestamp: {iso_timestamp}") from e
-    
-    msg_timezone = timezone(timedelta(hours=-8))
 
-    now = datetime.now(msg_timezone)
-    yesterday_start = (now - timedelta(days=1)).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    yesterday_end = yesterday_start + timedelta(days=1)
+    timestamp_in_ref_tz = timestamp.astimezone(MSG_TIMEZONE)
 
-    timestamp_in_ref_tz = timestamp.astimezone(msg_timezone)
-
-    return yesterday_start <= timestamp_in_ref_tz < yesterday_end
-
-def was_yesterday(iso_timestamp):
-    try:
-        timestamp = parser.isoparse(iso_timestamp)
-    except (ValueError, TypeError) as e:
-        raise ValueError(f"Invalid ISO8601 timestamp: {iso_timestamp}") from e
-    
-    msg_timezone = timezone(timedelta(hours=-8))
-
-    now = datetime.now(msg_timezone)
-    yesterday_start = (now - timedelta(days=1)).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    yesterday_end = yesterday_start + timedelta(days=1)
-
-    timestamp_in_ref_tz = timestamp.astimezone(msg_timezone)
-
-    return yesterday_start <= timestamp_in_ref_tz < yesterday_end
+    return YESTERDAY_START <= timestamp_in_ref_tz < YESTERDAY_END
 
 
 def get_connections_results(content):
@@ -129,9 +115,6 @@ def parse_game_results(messages):
     globle_search = r'I guessed today’s Globle in (\d+) tries'
 
     for msg in messages:
-        if not was_yesterday(msg['timestamp']):
-            continue
-
         content = msg['content']
         author = msg['author']['id']
         if re.search(connections_search, content, re.IGNORECASE | re.DOTALL):
@@ -152,10 +135,9 @@ def parse_game_results(messages):
         elif re.search(maptap_search, content, re.IGNORECASE):
             score = (re.search(r'Final Score: (\d+)', content, re.IGNORECASE)).group(1)
             results['maptap'][author] = int(score)
-        elif re.search(globle_search, content, re.IGNORECASE): 
+        elif re.search(globle_search, content, re.IGNORECASE) and was_yesterday(msg['timestamp']): 
             score = re.search(globle_search, content, re.IGNORECASE).group(1)
             results['globle'][author] = int(score)
-
     return results
 
 def format_message(results):
@@ -163,7 +145,7 @@ def format_message(results):
     games = [
         ('bandle', '🎵', 'Bandle', 'guesses', bandle_total, bandle_puzzle_number, BANDLE_LINK),
         ('connections', '🔗', 'Connections', 'connections', 4, connections_puzzle_number, CONNECTIONS_LINK),
-        ('globle', '🌍', 'Globle', 'guesses', 0, globle_number, GLOBLE_LINK),
+        ('globle', '🌍', 'Globle', 'guesses', 0, f'{globle_number}', GLOBLE_LINK),
         ('maptap', '📍', 'MapTap', 'score', 0, maptap_number, MAPTAP_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK)
