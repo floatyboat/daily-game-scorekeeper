@@ -17,6 +17,7 @@ DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
 OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
 TEST_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
+HUNDREDS_OF_MESSAGES = int(os.getenv('HUNDREDS_OF_MESSAGES'))
 
 CONNECTIONS_START_DATE = datetime(2023, 6, 12)
 BANDLE_START_DATE = datetime(2022, 8, 18)
@@ -41,7 +42,14 @@ def get_messages(channel_id):
 
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages?limit=100'
     response = requests.get(url, headers=headers)
-    return response.json()
+    messages = response.json()
+
+    if HUNDREDS_OF_MESSAGES > 1:
+        last_msg_id = messages[-1]['id']
+        url_id = url + f'&before={last_msg_id}'
+        response = requests.get(url_id, headers=headers)
+        messages += response.json()
+    return messages
 
 
 def get_connections_results(content):
