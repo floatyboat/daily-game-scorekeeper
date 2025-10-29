@@ -44,7 +44,7 @@ def get_messages(channel_id):
     response = requests.get(url, headers=headers)
     messages = response.json()
 
-    if HUNDREDS_OF_MESSAGES > 1:
+    for x in range(HUNDREDS_OF_MESSAGES - 1):
         last_msg_id = messages[-1]['id']
         url_id = url + f'&before={last_msg_id}'
         response = requests.get(url_id, headers=headers)
