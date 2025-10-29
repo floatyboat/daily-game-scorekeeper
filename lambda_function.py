@@ -79,7 +79,7 @@ def parse_game_results(messages):
     bandle_search = rf'Bandle #{bandle_puzzle_number} (\d+|x)/(\d+)'
     sports_search = rf'Connections: Sports Edition\n Puzzle #{sports_puzzle_number}'
     pips_search = rf'Pips #{pips_puzzle_number} Hard'
-    maptap_search = rf'www.MapTap.gg {maptap_date}'
+    maptap_search = rf'(.*)MapTap(.*){maptap_date}'
 
     for msg in messages:
         content = msg['content']
