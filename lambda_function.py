@@ -18,6 +18,7 @@ DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
 OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
 TEST_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
+HUNDREDS_OF_MESSAGES = int(os.getenv('HUNDREDS_OF_MESSAGES') or 1)
 
 CONNECTIONS_START_DATE = datetime(2023, 6, 12)
 BANDLE_START_DATE = datetime(2022, 8, 18)
@@ -43,7 +44,32 @@ def get_messages(channel_id):
 
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages?limit=100'
     response = requests.get(url, headers=headers)
-    return response.json()
+    messages = response.json()
+
+    for x in range(HUNDREDS_OF_MESSAGES - 1):
+        last_msg_id = messages[-1]['id']
+        url_id = url + f'&before={last_msg_id}'
+        response = requests.get(url_id, headers=headers)
+        messages += response.json()
+    return messages
+
+def was_yesterday(iso_timestamp):
+    try:
+        timestamp = parser.isoparse(iso_timestamp)
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Invalid ISO8601 timestamp: {iso_timestamp}") from e
+    
+    msg_timezone = timezone(timedelta(hours=-8))
+
+    now = datetime.now(msg_timezone)
+    yesterday_start = (now - timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    yesterday_end = yesterday_start + timedelta(days=1)
+
+    timestamp_in_ref_tz = timestamp.astimezone(msg_timezone)
+
+    return yesterday_start <= timestamp_in_ref_tz < yesterday_end
 
 def was_yesterday(iso_timestamp):
     try:
@@ -99,7 +125,7 @@ def parse_game_results(messages):
     bandle_search = rf'Bandle #{bandle_puzzle_number} (\d+|x)/(\d+)'
     sports_search = rf'Connections: Sports Edition\n Puzzle #{sports_puzzle_number}'
     pips_search = rf'Pips #{pips_puzzle_number} Hard'
-    maptap_search = rf'www.MapTap.gg {maptap_date}'
+    maptap_search = rf'(.*)MapTap(.*){maptap_date}'
     globle_search = r'I guessed today’s Globle in (\d+) tries'
 
     for msg in messages:
