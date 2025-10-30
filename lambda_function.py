@@ -194,7 +194,7 @@ def format_message(results):
                     score_str = f"{str(current_score)}/{total} {metric}"
                 
                 # Join tied players
-                players_str = " ".join(tied_players)
+                players_str = " ".join(reversed(tied_players))
                 message += f"{medal}{players_str}: {score_str}\n"
                 
                 prev_score = current_score
