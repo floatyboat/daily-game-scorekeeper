@@ -13,6 +13,7 @@ SPORTS_CONNECTIONS_LINK = 'https://www.nytimes.com/athletic/connections-sports-e
 MAPTAP_LINK = 'https://maptap.gg'
 GLOBLE_LINK = 'https://globle.org/'
 
+DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID')
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
 OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
@@ -220,6 +221,16 @@ def send_message(channel_id, message):
 def lambda_handler(event, context):
     # Get messages from the channel
     messages = get_messages(INPUT_CHANNEL_ID)
+    if not messages:
+        return {
+            'statusCode': 400,
+            'body': json.dumps('No messages found')
+        }
+    elif messages[0]['author']['id'] == DISCORD_BOT_ID:
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Function triggered twice. No message sent.')
+        }
 
     results = parse_game_results(messages)
 
