@@ -13,6 +13,8 @@ PIPS_LINK = 'https://www.nytimes.com/games/pips'
 SPORTS_CONNECTIONS_LINK = 'https://www.nytimes.com/athletic/connections-sports-edition'
 MAPTAP_LINK = 'https://maptap.gg'
 GLOBLE_LINK = 'https://globle.org'
+FLAGLE_LINK = 'https://flagle.org'
+WORLDLE_LINK = 'https://worldlegame.io'
 
 DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID')
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
@@ -48,6 +50,8 @@ pips_puzzle_number = int((yesterday - PIPS_START_DATE).days + 1)
 maptap_number = int((yesterday - MAPTAP_START_DATE).days + 1)
 maptap_date = yesterday.strftime('%B %d')
 globle_number = yesterday.strftime('%B %d')
+worldle_number = yesterday.strftime('%B %d')
+flagle_number = yesterday.strftime('%B %d')
 
 def get_messages(channel_id):
     headers = {
@@ -85,7 +89,6 @@ def get_connections_results(content):
         mistakes = len(rows) - solved_groups
 
         # Check for vertical connections (4 rows, all failed, but vertical match)
-        # commented out, broken
         is_vertical = False
         if len(rows) == 4 and solved_groups == 0:
             # Check each column for all same emoji
@@ -114,6 +117,8 @@ def parse_game_results(messages):
     pips_search = rf'Pips #{pips_puzzle_number} Hard'
     maptap_search = rf'(.*)MapTap(.*){maptap_date}'
     globle_search = r'I guessed today’s Globle in (\d+) tries'
+    worldle_search = r'I guessed today’s Worldle in (\d+) tries'
+    flagle_search = r'I guessed today’s Flag in (\d+) tries'
 
     for msg in messages:
         content = msg['content']
@@ -139,6 +144,12 @@ def parse_game_results(messages):
         elif re.search(globle_search, content, re.IGNORECASE) and was_yesterday(msg['timestamp']): 
             score = re.search(globle_search, content, re.IGNORECASE).group(1)
             results['globle'][author] = int(score)
+        elif re.search(worldle_search, content, re.IGNORECASE) and was_yesterday(msg['timestamp']):
+            score = re.search(worldle_search, content, re.IGNORECASE).group(1)
+            results['worldle'][author] = int(score)
+        elif re.search(flagle_search, content, re.IGNORECASE) and was_yesterday(msg['timestamp']):
+            score = re.search(flagle_search, content, re.IGNORECASE).group(1)
+            results['flagle'][author] = int(score)
     return results
 
 def format_message(results):
@@ -146,10 +157,12 @@ def format_message(results):
     games = [
         ('bandle', '🎵', 'Bandle', 'guesses', bandle_total, bandle_puzzle_number, BANDLE_LINK),
         ('connections', '🔗', 'Connections', 'connections', 4, connections_puzzle_number, CONNECTIONS_LINK),
+        ('flagle', '🚩', 'Flagle', 'guesses', 0, f'{flagle_number}', FLAGLE_LINK),
         ('globle', '🌍', 'Globle', 'guesses', 0, f'{globle_number}', GLOBLE_LINK),
         ('maptap', '📍', 'MapTap', 'score', 0, maptap_number, MAPTAP_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
-        ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK)
+        ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK),
+        ('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{worldle_number}', WORLDLE_LINK)
     ]
     medals = ['👑', '🥈', '🥉']
     message = "🧮 **Daily Game Scoreboard**"
