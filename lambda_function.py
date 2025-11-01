@@ -22,6 +22,7 @@ INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
 OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
 TEST_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
 HUNDREDS_OF_MESSAGES = int(os.getenv('HUNDREDS_OF_MESSAGES') or 1)
+MINIMUM_PLAYERS = int(os.getenv('MINIMUM_PLAYERS') or 1)
 
 CONNECTIONS_START_DATE = datetime(2023, 6, 12)
 BANDLE_START_DATE = datetime(2022, 8, 18)
@@ -174,7 +175,7 @@ def format_message(results):
         games.sort(key=lambda x: len(results.get(x[0], {})), reverse=True)
         for game_key, game_emoji, game_title, metric, total, puzzle, link in games:
             # Get players who played this game
-            if game_key not in results or not results[game_key]:
+            if game_key not in results or not results[game_key] or len(results[game_key]) < MINIMUM_PLAYERS:
                 continue
             
             # Sort players by score
@@ -187,7 +188,7 @@ def format_message(results):
             else:
                 players = sorted(results[game_key].items(), key=lambda x: x[1])
             
-            message += f"**[{game_title}]({link}) {game_emoji} {f'#{puzzle}' if type(puzzle) == int else f'{puzzle}'}**\n"
+            message += f"**[{game_title}]({link}) {game_emoji} {f'#{puzzle}' if type(puzzle) == int else f''}**\n"
             
             # Group players by score for ties
             rank = 0
