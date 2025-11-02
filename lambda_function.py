@@ -49,10 +49,10 @@ bandle_puzzle_number = int((yesterday - BANDLE_START_DATE).days + 1)
 sports_puzzle_number = int((yesterday - SPORTS_CONNECTIONS_START_DATE).days + 1)
 pips_puzzle_number = int((yesterday - PIPS_START_DATE).days + 1)
 maptap_number = int((yesterday - MAPTAP_START_DATE).days + 1)
-maptap_date = yesterday.strftime('%B %d')
-globle_number = yesterday.strftime('%B %d')
-worldle_number = yesterday.strftime('%B %d')
-flagle_number = yesterday.strftime('%B %d')
+maptap_date = f'{yesterday.strftime('%B')} {yesterday.day}'
+globle_number = f'{yesterday.strftime('%B')} {yesterday.day}'
+worldle_number = f'{yesterday.strftime('%B')} {yesterday.day}'
+flagle_number = f'{yesterday.strftime('%B')} {yesterday.day}'
 
 def get_messages(channel_id):
     headers = {
