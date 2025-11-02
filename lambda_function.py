@@ -158,7 +158,7 @@ def format_message(results):
     games = [
         ('bandle', '🎵', 'Bandle', 'guesses', bandle_total, bandle_puzzle_number, BANDLE_LINK),
         ('connections', '🔗', 'Connections', 'connections', 4, connections_puzzle_number, CONNECTIONS_LINK),
-        ('flagle', '🚩', 'Flagle', 'guesses', 0, f'{flagle_number}', FLAGLE_LINK),
+        ('flagle', '🏳️', 'Flagle', 'guesses', 0, f'{flagle_number}', FLAGLE_LINK),
         ('globle', '🌍', 'Globle', 'guesses', 0, f'{globle_number}', GLOBLE_LINK),
         ('maptap', '📍', 'MapTap', 'score', 0, maptap_number, MAPTAP_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
@@ -188,8 +188,12 @@ def format_message(results):
             else:
                 players = sorted(results[game_key].items(), key=lambda x: x[1])
             
-            message += f"**[{game_title}]({link}) {game_emoji} {f'#{puzzle}' if type(puzzle) == int else f''}**\n"
+            game_title = f"[{game_title}]({link})"
             
+            if len(results[game_key]) == 1:
+                message += f'-# {game_emoji} {game_title} '
+            else:
+                message += f'**{game_title} {game_emoji} {f'#{puzzle}' if type(puzzle) == int else f''}**\n'
             # Group players by score for ties
             rank = 0
             prev_score = None
@@ -240,12 +244,15 @@ def format_message(results):
                 
                 # Join tied players
                 players_str = " ".join(reversed(tied_players))
-                message += f"{medal}{players_str}: {score_str}\n"
+                if len(results[game_key]) > 1:
+                    message += f'{medal}'
+                message += f"{players_str}: {score_str}\n"
                 
                 prev_score = current_score
                 i = j
             
-            message += "\n"
+            if len(results[game_key]) > 1:
+                message += "\n"
     return message
 
 def send_message(channel_id, message):
