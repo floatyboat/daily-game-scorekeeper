@@ -191,7 +191,7 @@ def format_message(results):
             game_title = f"[{game_title}]({link})"
             
             if len(results[game_key]) == 1:
-                message += f'{game_emoji} {game_title} '
+                message += f'**{game_emoji} {game_title}** '
             else:
                 message += f'**{game_title} {game_emoji} {f'#{puzzle}' if type(puzzle) == int else f''}**\n'
             # Group players by score for ties
