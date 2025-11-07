@@ -117,9 +117,9 @@ def parse_game_results(messages):
     sports_search = rf'Connections: Sports Edition\n Puzzle #{sports_puzzle_number}'
     pips_search = rf'Pips #{pips_puzzle_number} Hard'
     maptap_search = rf'(.*)MapTap(.*){maptap_date}'
-    globle_search = r'I guessed today’s Globle in (\d+) tries'
-    worldle_search = r'I guessed today’s Worldle in (\d+) tries'
-    flagle_search = r'I guessed today’s Flag in (\d+) tries'
+    globle_search = r'I guessed today’s Globle in (\d+) tr'
+    worldle_search = r'I guessed today’s Worldle in (\d+) tr'
+    flagle_search = r'I guessed today’s Flag in (\d+) tr'
 
     for msg in messages:
         content = msg['content']
