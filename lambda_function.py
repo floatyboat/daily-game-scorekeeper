@@ -158,7 +158,10 @@ def parse_game_results(messages):
         elif re.search(wheredle_search, content, re.IGNORECASE) and was_yesterday(msg['timestamp']):
             yellow_squares = re.findall(r'🟨', content)
             green_squares = re.findall(r'🟩', content)
-            score = len(yellow_squares) + len(green_squares)
+            if green_squares == 0:
+                score = wheredle_total + 1
+            else:
+                score = len(yellow_squares) + len(green_squares)
             results['wheredle'][author] = score
     return results
 
