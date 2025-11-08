@@ -277,7 +277,16 @@ def send_message(channel_id, message):
 
     response = requests.post(url, headers=headers, json=payload)
 
-    return response
+    return response.json()
+
+def pin_message(channel_id, message_id):
+    headers = {
+        'Authorization': f'Bot {DISCORD_BOT_TOKEN}',
+        'Content-Type': 'application/json'
+    }
+
+    url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages/pins/{message_id}'
+    requests.put(url, headers=headers)
 
 def lambda_handler(event, context):
     # Get messages from the channel
@@ -298,15 +307,16 @@ def lambda_handler(event, context):
     output = format_message(results)
 
     if 'test' in event:
-        send_message(TEST_CHANNEL_ID, output)
-        response = f'TEST Scoreboard posted'
+        response = send_message(TEST_CHANNEL_ID, output)
+        msg = f'TEST: Scoreboard posted'
     else:
-        send_message(OUTPUT_CHANNEL_ID, output)
-        response = f'Scorboard posted'
-
+        response = send_message(OUTPUT_CHANNEL_ID, output)
+        msg = f'Scoreboard posted'
+        pin_message(OUTPUT_CHANNEL_ID, response['id'])
+    
     return {
         'statusCode': 200,
-        'body': json.dumps(response)
+        'body': json.dumps(msg)
     }
 
 if __name__ == '__main__':
