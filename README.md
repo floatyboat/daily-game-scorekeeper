@@ -2,14 +2,15 @@
 ## Summary
 Reads a channel in a discord server for daily puzzle games and posts a scoreboard for yesterday's games.
 ## Games Supported
-1. [Connections](https://www.nytimes.com/games/connections)
-2. [Bandle](https://bandle.app/daily)
-3. [Pips](https://www.nytimes.com/games/pips)
-4. [Connections: Sports Edition](https://www.nytimes.com/athletic/connections-sports-edition)
-5. [MapTap](https://maptap.gg)
-6. [Globle](https://globle.org)
-7. [Flagle](https://flagle.org)
-8. [Worldle](https://worldlegame.io)
+1. [Bandle](https://bandle.app/daily)
+2. [Connections](https://www.nytimes.com/games/connections)
+3. [Connections: Sports Edition](https://www.nytimes.com/athletic/connections-sports-edition)
+4. [Flagle](https://flagle.org)
+5. [Globle](https://globle.org)
+6. [MapTap](https://maptap.gg)
+7. [Pips](https://www.nytimes.com/games/pips)
+8. [Wheredle](https://wheredle.xyz)
+9. [Worldle](https://worldlegame.io)
 
 Note: Wordle has official support. So, it is left out of this project.
 ## Setup
