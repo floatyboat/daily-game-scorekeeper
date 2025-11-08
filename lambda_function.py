@@ -178,6 +178,7 @@ def format_message(results):
     ]
     medals = ['👑', '🥈', '🥉']
     message = "🧮 **Daily Game Scoreboard**"
+    no_players_reached = False
     if not results:
         message += "\n\nNo results found for yesterday!"
     else:
@@ -185,8 +186,13 @@ def format_message(results):
         # sort game order by number of players
         games.sort(key=lambda x: len(results.get(x[0], {})), reverse=True)
         for game_key, game_emoji, game_title, metric, total, puzzle, link in games:
-            # Get players who played this game
+            game_title = f"[{game_title}]({link})"
+
             if game_key not in results or not results[game_key] or len(results[game_key]) < MINIMUM_PLAYERS:
+                if not no_players_reached:
+                    message += f'-# Also tracking : '
+                no_players_reached = True
+                message += f'{game_emoji} {game_title} '
                 continue
             
             # Sort players by score
@@ -198,8 +204,6 @@ def format_message(results):
                 players = sorted(results[game_key].items(), key=lambda x: (-x[1]))
             else:
                 players = sorted(results[game_key].items(), key=lambda x: x[1])
-            
-            game_title = f"[{game_title}]({link})"
             
             if len(results[game_key]) == 1:
                 message += f'**{game_emoji} {game_title}** '
@@ -262,7 +266,7 @@ def format_message(results):
                 prev_score = current_score
                 i = j
             
-            if len(results[game_key]) > 1:
+            if len(players) > MINIMUM_PLAYERS and len(results[game_key]) > 1:
                 message += "\n"
     return message
 
