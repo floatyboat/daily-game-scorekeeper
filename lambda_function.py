@@ -15,6 +15,7 @@ MAPTAP_LINK = 'https://maptap.gg'
 GLOBLE_LINK = 'https://globle.org'
 FLAGLE_LINK = 'https://flagle.org'
 WORLDLE_LINK = 'https://worldlegame.io'
+WHEREDLE_LINK = 'https://wheredle.xyz'
 
 DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
@@ -31,6 +32,7 @@ SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
 MAPTAP_START_DATE = datetime(2024, 6, 22)
 
 bandle_total = 6
+wheredle_total = 7
 
 # variables for games that don't include an identifier for each day
 UTC_OFFSET = int(os.getenv('UTC_OFFSET') or 0)
@@ -53,6 +55,7 @@ maptap_date = f'{yesterday.strftime('%B')} {yesterday.day}'
 globle_number = f'{yesterday.strftime('%B')} {yesterday.day}'
 worldle_number = f'{yesterday.strftime('%B')} {yesterday.day}'
 flagle_number = f'{yesterday.strftime('%B')} {yesterday.day}'
+wheredle_number = f'{yesterday.strftime('%B')} {yesterday.day}'
 
 def get_messages(channel_id):
     headers = {
@@ -120,6 +123,7 @@ def parse_game_results(messages):
     globle_search = r'I guessed today’s Globle in (\d+) tr'
     worldle_search = r'I guessed today’s Worldle in (\d+) tr'
     flagle_search = r'I guessed today’s Flag in (\d+) tr'
+    wheredle_search = r'#Wheredle'
 
     for msg in messages:
         content = msg['content']
@@ -151,6 +155,11 @@ def parse_game_results(messages):
         elif re.search(flagle_search, content, re.IGNORECASE) and was_yesterday(msg['timestamp']):
             score = re.search(flagle_search, content, re.IGNORECASE).group(1)
             results['flagle'][author] = int(score)
+        elif re.search(wheredle_search, content, re.IGNORECASE) and was_yesterday(msg['timestamp']):
+            yellow_squares = re.findall(r'🟨', content)
+            green_squares = re.findall(r'🟩', content)
+            score = len(yellow_squares) + len(green_squares)
+            results['wheredle'][author] = score
     return results
 
 def format_message(results):
@@ -163,7 +172,8 @@ def format_message(results):
         ('maptap', '📍', 'MapTap', 'score', 0, maptap_number, MAPTAP_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK),
-        ('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{worldle_number}', WORLDLE_LINK)
+        ('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{worldle_number}', WORLDLE_LINK),
+        ('wheredle', '🛣️', 'Wheredle', 'guesses', wheredle_total, f'{wheredle_number}', WHEREDLE_LINK)
     ]
     medals = ['👑', '🥈', '🥉']
     message = "🧮 **Daily Game Scoreboard**"
