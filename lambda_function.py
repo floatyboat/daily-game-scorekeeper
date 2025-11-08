@@ -172,8 +172,9 @@ def format_message(results):
         ('maptap', '📍', 'MapTap', 'score', 0, maptap_number, MAPTAP_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK),
-        ('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{worldle_number}', WORLDLE_LINK),
-        ('wheredle', '🛣️', 'Wheredle', 'guesses', wheredle_total, f'{wheredle_number}', WHEREDLE_LINK)
+        ('wheredle', '🛣️', 'Wheredle', 'guesses', wheredle_total, f'{wheredle_number}', WHEREDLE_LINK),
+        ('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{worldle_number}', WORLDLE_LINK)
+        
     ]
     medals = ['👑', '🥈', '🥉']
     message = "🧮 **Daily Game Scoreboard**"
