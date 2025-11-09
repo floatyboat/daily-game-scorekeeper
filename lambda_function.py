@@ -180,9 +180,9 @@ def format_message(results):
         ('connections', '🔗', 'Connections', 'connections', 4, connections_puzzle_number, CONNECTIONS_LINK),
         ('flagle', '🏁', 'Flagle', 'guesses', 0, f'{flagle_number}', FLAGLE_LINK),
         ('globle', '🌍', 'Globle', 'guesses', 0, f'{globle_number}', GLOBLE_LINK),
-        ('maptap', '📍', 'MapTap', 'score', 0, maptap_number, MAPTAP_LINK),
+        ('maptap', '🎯', 'MapTap', 'score', 0, maptap_number, MAPTAP_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
-        ('quizl','❓', 'Quizl', 'score', quizl_total, quizl_puzzle_number, QUIZL_LINK),
+        ('quizl','⁉️', 'Quizl', 'score', quizl_total, quizl_puzzle_number, QUIZL_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK),
         ('wheredle', '🛣️', 'Wheredle', 'guesses', wheredle_total, f'{wheredle_number}', WHEREDLE_LINK),
         ('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{worldle_number}', WORLDLE_LINK)
