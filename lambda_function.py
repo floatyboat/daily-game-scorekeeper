@@ -170,7 +170,7 @@ def format_message(results):
     games = [
         ('bandle', '🎵', 'Bandle', 'guesses', bandle_total, bandle_puzzle_number, BANDLE_LINK),
         ('connections', '🔗', 'Connections', 'connections', 4, connections_puzzle_number, CONNECTIONS_LINK),
-        ('flagle', '🏳️', 'Flagle', 'guesses', 0, f'{flagle_number}', FLAGLE_LINK),
+        ('flagle', '🏁', 'Flagle', 'guesses', 0, f'{flagle_number}', FLAGLE_LINK),
         ('globle', '🌍', 'Globle', 'guesses', 0, f'{globle_number}', GLOBLE_LINK),
         ('maptap', '📍', 'MapTap', 'score', 0, maptap_number, MAPTAP_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
@@ -182,6 +182,7 @@ def format_message(results):
     medals = ['👑', '🥈', '🥉']
     message = "🧮 **Daily Game Scoreboard**"
     no_players_reached = False
+    one_player_reached = False
     if not results:
         message += "\n\nNo results found for yesterday!"
     else:
@@ -193,9 +194,11 @@ def format_message(results):
 
             if game_key not in results or not results[game_key] or len(results[game_key]) < MINIMUM_PLAYERS:
                 if not no_players_reached:
-                    message += f'-# Also tracking : '
+                    if one_player_reached:
+                        message += '\n'
+                    message += f'-# Other games:\t'
                 no_players_reached = True
-                message += f'{game_emoji} {game_title} '
+                message += f'{game_emoji} {game_title}\t'
                 continue
             
             # Sort players by score
@@ -209,6 +212,7 @@ def format_message(results):
                 players = sorted(results[game_key].items(), key=lambda x: x[1])
             
             if len(results[game_key]) == 1:
+                one_player_reached = True
                 message += f'**{game_emoji} {game_title}** '
             else:
                 message += f'**{game_title} {game_emoji} {f'#{puzzle}' if type(puzzle) == int else f''}**\n'
