@@ -9,8 +9,9 @@ Reads a channel in a discord server for daily puzzle games and posts a scoreboar
 5. [Globle](https://globle.org)
 6. [MapTap](https://maptap.gg)
 7. [Pips](https://www.nytimes.com/games/pips)
-8. [Wheredle](https://wheredle.xyz)
-9. [Worldle](https://worldlegame.io)
+8. [Quizl](https://quizl.io)
+9. [Wheredle](https://wheredle.xyz)
+10. [Worldle](https://worldlegame.io)
 
 Note: Wordle has official support. So, it is left out of this project.
 ## Setup
