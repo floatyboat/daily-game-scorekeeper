@@ -16,6 +16,7 @@ GLOBLE_LINK = 'https://globle.org'
 FLAGLE_LINK = 'https://flagle.org'
 WORLDLE_LINK = 'https://worldlegame.io'
 WHEREDLE_LINK = 'https://wheredle.xyz'
+QUIZL_LINK = 'https://quizl.io/'
 
 DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
@@ -30,9 +31,11 @@ BANDLE_START_DATE = datetime(2022, 8, 18)
 PIPS_START_DATE = datetime(2025, 8, 18)
 SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
 MAPTAP_START_DATE = datetime(2024, 6, 22)
+QUIZL_START_DATE = datetime(2022, 3, 16)
 
 bandle_total = 6
 wheredle_total = 7
+quizl_total = 5
 
 # variables for games that don't include an identifier for each day
 UTC_OFFSET = int(os.getenv('UTC_OFFSET') or 0)
@@ -51,6 +54,7 @@ bandle_puzzle_number = int((yesterday - BANDLE_START_DATE).days + 1)
 sports_puzzle_number = int((yesterday - SPORTS_CONNECTIONS_START_DATE).days + 1)
 pips_puzzle_number = int((yesterday - PIPS_START_DATE).days + 1)
 maptap_number = int((yesterday - MAPTAP_START_DATE).days + 1)
+quizl_puzzle_number = int((yesterday - QUIZL_START_DATE).days + 1)
 maptap_date = f'{yesterday.strftime('%B')} {yesterday.day}'
 globle_number = f'{yesterday.strftime('%B')} {yesterday.day}'
 worldle_number = f'{yesterday.strftime('%B')} {yesterday.day}'
@@ -124,6 +128,7 @@ def parse_game_results(messages):
     worldle_search = r'I guessed today’s Worldle in (\d+) tr'
     flagle_search = r'I guessed today’s Flag in (\d+) tr'
     wheredle_search = r'#Wheredle'
+    quizl_search = rf'Quizl#{quizl_puzzle_number}'
 
     for msg in messages:
         content = msg['content']
@@ -163,6 +168,9 @@ def parse_game_results(messages):
             else:
                 score = len(yellow_squares) + len(green_squares)
             results['wheredle'][author] = score
+        elif re.search(quizl_search, content, re.IGNORECASE):
+            score = len(re.findall(r'🟩', content))
+            results['quizl'][author] = score
     return results
 
 def format_message(results):
@@ -174,10 +182,10 @@ def format_message(results):
         ('globle', '🌍', 'Globle', 'guesses', 0, f'{globle_number}', GLOBLE_LINK),
         ('maptap', '📍', 'MapTap', 'score', 0, maptap_number, MAPTAP_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pips_puzzle_number, PIPS_LINK),
+        ('quizl','❓', 'Quizl', 'score', quizl_total, quizl_puzzle_number, QUIZL_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, sports_puzzle_number, SPORTS_CONNECTIONS_LINK),
         ('wheredle', '🛣️', 'Wheredle', 'guesses', wheredle_total, f'{wheredle_number}', WHEREDLE_LINK),
         ('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{worldle_number}', WORLDLE_LINK)
-        
     ]
     medals = ['👑', '🥈', '🥉']
     message = "🧮 **Daily Game Scoreboard**"
@@ -255,6 +263,8 @@ def format_message(results):
                         score_str = f"{mistakes}/{total} mistakes"
                 elif metric == 'score':
                     score_str = f"{str(current_score)}"
+                    if total > 0:
+                        score_str = f"{score_str}/{total}"
                 else: #guesses
                     if total == 0:
                         score_str = f"{str(current_score)} {metric}"
