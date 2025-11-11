@@ -16,7 +16,7 @@ GLOBLE_LINK = 'https://globle.org'
 FLAGLE_LINK = 'https://flagle.org'
 WORLDLE_LINK = 'https://worldlegame.io'
 WHEREDLE_LINK = 'https://wheredle.xyz'
-QUIZL_LINK = 'https://quizl.io/'
+QUIZL_LINK = 'https://quizl.io'
 
 DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
@@ -223,7 +223,7 @@ def format_message(results):
                 one_player_reached = True
                 message += f'**{game_emoji} {game_title}** '
             else:
-                message += f'**{game_title} {game_emoji} {f'#{puzzle}' if type(puzzle) == int else f''}**\n'
+                message += f'**{game_title} {game_emoji} {f'#{puzzle}' if type(puzzle) == int else f'#67'}**\n'
             # Group players by score for ties
             rank = 0
             prev_score = None
