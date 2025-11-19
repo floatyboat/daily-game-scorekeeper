@@ -219,7 +219,7 @@ def format_message(results):
             else:
                 players = sorted(results[game_key].items(), key=lambda x: x[1])
             
-            if len(results[game_key]) == 1:
+            if len(results[game_key]) == 1 and total != 0:
                 one_player_reached = True
                 message += f'**{game_emoji} {game_title}** '
             else:
