@@ -219,11 +219,7 @@ def format_message(results):
             else:
                 players = sorted(results[game_key].items(), key=lambda x: x[1])
             
-            if len(results[game_key]) == 1 and total != 0:
-                one_player_reached = True
-                message += f'**{game_emoji} {game_title}** '
-            else:
-                message += f'**{game_title} {game_emoji} {f'#{puzzle}' if type(puzzle) == int else f'#67'}**\n'
+            message += f'**{game_title} {game_emoji} {f'#{puzzle}' if type(puzzle) == int else f'#67'}**\n'
             # Group players by score for ties
             rank = 0
             prev_score = None
@@ -276,14 +272,13 @@ def format_message(results):
                 
                 # Join tied players
                 players_str = " ".join(reversed(tied_players))
-                if len(results[game_key]) > 1:
-                    message += f'{medal}'
+                message += f'{medal}'
                 message += f"{players_str}: {score_str}\n"
                 
                 prev_score = current_score
                 i = j
             
-            if len(players) > MINIMUM_PLAYERS and len(results[game_key]) > 1:
+            if len(players) >= MINIMUM_PLAYERS:
                 message += "\n"
     return message
 
