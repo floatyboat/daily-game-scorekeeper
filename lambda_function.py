@@ -17,6 +17,7 @@ FLAGLE_LINK = 'https://flagle.org'
 WORLDLE_LINK = 'https://worldlegame.io'
 WHEREDLE_LINK = 'https://wheredle.xyz'
 QUIZL_LINK = 'https://quizl.io'
+CHRONOPHOTO_LINK = 'https://www.chronophoto.app/daily.html'
 
 DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
@@ -60,6 +61,7 @@ globle_number = f'{yesterday.strftime('%B')} {yesterday.day}'
 worldle_number = f'{yesterday.strftime('%B')} {yesterday.day}'
 flagle_number = f'{yesterday.strftime('%B')} {yesterday.day}'
 wheredle_number = f'{yesterday.strftime('%B')} {yesterday.day}'
+chronophoto_number = f'{yesterday.month}/{yesterday.day}/{yesterday.year}'
 
 def get_messages(channel_id):
     headers = {
@@ -129,6 +131,7 @@ def parse_game_results(messages):
     flagle_search = r'I guessed today’s Flag in (\d+) tr'
     wheredle_search = r'#Wheredle'
     quizl_search = rf'Quizl#{quizl_puzzle_number}'
+    chronophoto_search = rf"I got a score of (\d+) on today's Chronophoto: {chronophoto_number}"
 
     for msg in messages:
         content = msg['content']
@@ -151,6 +154,9 @@ def parse_game_results(messages):
         elif re.search(maptap_search, content, re.IGNORECASE):
             score = (re.search(r'Final Score: (\d+)', content, re.IGNORECASE)).group(1)
             results['maptap'][author] = int(score)
+        elif re.search(chronophoto_number, content, re.IGNORECASE):
+            score = (re.search(chronophoto_search, content, re.IGNORECASE)).group(1)
+            results['chronophoto'][author] = int(score)
         elif re.search(globle_search, content, re.IGNORECASE) and was_yesterday(msg['timestamp']): 
             score = re.search(globle_search, content, re.IGNORECASE).group(1)
             results['globle'][author] = int(score)
@@ -177,6 +183,7 @@ def format_message(results):
     # Define games and their display info
     games = [
         ('bandle', '🎵', 'Bandle', 'guesses', bandle_total, bandle_puzzle_number, BANDLE_LINK),
+        ('chronophoto', '🕰️', 'Chronophoto', 'score', 0, chronophoto_number, CHRONOPHOTO_LINK),
         ('connections', '🔗', 'Connections', 'connections', 4, connections_puzzle_number, CONNECTIONS_LINK),
         ('flagle', '🏁', 'Flagle', 'guesses', 0, f'{flagle_number}', FLAGLE_LINK),
         ('globle', '🌍', 'Globle', 'guesses', 0, f'{globle_number}', GLOBLE_LINK),
