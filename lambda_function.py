@@ -183,7 +183,7 @@ def format_message(results):
     # Define games and their display info
     games = [
         ('bandle', '🎵', 'Bandle', 'guesses', bandle_total, bandle_puzzle_number, BANDLE_LINK),
-        ('chronophoto', '🕰️', 'Chronophoto', 'score', 0, chronophoto_number, CHRONOPHOTO_LINK),
+        ('chronophoto', '📷', 'Chronophoto', 'score', 0, chronophoto_number, CHRONOPHOTO_LINK),
         ('connections', '🔗', 'Connections', 'connections', 4, connections_puzzle_number, CONNECTIONS_LINK),
         ('flagle', '🏁', 'Flagle', 'guesses', 0, f'{flagle_number}', FLAGLE_LINK),
         ('globle', '🌍', 'Globle', 'guesses', 0, f'{globle_number}', GLOBLE_LINK),
