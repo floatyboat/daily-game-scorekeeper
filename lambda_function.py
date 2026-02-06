@@ -123,7 +123,7 @@ def parse_game_results(messages):
 
     connections_search = rf'Connections.*?Puzzle #{connections_puzzle_number}'
     bandle_search = rf'Bandle #{bandle_puzzle_number} (\d+|x)/(\d+)'
-    sports_search = rf'Connections: Sports Edition*#{sports_puzzle_number}'
+    sports_search = rf'Connections: Sports Edition.*?#{sports_puzzle_number}'
     pips_search = rf'Pips #{pips_puzzle_number} Hard'
     maptap_search = rf'(.*)MapTap(.*){maptap_date}'
     globle_search = r'I guessed today’s Globle in (\d+) tr'
