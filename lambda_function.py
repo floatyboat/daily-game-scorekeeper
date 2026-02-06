@@ -123,7 +123,7 @@ def parse_game_results(messages):
 
     connections_search = rf'Connections.*?Puzzle #{connections_puzzle_number}'
     bandle_search = rf'Bandle #{bandle_puzzle_number} (\d+|x)/(\d+)'
-    sports_search = rf'Connections: Sports Edition*?#{sports_puzzle_number}'
+    sports_search = rf'Connections: Sports Edition.*?puzzle #{sports_puzzle_number}'
     pips_search = rf'Pips #{pips_puzzle_number} Hard'
     maptap_search = rf'(.*)MapTap(.*){maptap_date}'
     globle_search = r'I guessed today’s Globle in (\d+) tr'
@@ -143,7 +143,7 @@ def parse_game_results(messages):
             score = bandle_match.group(1)
             bandle_total = int(bandle_match.group(2))
             results['bandle'][author] = 7 if score == 'x' else int(score)
-        elif re.search(sports_search, content, re.IGNORECASE):    
+        elif re.search(sports_search, content, re.IGNORECASE | re.DOTALL):
             results['sports'][author] = get_connections_results(content)
         elif re.search(pips_search, content, re.IGNORECASE):
             pips_match = re.search(r'(\d+):(\d+)', content, re.IGNORECASE)
