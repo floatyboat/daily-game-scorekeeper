@@ -202,7 +202,7 @@ def format_mini_scoreboard(game_key, game_scores, puzzle_numbers):
 
     link = GAME_LINKS.get(game_key, '')
     linked_title = f"[{title}]({link})" if link else title
-    lines = [f"**{linked_title}** {emoji} current standings:"]
+    lines = [f"{emoji} **{linked_title} Leaderboard**:"]
     for idx, (player_id, score) in enumerate(players):
         medal = medals[idx] if idx < len(medals) else ''
 
