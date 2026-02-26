@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import requests
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
@@ -233,7 +234,11 @@ def format_mini_scoreboard(game_key, game_scores, puzzle_numbers):
     return "\n".join(lines)
 
 
-def lambda_handler(event, context):
+POLL_INTERVAL = 10
+POLL_ITERATIONS = 6
+
+
+def poll_once(is_test=False):
     today = get_reference_date()
     puzzle_numbers = compute_puzzle_numbers(today)
     game_regexes = build_game_regexes(puzzle_numbers)
@@ -242,10 +247,7 @@ def lambda_handler(event, context):
     # Fetch messages from input channel
     input_messages = get_messages(INPUT_CHANNEL_ID, limit=200)
     if not input_messages:
-        return {
-            'statusCode': 200,
-            'body': json.dumps('No messages found')
-        }
+        return 'No messages found'
 
     # Parse ALL messages to build full results, track which are new
     results = defaultdict(dict)
@@ -262,12 +264,8 @@ def lambda_handler(event, context):
                 new_messages.append((msg, game_key))
 
     if not new_messages:
-        return {
-            'statusCode': 200,
-            'body': json.dumps('No new messages to process')
-        }
+        return 'No new messages to process'
 
-    is_test = 'test' in event if isinstance(event, dict) else False
     reply_channel = TEST_CHANNEL_ID if is_test else INPUT_CHANNEL_ID
 
     # Process each new message: react + reply with mini-scoreboard
@@ -281,9 +279,23 @@ def lambda_handler(event, context):
             reply_to = msg['id'] if not is_test else None
             send_message(reply_channel, mini, reply_to_id=reply_to, suppress_mentions=True)
 
+    return f'Processed {len(new_messages)} new messages.'
+
+
+def lambda_handler(event, context):
+    is_test = 'test' in event if isinstance(event, dict) else False
+    results = []
+
+    for i in range(POLL_ITERATIONS):
+        result = poll_once(is_test)
+        results.append(result)
+
+        if i < POLL_ITERATIONS - 1:
+            time.sleep(POLL_INTERVAL)
+
     return {
         'statusCode': 200,
-        'body': json.dumps(f'Processed {len(new_messages)} new messages.')
+        'body': json.dumps(results)
     }
 
 
