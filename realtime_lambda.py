@@ -284,13 +284,14 @@ def poll_once(is_test=False):
 
 def lambda_handler(event, context):
     is_test = 'test' in event if isinstance(event, dict) else False
+    iterations = 1 if is_test else POLL_ITERATIONS
     results = []
 
-    for i in range(POLL_ITERATIONS):
+    for i in range(iterations):
         result = poll_once(is_test)
         results.append(result)
 
-        if i < POLL_ITERATIONS - 1:
+        if i < iterations - 1:
             time.sleep(POLL_INTERVAL)
 
     return {
