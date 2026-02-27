@@ -85,6 +85,9 @@ GAME_METRICS = {
     'quizl': 'score',
 }
 
+# Games disabled from realtime processing (handled by dedicated bots)
+REALTIME_DISABLED_GAMES = {'maptap'}
+
 
 def get_headers():
     return {
@@ -242,6 +245,7 @@ def poll_once(is_test=False, seen_ids=None):
     today = get_reference_date()
     puzzle_numbers = compute_puzzle_numbers(today)
     game_regexes = build_game_regexes(puzzle_numbers)
+    game_regexes = [g for g in game_regexes if g['key'] not in REALTIME_DISABLED_GAMES]
     checker = make_timestamp_checker(today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
 
     # Fetch messages from input channel
