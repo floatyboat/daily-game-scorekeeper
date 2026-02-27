@@ -238,7 +238,7 @@ POLL_INTERVAL = 10
 POLL_ITERATIONS = 6
 
 
-def poll_once(is_test=False):
+def poll_once(is_test=False, seen_ids=None):
     today = get_reference_date()
     puzzle_numbers = compute_puzzle_numbers(today)
     game_regexes = build_game_regexes(puzzle_numbers)
@@ -260,7 +260,7 @@ def poll_once(is_test=False):
             results[game_key][msg['author']['id']] = score
             puzzle_numbers.update(metadata)
 
-            if not is_processed(msg):
+            if not is_processed(msg) and msg['id'] not in (seen_ids or set()):
                 new_messages.append((msg, game_key))
 
     if not new_messages:
@@ -279,6 +279,11 @@ def poll_once(is_test=False):
             reply_to = msg['id'] if not is_test else None
             send_message(reply_channel, mini, reply_to_id=reply_to, suppress_mentions=True)
 
+    # Track processed IDs so subsequent poll iterations skip them
+    if seen_ids is not None:
+        for msg, _ in new_messages:
+            seen_ids.add(msg['id'])
+
     return f'Processed {len(new_messages)} new messages.'
 
 
@@ -286,9 +291,10 @@ def lambda_handler(event, context):
     is_test = 'test' in event if isinstance(event, dict) else False
     iterations = 1 if is_test else POLL_ITERATIONS
     results = []
+    seen_ids = set()
 
     for i in range(iterations):
-        result = poll_once(is_test)
+        result = poll_once(is_test, seen_ids)
         results.append(result)
 
         if i < iterations - 1:
