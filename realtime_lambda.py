@@ -237,8 +237,8 @@ def format_mini_scoreboard(game_key, game_scores, puzzle_numbers):
     return "\n".join(lines)
 
 
-POLL_INTERVAL = 10
-POLL_ITERATIONS = 6
+POLL_INTERVAL = 20
+POLL_ITERATIONS = 3
 
 
 def poll_once(is_test=False, seen_ids=None):
