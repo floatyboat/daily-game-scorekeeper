@@ -135,17 +135,17 @@ def build_game_regexes(puzzle_numbers):
         },
         {
             'key': 'globle',
-            'pattern': re.compile(r"I guessed today's Globle in (\d+) tr", re.IGNORECASE),
+            'pattern': re.compile(r"I guessed today['\u2019]s Globle in (\d+) tr", re.IGNORECASE),
             'needs_timestamp': True,
         },
         {
             'key': 'worldle',
-            'pattern': re.compile(r"I guessed today's Worldle in (\d+) tr", re.IGNORECASE),
+            'pattern': re.compile(r"I guessed today['\u2019]s Worldle in (\d+) tr", re.IGNORECASE),
             'needs_timestamp': True,
         },
         {
             'key': 'flagle',
-            'pattern': re.compile(r"I guessed today's Flag in (\d+) tr", re.IGNORECASE),
+            'pattern': re.compile(r"I guessed today['\u2019]s Flag in (\d+) tr", re.IGNORECASE),
             'needs_timestamp': True,
         },
         {
