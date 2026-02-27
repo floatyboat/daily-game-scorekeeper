@@ -2,6 +2,7 @@ import json
 import os
 import requests
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from collections import defaultdict
 
 from game_parser import (
@@ -19,7 +20,7 @@ TEST_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
 HUNDREDS_OF_MESSAGES = int(os.getenv('HUNDREDS_OF_MESSAGES') or 1)
 MINIMUM_PLAYERS = int(os.getenv('MINIMUM_PLAYERS') or 1)
 
-UTC_OFFSET = int(os.getenv('UTC_OFFSET') or 0)
+TIMEZONE = ZoneInfo(os.getenv('TIMEZONE') or 'UTC')
 TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
 HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
 
@@ -66,7 +67,7 @@ def lambda_handler(event, context):
     yesterday = datetime.now() - timedelta(days=1)
     puzzle_numbers = compute_puzzle_numbers(yesterday)
     game_regexes = build_game_regexes(puzzle_numbers)
-    checker = make_timestamp_checker(yesterday, UTC_OFFSET, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
+    checker = make_timestamp_checker(yesterday, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
 
     messages = get_messages(INPUT_CHANNEL_ID)
     if not messages:

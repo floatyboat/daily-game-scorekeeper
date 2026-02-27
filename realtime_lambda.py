@@ -2,7 +2,8 @@ import json
 import os
 import time
 import requests
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from collections import defaultdict
 
 from game_parser import (
@@ -22,7 +23,7 @@ OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
 TEST_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
 MINIMUM_PLAYERS = int(os.getenv('MINIMUM_PLAYERS') or 1)
 
-UTC_OFFSET = int(os.getenv('UTC_OFFSET') or 0)
+TIMEZONE = ZoneInfo(os.getenv('TIMEZONE') or 'UTC')
 TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
 HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
 
@@ -153,9 +154,8 @@ def is_processed(msg):
 
 
 def get_reference_date():
-    """Get today's reference date, accounting for UTC offset and hours-after-midnight."""
-    msg_timezone = timezone(timedelta(hours=UTC_OFFSET))
-    now = datetime.now(msg_timezone)
+    """Get today's reference date, accounting for timezone and hours-after-midnight."""
+    now = datetime.now(TIMEZONE)
     # Before HOURS_AFTER_MIDNIGHT, treat "today" as the previous calendar day
     if now.hour < HOURS_AFTER_MIDNIGHT:
         now = now - timedelta(days=1)
@@ -242,7 +242,7 @@ def poll_once(is_test=False):
     today = get_reference_date()
     puzzle_numbers = compute_puzzle_numbers(today)
     game_regexes = build_game_regexes(puzzle_numbers)
-    checker = make_timestamp_checker(today, UTC_OFFSET, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
+    checker = make_timestamp_checker(today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
 
     # Fetch messages from input channel
     input_messages = get_messages(INPUT_CHANNEL_ID, limit=200)

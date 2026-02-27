@@ -1,5 +1,6 @@
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from dateutil import parser as dateutil_parser
 from collections import defaultdict
 
@@ -51,14 +52,13 @@ def compute_puzzle_numbers(reference_date):
     }
 
 
-def make_timestamp_checker(reference_date, utc_offset, hours_after_midnight, time_window_hours):
+def make_timestamp_checker(reference_date, tz, hours_after_midnight, time_window_hours):
     """Return a callable (iso_timestamp) -> bool for checking if a timestamp falls in the window."""
-    msg_timezone = timezone(timedelta(hours=utc_offset))
     window_start = reference_date.replace(
         hour=hours_after_midnight, minute=0, second=0, microsecond=0
     )
     # Make it timezone-aware
-    window_start = window_start.replace(tzinfo=msg_timezone)
+    window_start = window_start.replace(tzinfo=tz)
     window_end = window_start + timedelta(hours=time_window_hours)
 
     def check(iso_timestamp):
@@ -66,7 +66,7 @@ def make_timestamp_checker(reference_date, utc_offset, hours_after_midnight, tim
             timestamp = dateutil_parser.isoparse(iso_timestamp)
         except (ValueError, TypeError) as e:
             raise ValueError(f"Invalid ISO8601 timestamp: {iso_timestamp}") from e
-        timestamp_in_ref_tz = timestamp.astimezone(msg_timezone)
+        timestamp_in_ref_tz = timestamp.astimezone(tz)
         return window_start <= timestamp_in_ref_tz < window_end
 
     return check
