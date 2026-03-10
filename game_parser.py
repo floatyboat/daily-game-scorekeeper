@@ -294,9 +294,9 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
             message += f'**{game_title} {game_emoji} {f"#{puzzle}" if type(puzzle) == int else f"#67"}**\n'
 
             if metric == 'maptap':
-                for label, score_idx in [('Weighted', 0), ('Raw', 1)]:
+                for label, score_idx in [('', 0), ('Unweighted', 1)]:
                     sorted_players = sorted(results[game_key].items(), key=lambda x: (-x[1][score_idx]))
-                    message += f'*{label}:*\n'
+                    message += f'*{label}:*\n' if label else ''
                     rank = 0
                     prev_val = None
                     i = 0
