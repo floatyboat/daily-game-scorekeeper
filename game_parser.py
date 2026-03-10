@@ -13,7 +13,6 @@ MAPTAP_LINK = 'https://maptap.gg'
 GLOBLE_LINK = 'https://globle.org'
 FLAGLE_LINK = 'https://flagle.org'
 WORLDLE_LINK = 'https://worldlegame.io'
-WHEREDLE_LINK = 'https://wheredle.xyz'
 QUIZL_LINK = 'https://quizl.io'
 CHRONOPHOTO_LINK = 'https://www.chronophoto.app/daily.html'
 
@@ -27,7 +26,6 @@ QUIZL_START_DATE = datetime(2022, 3, 16)
 
 # Default totals
 DEFAULT_BANDLE_TOTAL = 6
-DEFAULT_WHEREDLE_TOTAL = 7
 DEFAULT_QUIZL_TOTAL = 5
 
 
@@ -44,10 +42,8 @@ def compute_puzzle_numbers(reference_date):
         'globle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
         'worldle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
         'flagle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
-        'wheredle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
         'chronophoto_number': f'{reference_date.month}/{reference_date.day}/{reference_date.year}',
         'bandle_total': DEFAULT_BANDLE_TOTAL,
-        'wheredle_total': DEFAULT_WHEREDLE_TOTAL,
         'quizl_total': DEFAULT_QUIZL_TOTAL,
     }
 
@@ -149,11 +145,6 @@ def build_game_regexes(puzzle_numbers):
             'needs_timestamp': True,
         },
         {
-            'key': 'wheredle',
-            'pattern': re.compile(r'#Wheredle', re.IGNORECASE),
-            'needs_timestamp': True,
-        },
-        {
             'key': 'quizl',
             'pattern': re.compile(rf'Quizl#{pn["quizl_puzzle_number"]}', re.IGNORECASE),
             'needs_timestamp': False,
@@ -224,14 +215,6 @@ def match_message(content, timestamp, game_regexes, timestamp_checker):
                 return (key, (weighted_score, raw_score), metadata)
         elif key in ('globle', 'worldle', 'flagle'):
             return (key, int(match.group(1)), metadata)
-        elif key == 'wheredle':
-            yellow_squares = re.findall(r'🟨', content)
-            green_squares = re.findall(r'🟩', content)
-            if len(green_squares) == 0:
-                score = DEFAULT_WHEREDLE_TOTAL + 1
-            else:
-                score = len(yellow_squares) + len(green_squares)
-            return (key, score, metadata)
         elif key == 'quizl':
             score = len(re.findall(r'🟩', content))
             return (key, score, metadata)
@@ -243,7 +226,6 @@ def _build_games_list(puzzle_numbers):
     """Build the list of game descriptors used by scoreboard and medal computation."""
     pn = puzzle_numbers
     bandle_total = pn.get('bandle_total', DEFAULT_BANDLE_TOTAL)
-    wheredle_total = pn.get('wheredle_total', DEFAULT_WHEREDLE_TOTAL)
     quizl_total = pn.get('quizl_total', DEFAULT_QUIZL_TOTAL)
 
     return [
@@ -256,7 +238,6 @@ def _build_games_list(puzzle_numbers):
         ('pips', '🎲', 'Pips', 'time', 0, pn['pips_puzzle_number'], PIPS_LINK),
         ('quizl', '⁉️', 'Quizl', 'score', quizl_total, pn['quizl_puzzle_number'], QUIZL_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, pn['sports_puzzle_number'], SPORTS_CONNECTIONS_LINK),
-        ('wheredle', '🛣️', 'Wheredle', 'guesses', wheredle_total, f'{pn["wheredle_number"]}', WHEREDLE_LINK),
         ('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{pn["worldle_number"]}', WORLDLE_LINK),
     ]
 
