@@ -75,7 +75,7 @@ GAME_METRICS = {
     'bandle': 'guesses',
     'sports': 'connections',
     'pips': 'time',
-    'maptap': 'score',
+    'maptap': 'maptap',
     'chronophoto': 'score',
     'globle': 'guesses',
     'worldle': 'guesses',
@@ -199,11 +199,24 @@ def format_mini_scoreboard(game_key, game_scores, puzzle_numbers):
         players = sorted(game_scores.items(), key=lambda x: (x[1][0], -x[1][1]))
     elif metric == 'score':
         players = sorted(game_scores.items(), key=lambda x: (-x[1]))
+    elif metric == 'maptap':
+        players = sorted(game_scores.items(), key=lambda x: (-x[1][0]))
     else:
         players = sorted(game_scores.items(), key=lambda x: x[1])
 
     link = GAME_LINKS.get(game_key, '')
     linked_title = f"[{title}]({link})" if link else title
+
+    if metric == 'maptap':
+        lines = [f"{emoji} **{linked_title} Leaderboard:**"]
+        for label, score_idx in [('Weighted', 0), ('Raw', 1)]:
+            sorted_players = sorted(game_scores.items(), key=lambda x: (-x[1][score_idx]))
+            lines.append(f"*{label}:*")
+            for idx, (player_id, score) in enumerate(sorted_players):
+                medal = medals[idx] if idx < len(medals) else ''
+                lines.append(f"{medal} <@{player_id}>: {score[score_idx]}")
+        return "\n".join(lines)
+
     lines = [f"{emoji} **{linked_title} Leaderboard:**"]
     for idx, (player_id, score) in enumerate(players):
         medal = medals[idx] if idx < len(medals) else ''

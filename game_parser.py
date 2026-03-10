@@ -209,7 +209,19 @@ def match_message(content, timestamp, game_regexes, timestamp_checker):
         elif key == 'maptap':
             score_match = re.search(r'Final Score: (\d+)', content, re.IGNORECASE)
             if score_match:
-                return (key, int(score_match.group(1)), metadata)
+                weighted_score = int(score_match.group(1))
+                # Parse individual round scores from the emoji line
+                # The scores line has multiple numbers interspersed with emojis
+                lines = content.split('\n')
+                raw_score = weighted_score
+                for line in lines:
+                    if 'final score' in line.lower() or 'maptap' in line.lower():
+                        continue
+                    nums = re.findall(r'\d+', line)
+                    if len(nums) >= 3:
+                        raw_score = sum(int(n) for n in nums)
+                        break
+                return (key, (weighted_score, raw_score), metadata)
         elif key in ('globle', 'worldle', 'flagle'):
             return (key, int(match.group(1)), metadata)
         elif key == 'wheredle':
@@ -240,7 +252,7 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
         ('connections', '🔗', 'Connections', 'connections', 4, pn['connections_puzzle_number'], CONNECTIONS_LINK),
         ('flagle', '🏁', 'Flagle', 'guesses', 0, f'{pn["flagle_number"]}', FLAGLE_LINK),
         ('globle', '🌍', 'Globle', 'guesses', 0, f'{pn["globle_number"]}', GLOBLE_LINK),
-        ('maptap', '🎯', 'MapTap', 'score', 0, pn['maptap_number'], MAPTAP_LINK),
+        ('maptap', '🎯', 'MapTap', 'maptap', 0, pn['maptap_number'], MAPTAP_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pn['pips_puzzle_number'], PIPS_LINK),
         ('quizl', '⁉️', 'Quizl', 'score', quizl_total, pn['quizl_puzzle_number'], QUIZL_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, pn['sports_puzzle_number'], SPORTS_CONNECTIONS_LINK),
@@ -274,10 +286,37 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
                 players = sorted(results[game_key].items(), key=lambda x: (x[1][0], -x[1][1]))
             elif metric == 'score':
                 players = sorted(results[game_key].items(), key=lambda x: (-x[1]))
+            elif metric == 'maptap':
+                players = sorted(results[game_key].items(), key=lambda x: (-x[1][0]))
             else:
                 players = sorted(results[game_key].items(), key=lambda x: x[1])
 
             message += f'**{game_title} {game_emoji} {f"#{puzzle}" if type(puzzle) == int else f"#67"}**\n'
+
+            if metric == 'maptap':
+                for label, score_idx in [('Weighted', 0), ('Raw', 1)]:
+                    sorted_players = sorted(results[game_key].items(), key=lambda x: (-x[1][score_idx]))
+                    message += f'*{label}:*\n'
+                    rank = 0
+                    prev_val = None
+                    i = 0
+                    while i < len(sorted_players):
+                        val = sorted_players[i][1][score_idx]
+                        if val != prev_val:
+                            rank = i + 1
+                        tied = [f'<@{sorted_players[i][0]}>']
+                        j = i + 1
+                        while j < len(sorted_players) and sorted_players[j][1][score_idx] == val:
+                            tied.append(f'<@{sorted_players[j][0]}>')
+                            j += 1
+                        medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
+                        players_str = " ".join(reversed(tied))
+                        message += f'{medal}{players_str}: {val}\n'
+                        prev_val = val
+                        i = j
+                message += '\n'
+                continue
+
             rank = 0
             prev_score = None
             i = 0
