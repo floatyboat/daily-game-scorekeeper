@@ -239,14 +239,14 @@ def match_message(content, timestamp, game_regexes, timestamp_checker):
     return None
 
 
-def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1):
-    """Format the scoreboard message. Parameterized version of format_message()."""
+def _build_games_list(puzzle_numbers):
+    """Build the list of game descriptors used by scoreboard and medal computation."""
     pn = puzzle_numbers
     bandle_total = pn.get('bandle_total', DEFAULT_BANDLE_TOTAL)
     wheredle_total = pn.get('wheredle_total', DEFAULT_WHEREDLE_TOTAL)
     quizl_total = pn.get('quizl_total', DEFAULT_QUIZL_TOTAL)
 
-    games = [
+    return [
         ('bandle', '🎵', 'Bandle', 'guesses', bandle_total, pn['bandle_puzzle_number'], BANDLE_LINK),
         ('chronophoto', '📷', 'Chronophoto', 'score', 0, pn['chronophoto_number'], CHRONOPHOTO_LINK),
         ('connections', '🔗', 'Connections', 'connections', 4, pn['connections_puzzle_number'], CONNECTIONS_LINK),
@@ -259,6 +259,118 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
         ('wheredle', '🛣️', 'Wheredle', 'guesses', wheredle_total, f'{pn["wheredle_number"]}', WHEREDLE_LINK),
         ('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{pn["worldle_number"]}', WORLDLE_LINK),
     ]
+
+
+def compute_medals(results, puzzle_numbers, minimum_players=1):
+    """Compute medal counts per user across all games.
+
+    Returns {user_id: {'gold': int, 'silver': int, 'bronze': int}}.
+    """
+    games = _build_games_list(puzzle_numbers)
+    medal_counts = defaultdict(lambda: {'gold': 0, 'silver': 0, 'bronze': 0})
+    medal_keys = ['gold', 'silver', 'bronze']
+
+    for game_key, _, _, metric, total, _, _ in games:
+        if game_key not in results or not results[game_key] or len(results[game_key]) < minimum_players:
+            continue
+
+        # Sort players using the same keys as format_scoreboard
+        if metric == 'connections':
+            players = sorted(results[game_key].items(), key=lambda x: (x[1][0], -x[1][1]))
+        elif metric == 'score':
+            players = sorted(results[game_key].items(), key=lambda x: (-x[1]))
+        elif metric == 'maptap':
+            players = sorted(results[game_key].items(), key=lambda x: (-x[1][0], -x[1][1]))
+        else:
+            players = sorted(results[game_key].items(), key=lambda x: x[1])
+
+        # Walk with tie-aware ranking
+        rank = 0
+        prev_score = None
+        i = 0
+        while i < len(players):
+            current_score = players[i][1]
+            if current_score != prev_score:
+                rank = i + 1
+
+            # Check for poop override (no medal)
+            is_poop = False
+            if metric == 'connections':
+                mistakes, solved = current_score
+                if mistakes == total and solved == 0:
+                    is_poop = True
+            elif metric == 'guesses' and total > 0:
+                if current_score > total:
+                    is_poop = True
+
+            # Collect tied players
+            j = i + 1
+            while j < len(players) and players[j][1] == current_score:
+                j += 1
+
+            # Award medals if rank <= 3 and not poop
+            if rank <= 3 and not is_poop:
+                medal_key = medal_keys[rank - 1]
+                for k in range(i, j):
+                    medal_counts[players[k][0]][medal_key] += 1
+
+            prev_score = current_score
+            i = j
+
+    return dict(medal_counts)
+
+
+def format_medal_summary(medal_counts):
+    """Format the medal count summary section.
+
+    Returns empty string if no medals earned.
+    """
+    users_with_medals = {
+        uid: counts for uid, counts in medal_counts.items()
+        if counts['gold'] + counts['silver'] + counts['bronze'] > 0
+    }
+
+    if not users_with_medals:
+        return ''
+
+    sorted_users = sorted(
+        users_with_medals.items(),
+        key=lambda x: (-x[1]['gold'], -x[1]['silver'], -x[1]['bronze'])
+    )
+
+    medals = ['👑', '🥈', '🥉']
+    message = '**🏆 Medal Count**\n'
+
+    rank = 0
+    prev_val = None
+    i = 0
+    while i < len(sorted_users):
+        g, s, b = sorted_users[i][1]['gold'], sorted_users[i][1]['silver'], sorted_users[i][1]['bronze']
+        current_val = (g, s, b)
+        if current_val != prev_val:
+            rank = i + 1
+
+        j = i + 1
+        while j < len(sorted_users):
+            gj, sj, bj = sorted_users[j][1]['gold'], sorted_users[j][1]['silver'], sorted_users[j][1]['bronze']
+            if (gj, sj, bj) != current_val:
+                break
+            j += 1
+
+        medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
+        for k in range(i, j):
+            uid = sorted_users[k][0]
+            message += f'{medal}<@{uid}>: 👑x{g} 🥈x{s} 🥉x{b}\n'
+
+        prev_val = current_val
+        i = j
+
+    return message + '\n'
+
+
+def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1):
+    """Format the scoreboard message. Parameterized version of format_message()."""
+    games = _build_games_list(puzzle_numbers)
     medals = ['👑', '🥈', '🥉']
     message = f"🧮 **{title}**"
     no_players_reached = False
@@ -267,6 +379,10 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
         message += "\n\nNo results found!"
     else:
         message += f" - {reference_date.strftime('%B %d, %Y')}\n\n"
+        medal_counts = compute_medals(results, puzzle_numbers, minimum_players)
+        medal_section = format_medal_summary(medal_counts)
+        if medal_section:
+            message += medal_section
         games.sort(key=lambda x: len(results.get(x[0], {})), reverse=True)
         for game_key, game_emoji, game_title, metric, total, puzzle, link in games:
             game_title = f"[{game_title}]({link})"
