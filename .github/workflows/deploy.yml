@@ -51,6 +51,7 @@ jobs:
         echo "✅ Deployment complete!"
     
     - name: Run test event
+      timeout-minutes: 1
       run: |
         echo "🧪 Testing Lambda function..."
         
