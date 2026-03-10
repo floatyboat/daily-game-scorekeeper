@@ -287,33 +287,33 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
             elif metric == 'score':
                 players = sorted(results[game_key].items(), key=lambda x: (-x[1]))
             elif metric == 'maptap':
-                players = sorted(results[game_key].items(), key=lambda x: (-x[1][0]))
+                players = sorted(results[game_key].items(), key=lambda x: (-x[1][0], -x[1][1]))
             else:
                 players = sorted(results[game_key].items(), key=lambda x: x[1])
 
             message += f'**{game_title} {game_emoji} {f"#{puzzle}" if type(puzzle) == int else f"#67"}**\n'
 
             if metric == 'maptap':
-                for label, score_idx in [('', 0), ('Unweighted', 1)]:
-                    sorted_players = sorted(results[game_key].items(), key=lambda x: (-x[1][score_idx]))
-                    message += f'\n{label}:\n' if label else ''
-                    rank = 0
-                    prev_val = None
-                    i = 0
-                    while i < len(sorted_players):
-                        val = sorted_players[i][1][score_idx]
-                        if val != prev_val:
-                            rank = i + 1
-                        tied = [f'<@{sorted_players[i][0]}>']
-                        j = i + 1
-                        while j < len(sorted_players) and sorted_players[j][1][score_idx] == val:
-                            tied.append(f'<@{sorted_players[j][0]}>')
-                            j += 1
-                        medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
-                        players_str = " ".join(reversed(tied))
-                        message += f'{medal}{players_str}: {val}\n'
-                        prev_val = val
-                        i = j
+                sorted_players = sorted(results[game_key].items(), key=lambda x: (-x[1][0], -x[1][1]))
+                rank = 0
+                prev_val = None
+                i = 0
+                while i < len(sorted_players):
+                    weighted = sorted_players[i][1][0]
+                    unweighted = sorted_players[i][1][1]
+                    score_tuple = (weighted, unweighted)
+                    if score_tuple != prev_val:
+                        rank = i + 1
+                    tied = [f'<@{sorted_players[i][0]}>']
+                    j = i + 1
+                    while j < len(sorted_players) and (sorted_players[j][1][0], sorted_players[j][1][1]) == score_tuple:
+                        tied.append(f'<@{sorted_players[j][0]}>')
+                        j += 1
+                    medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
+                    players_str = " ".join(reversed(tied))
+                    message += f'{medal}{players_str}: {weighted} ({unweighted})\n'
+                    prev_val = score_tuple
+                    i = j
                 message += '\n'
                 continue
 
