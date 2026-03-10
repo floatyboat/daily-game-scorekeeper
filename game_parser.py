@@ -311,7 +311,7 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
                         j += 1
                     medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
                     players_str = " ".join(reversed(tied))
-                    message += f'{medal}{players_str}: {weighted} ({unweighted})\n'
+                    message += f'{medal}{players_str}: {weighted} ({unweighted}/500)\n'
                     prev_val = score_tuple
                     i = j
                 message += '\n'
