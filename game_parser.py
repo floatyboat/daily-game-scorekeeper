@@ -16,6 +16,22 @@ WORLDLE_LINK = 'https://worldlegame.io'
 QUIZL_LINK = 'https://quizl.io'
 CHRONOPHOTO_LINK = 'https://www.chronophoto.app/daily.html'
 
+# Accent color constants (Discord integer colors)
+HEADER_COLOR = 16766720       # gold
+OTHER_GAMES_COLOR = 10395294  # gray
+GAME_COLORS = {
+    'connections': 10181046,  # purple
+    'bandle': 15277667,       # pink
+    'sports': 5763719,        # green
+    'pips': 10181046,         # purple
+    'maptap': 15105570,       # orange
+    'chronophoto': 11027200,  # brown
+    'globle': 3447003,        # blue
+    'worldle': 1752220,       # cyan
+    'flagle': 15105570,       # orange
+    'quizl': 9807270,         # blue-gray
+}
+
 # Start date constants
 CONNECTIONS_START_DATE = datetime(2023, 6, 12)
 BANDLE_START_DATE = datetime(2022, 8, 18)
@@ -320,7 +336,7 @@ def format_medal_summary(medal_counts):
     )
 
     medals = ['👑', '🥈', '🥉']
-    message = '**🏆 Medal Count**\n'
+    message = ''
 
     rank = 0
     prev_val = None
@@ -349,10 +365,102 @@ def format_medal_summary(medal_counts):
     return message + '\n'
 
 
+def _format_game_players(game_scores, metric, total):
+    """Format ranked player lines for a single game.
+
+    Returns a markdown string with medal emojis, player mentions, and scores.
+    """
+    medals = ['👑', '🥈', '🥉']
+    lines = ''
+
+    if metric == 'maptap':
+        sorted_players = sorted(game_scores.items(), key=lambda x: (-x[1][0], -x[1][1]))
+        rank = 0
+        prev_val = None
+        i = 0
+        while i < len(sorted_players):
+            weighted = sorted_players[i][1][0]
+            unweighted = sorted_players[i][1][1]
+            score_tuple = (weighted, unweighted)
+            if score_tuple != prev_val:
+                rank = i + 1
+            tied = [f'<@{sorted_players[i][0]}>']
+            j = i + 1
+            while j < len(sorted_players) and (sorted_players[j][1][0], sorted_players[j][1][1]) == score_tuple:
+                tied.append(f'<@{sorted_players[j][0]}>')
+                j += 1
+            medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
+            players_str = " ".join(reversed(tied))
+            lines += f'{medal}{players_str}: {weighted} ({unweighted} total)\n'
+            prev_val = score_tuple
+            i = j
+        return lines
+
+    if metric == 'connections':
+        players = sorted(game_scores.items(), key=lambda x: (x[1][0], -x[1][1]))
+    elif metric == 'score':
+        players = sorted(game_scores.items(), key=lambda x: (-x[1]))
+    else:
+        players = sorted(game_scores.items(), key=lambda x: x[1])
+
+    rank = 0
+    prev_score = None
+    i = 0
+
+    while i < len(players):
+        current_score = players[i][1]
+
+        if current_score != prev_score:
+            rank = i + 1
+
+        tied_players = [f'<@{players[i][0]}>']
+        j = i + 1
+        while j < len(players) and players[j][1] == current_score:
+            tied_players.append(f'<@{players[j][0]}>')
+            j += 1
+
+        medal = f"{medals[rank - 1]} " if rank <= len(medals) else f""
+
+        if metric == 'time':
+            minutes = current_score // 60
+            seconds = current_score % 60
+            score_str = f"{minutes}:{seconds:02d}"
+        elif metric == 'connections':
+            mistakes, solved = current_score
+            if mistakes == -1:
+                score_str = "VERT 🧗"
+            elif mistakes == total:
+                score_str = f"{mistakes}/{total} mistakes ({solved} solved)"
+                if solved == 0:
+                    medal = '💩'
+            else:
+                score_str = f"{mistakes}/{total} mistakes"
+        elif metric == 'score':
+            score_str = f"{str(current_score)}"
+            if total > 0:
+                score_str = f"{score_str}/{total}"
+        else:  # guesses
+            if total == 0:
+                score_str = f"{str(current_score)} {metric}"
+            else:
+                if current_score > total:
+                    medal = '💩'
+                    current_score = 'X'
+                score_str = f"{str(current_score)}/{total} {metric}"
+
+        players_str = " ".join(reversed(tied_players))
+        lines += f'{medal}'
+        lines += f"{players_str}: {score_str}\n"
+
+        prev_score = current_score
+        i = j
+
+    return lines
+
+
 def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1):
     """Format the scoreboard message. Parameterized version of format_message()."""
     games = _build_games_list(puzzle_numbers)
-    medals = ['👑', '🥈', '🥉']
     message = f"🧮 **{title}**"
     no_players_reached = False
     one_player_reached = False
@@ -379,93 +487,77 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
 
             one_player_reached = True
 
-            if metric == 'connections':
-                players = sorted(results[game_key].items(), key=lambda x: (x[1][0], -x[1][1]))
-            elif metric == 'score':
-                players = sorted(results[game_key].items(), key=lambda x: (-x[1]))
-            elif metric == 'maptap':
-                players = sorted(results[game_key].items(), key=lambda x: (-x[1][0], -x[1][1]))
-            else:
-                players = sorted(results[game_key].items(), key=lambda x: x[1])
-
             message += f'**{game_title} {game_emoji} {f"#{puzzle}" if type(puzzle) == int else f"#67"}**\n'
+            message += _format_game_players(results[game_key], metric, total)
 
-            if metric == 'maptap':
-                sorted_players = sorted(results[game_key].items(), key=lambda x: (-x[1][0], -x[1][1]))
-                rank = 0
-                prev_val = None
-                i = 0
-                while i < len(sorted_players):
-                    weighted = sorted_players[i][1][0]
-                    unweighted = sorted_players[i][1][1]
-                    score_tuple = (weighted, unweighted)
-                    if score_tuple != prev_val:
-                        rank = i + 1
-                    tied = [f'<@{sorted_players[i][0]}>']
-                    j = i + 1
-                    while j < len(sorted_players) and (sorted_players[j][1][0], sorted_players[j][1][1]) == score_tuple:
-                        tied.append(f'<@{sorted_players[j][0]}>')
-                        j += 1
-                    medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
-                    players_str = " ".join(reversed(tied))
-                    message += f'{medal}{players_str}: {weighted} ({unweighted} unweighted)\n'
-                    prev_val = score_tuple
-                    i = j
-                message += '\n'
-                continue
-
-            rank = 0
-            prev_score = None
-            i = 0
-
-            while i < len(players):
-                current_score = players[i][1]
-
-                if current_score != prev_score:
-                    rank = i + 1
-
-                tied_players = [f'<@{players[i][0]}>']
-                j = i + 1
-                while j < len(players) and players[j][1] == current_score:
-                    tied_players.append(f'<@{players[j][0]}>')
-                    j += 1
-
-                medal = f"{medals[rank - 1]} " if rank <= len(medals) else f""
-
-                if metric == 'time':
-                    minutes = current_score // 60
-                    seconds = current_score % 60
-                    score_str = f"{minutes}:{seconds:02d}"
-                elif metric == 'connections':
-                    mistakes, solved = current_score
-                    if mistakes == -1:
-                        score_str = "VERT 🧗"
-                    elif mistakes == total:
-                        score_str = f"{mistakes}/{total} mistakes ({solved} solved)"
-                        if solved == 0:
-                            medal = '💩'
-                    else:
-                        score_str = f"{mistakes}/{total} mistakes"
-                elif metric == 'score':
-                    score_str = f"{str(current_score)}"
-                    if total > 0:
-                        score_str = f"{score_str}/{total}"
-                else:  # guesses
-                    if total == 0:
-                        score_str = f"{str(current_score)} {metric}"
-                    else:
-                        if current_score > total:
-                            medal = '💩'
-                            current_score = 'X'
-                        score_str = f"{str(current_score)}/{total} {metric}"
-
-                players_str = " ".join(reversed(tied_players))
-                message += f'{medal}'
-                message += f"{players_str}: {score_str}\n"
-
-                prev_score = current_score
-                i = j
-
-            if len(players) >= minimum_players:
+            if len(results[game_key]) >= minimum_players:
                 message += "\n"
     return message
+
+
+MEDAL_COLOR = 15844367  # dark gold
+
+def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1):
+    """Format the scoreboard as Discord Components V2 (list of top-level components).
+
+    Returns a list[dict] suitable for the 'components' field in a Discord message.
+    """
+    games = _build_games_list(puzzle_numbers)
+    components = []
+
+    # --- Header container ---
+    header_text = f"### 🧮 {title} - {reference_date.strftime('%B %d, %Y')}"
+
+    if not results:
+        return [{"type": 17, "accent_color": HEADER_COLOR, "components": [
+            {"type": 10, "content": header_text},
+            {"type": 10, "content": "No results found!"},
+        ]}]
+
+    # --- Medal container (gold accent) ---
+    medal_counts = compute_medals(results, puzzle_numbers, minimum_players)
+    medal_section = format_medal_summary(medal_counts)
+    if medal_section:
+        components.append({"type": 17, "accent_color": HEADER_COLOR, "components": [
+            {"type": 10, "content": header_text},
+            {"type": 10, "content": medal_section.rstrip('\n')},
+        ]})
+    else:
+        components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": [
+            {"type": 10, "content": header_text},
+        ]})
+
+    # Sort games by player count descending
+    games.sort(key=lambda x: len(results.get(x[0], {})), reverse=True)
+
+    qualified = []
+    other = []
+    for game in games:
+        game_key = game[0]
+        if game_key in results and results[game_key] and len(results[game_key]) >= minimum_players:
+            qualified.append(game)
+        else:
+            other.append(game)
+
+    # --- Scores container ---
+    scores_children = []
+    for g_idx, (game_key, game_emoji, game_title, metric, total, puzzle, link) in enumerate(qualified):
+        if g_idx > 0:
+            scores_children.append({"type": 14, "spacing": 1})  # Separator
+        puzzle_label = f"#{puzzle}" if type(puzzle) == int else "#67"
+        score_text = f"**[{game_title}]({link}) {game_emoji} {puzzle_label}**\n"
+        score_text += _format_game_players(results[game_key], metric, total).rstrip('\n')
+        scores_children.append({"type": 10, "content": score_text})
+
+    # Append other games play buttons to the scores container
+    if other:
+        scores_children.append({"type": 14, "spacing": 1})
+        buttons = [{"type": 2, "style": 5, "label": f"{ge} {gt}", "url": lk}
+                   for _, ge, gt, _, _, _, lk in other]
+        for i in range(0, len(buttons), 5):
+            scores_children.append({"type": 1, "components": buttons[i:i+5]})
+
+    if scores_children:
+        components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": scores_children})
+
+    return components

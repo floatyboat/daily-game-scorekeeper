@@ -7,7 +7,7 @@ from collections import defaultdict
 
 from game_parser import (
     compute_puzzle_numbers, build_game_regexes, match_message,
-    format_scoreboard, make_timestamp_checker
+    format_scoreboard, format_scoreboard_components, make_timestamp_checker
 )
 
 DISCORD_API_BASE = 'https://discord.com/api/v10'
@@ -18,7 +18,7 @@ INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
 OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
 TEST_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
 HUNDREDS_OF_MESSAGES = int(os.getenv('HUNDREDS_OF_MESSAGES') or 1)
-MINIMUM_PLAYERS = int(os.getenv('MINIMUM_PLAYERS') or 1)
+MINIMUM_PLAYERS = int(os.getenv('MINIMUM_PLAYERS') or 2)
 
 TIMEZONE = ZoneInfo(os.getenv('TIMEZONE') or 'UTC')
 TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
@@ -41,14 +41,22 @@ def get_messages(channel_id):
         messages += response.json()
     return messages
 
-def send_message(channel_id, message):
+def send_message(channel_id, message=None, components=None):
     headers = {
         'Authorization': f'Bot {DISCORD_BOT_TOKEN}',
         'Content-Type': 'application/json'
     }
 
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages'
-    payload = {'content': message, 'allowed_mentions': {'parse': ['users']}, 'flags': 4}
+
+    if components is not None:
+        payload = {
+            'components': components,
+            'flags': 32768,
+            'allowed_mentions': {'parse': ['users']},
+        }
+    else:
+        payload = {'content': message, 'allowed_mentions': {'parse': ['users']}, 'flags': 4}
 
     response = requests.post(url, headers=headers, json=payload)
 
@@ -89,15 +97,16 @@ def lambda_handler(event, context):
             results[game_key][msg['author']['id']] = score
             puzzle_numbers.update(metadata)
 
-    output = format_scoreboard(results, yesterday, puzzle_numbers, minimum_players=MINIMUM_PLAYERS)
+    components = format_scoreboard_components(results, yesterday, puzzle_numbers, minimum_players=MINIMUM_PLAYERS)
+
+    channel = TEST_CHANNEL_ID if 'test' in event else OUTPUT_CHANNEL_ID
+    response = send_message(channel, components=components)
 
     if 'test' in event:
-        response = send_message(TEST_CHANNEL_ID, output)
-        msg = f'TEST: Scoreboard posted'
+        msg = 'TEST: Scoreboard posted'
     else:
-        response = send_message(OUTPUT_CHANNEL_ID, output)
-        msg = f'Scoreboard posted'
-        pin_message(OUTPUT_CHANNEL_ID, response['id'])
+        msg = 'Scoreboard posted'
+        pin_message(channel, response['id'])
 
     return {
         'statusCode': 200,
