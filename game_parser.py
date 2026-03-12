@@ -462,8 +462,6 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
     """Format the scoreboard message. Parameterized version of format_message()."""
     games = build_games_list(puzzle_numbers)
     message = f"🧮 **{title}**"
-    no_players_reached = False
-    one_player_reached = False
     if not results:
         message += "\n\nNo results found!"
     else:
@@ -474,24 +472,13 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
             message += medal_section
         games.sort(key=lambda x: len(results.get(x[0], {})), reverse=True)
         for game_key, game_emoji, game_title, metric, total, puzzle, link in games:
-            game_title = f"[{game_title}]({link})"
-
             if game_key not in results or not results[game_key] or len(results[game_key]) < minimum_players:
-                if not no_players_reached:
-                    if one_player_reached:
-                        message += '\n'
-                    message += f'-# Other games:\t'
-                no_players_reached = True
-                message += f'{game_emoji} {game_title}\t'
                 continue
 
-            one_player_reached = True
-
+            game_title = f"[{game_title}]({link})"
             message += f'**{game_title} {game_emoji} {f"#{puzzle}" if type(puzzle) == int else f"#67"}**\n'
             message += _format_game_players(results[game_key], metric, total)
-
-            if len(results[game_key]) >= minimum_players:
-                message += "\n"
+            message += "\n"
     return message
 
 
@@ -530,14 +517,7 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     # Sort games by player count descending
     games.sort(key=lambda x: len(results.get(x[0], {})), reverse=True)
 
-    qualified = []
-    other = []
-    for game in games:
-        game_key = game[0]
-        if game_key in results and results[game_key] and len(results[game_key]) >= minimum_players:
-            qualified.append(game)
-        else:
-            other.append(game)
+    qualified = [g for g in games if g[0] in results and results[g[0]] and len(results[g[0]]) >= minimum_players]
 
     # --- Scores container ---
     scores_children = []
@@ -548,14 +528,6 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
         score_text = f"**[{game_title}]({link}) {game_emoji} {puzzle_label}**\n"
         score_text += _format_game_players(results[game_key], metric, total).rstrip('\n')
         scores_children.append({"type": 10, "content": score_text})
-
-    # Append other games play buttons to the scores container
-    if other:
-        scores_children.append({"type": 14, "spacing": 1})
-        buttons = [{"type": 2, "style": 5, "label": f"{ge} {gt}", "url": lk}
-                   for _, ge, gt, _, _, _, lk in other]
-        for i in range(0, len(buttons), 5):
-            scores_children.append({"type": 1, "components": buttons[i:i+5]})
 
     if scores_children:
         components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": scores_children})
