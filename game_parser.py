@@ -238,7 +238,7 @@ def match_message(content, timestamp, game_regexes, timestamp_checker):
     return None
 
 
-def _build_games_list(puzzle_numbers):
+def build_games_list(puzzle_numbers):
     """Build the list of game descriptors used by scoreboard and medal computation."""
     pn = puzzle_numbers
     bandle_total = pn.get('bandle_total', DEFAULT_BANDLE_TOTAL)
@@ -263,7 +263,7 @@ def compute_medals(results, puzzle_numbers, minimum_players=1):
 
     Returns {user_id: {'gold': int, 'silver': int, 'bronze': int}}.
     """
-    games = _build_games_list(puzzle_numbers)
+    games = build_games_list(puzzle_numbers)
     medal_counts = defaultdict(lambda: {'gold': 0, 'silver': 0, 'bronze': 0})
     medal_keys = ['gold', 'silver', 'bronze']
 
@@ -460,7 +460,7 @@ def _format_game_players(game_scores, metric, total):
 
 def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1):
     """Format the scoreboard message. Parameterized version of format_message()."""
-    games = _build_games_list(puzzle_numbers)
+    games = build_games_list(puzzle_numbers)
     message = f"🧮 **{title}**"
     no_players_reached = False
     one_player_reached = False
@@ -502,7 +502,7 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
 
     Returns a list[dict] suitable for the 'components' field in a Discord message.
     """
-    games = _build_games_list(puzzle_numbers)
+    games = build_games_list(puzzle_numbers)
     components = []
 
     # --- Header container ---
