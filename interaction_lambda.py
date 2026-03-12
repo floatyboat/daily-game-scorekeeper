@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 from datetime import datetime
@@ -9,12 +10,19 @@ from game_parser import compute_puzzle_numbers, build_games_list
 DISCORD_PUBLIC_KEY = os.getenv('DISCORD_PUBLIC_KEY', '')
 
 
-def verify_signature(event):
+def get_body(event):
+    """Extract the raw body string, decoding base64 if needed."""
+    body = event.get('body', '')
+    if event.get('isBase64Encoded'):
+        body = base64.b64decode(body).decode('utf-8')
+    return body
+
+
+def verify_signature(body, event):
     """Verify Discord Ed25519 request signature. Raises on failure."""
     headers = {k.lower(): v for k, v in event.get('headers', {}).items()}
     signature = headers.get('x-signature-ed25519', '')
     timestamp = headers.get('x-signature-timestamp', '')
-    body = event.get('body', '')
 
     verify_key = VerifyKey(bytes.fromhex(DISCORD_PUBLIC_KEY))
     verify_key.verify(f'{timestamp}{body}'.encode(), bytes.fromhex(signature))
@@ -46,13 +54,15 @@ def build_play_response():
 
 
 def lambda_handler(event, context):
+    raw_body = get_body(event)
+
     # Verify signature
     try:
-        verify_signature(event)
+        verify_signature(raw_body, event)
     except (BadSignatureError, ValueError, Exception):
         return {'statusCode': 401, 'body': 'Invalid request signature'}
 
-    body = json.loads(event.get('body', '{}'))
+    body = json.loads(raw_body)
 
     # PING (type 1) — Discord endpoint validation
     if body.get('type') == 1:
