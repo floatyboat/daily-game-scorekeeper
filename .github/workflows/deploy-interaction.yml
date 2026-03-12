@@ -24,7 +24,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.12'
+        python-version: '3.14'
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -35,8 +35,9 @@ jobs:
 
     - name: Package Lambda function
       run: |
-        echo "Installing PyNaCl for Amazon Linux..."
-        pip install --platform manylinux2014_x86_64 --only-binary=:all: --target package/ PyNaCl
+        echo "Installing PyNaCl in Lambda-compatible container..."
+        docker run --rm -v "$PWD":/var/task public.ecr.aws/sam/build-python3.14:latest \
+          bash -c "pip install PyNaCl -t /var/task/package/"
         cd package && zip -r ../function.zip . && cd ..
         zip function.zip interaction_lambda.py game_parser.py
         echo "Package created: $(ls -lh function.zip | awk '{print $5}')"
