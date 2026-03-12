@@ -35,8 +35,8 @@ jobs:
 
     - name: Package Lambda function
       run: |
-        echo "Installing PyNaCl..."
-        pip install PyNaCl -t package/
+        echo "Installing PyNaCl for Amazon Linux..."
+        pip install --platform manylinux2014_x86_64 --only-binary=:all: --target package/ PyNaCl
         cd package && zip -r ../function.zip . && cd ..
         zip function.zip interaction_lambda.py game_parser.py
         echo "Package created: $(ls -lh function.zip | awk '{print $5}')"

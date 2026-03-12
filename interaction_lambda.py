@@ -54,15 +54,19 @@ def build_play_response():
 
 
 def lambda_handler(event, context):
-    raw_body = get_body(event)
+    # Direct invocations (AWS console/CLI) don't come through the Function URL
+    # and already require IAM auth, so skip signature verification
+    is_direct = 'requestContext' not in event
 
-    # Verify signature
-    try:
-        verify_signature(raw_body, event)
-    except (BadSignatureError, ValueError, Exception):
-        return {'statusCode': 401, 'body': 'Invalid request signature'}
-
-    body = json.loads(raw_body)
+    if is_direct:
+        body = event
+    else:
+        raw_body = get_body(event)
+        try:
+            verify_signature(raw_body, event)
+        except (BadSignatureError, ValueError, Exception):
+            return {'statusCode': 401, 'body': 'Invalid request signature'}
+        body = json.loads(raw_body)
 
     # PING (type 1) — Discord endpoint validation
     if body.get('type') == 1:
