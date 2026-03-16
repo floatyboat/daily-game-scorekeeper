@@ -10,6 +10,7 @@ BANDLE_LINK = 'https://bandle.app/daily'
 PIPS_LINK = 'https://www.nytimes.com/games/pips'
 SPORTS_CONNECTIONS_LINK = 'https://www.nytimes.com/athletic/connections-sports-edition'
 MAPTAP_LINK = 'https://maptap.gg'
+MAPTAP_CHALLENGE_LINK = 'https://maptap.gg/adventures?gametype=challenge'
 GLOBLE_LINK = 'https://globle.org'
 FLAGLE_LINK = 'https://flagle.org'
 WORLDLE_LINK = 'https://worldlegame.io'
@@ -25,6 +26,7 @@ GAME_COLORS = {
     'sports': 5763719,        # green
     'pips': 10181046,         # purple
     'maptap': 15105570,       # orange
+    'maptap_challenge': 15105570,  # orange
     'chronophoto': 11027200,  # brown
     'globle': 3447003,        # blue
     'worldle': 1752220,       # cyan
@@ -55,6 +57,7 @@ def compute_puzzle_numbers(reference_date):
         'maptap_number': int((reference_date - MAPTAP_START_DATE).days + 1),
         'quizl_puzzle_number': int((reference_date - QUIZL_START_DATE).days + 1),
         'maptap_date': f'{reference_date.strftime("%B")} {reference_date.day}',
+        'maptap_challenge_date': f'{reference_date.strftime("%b")} {reference_date.day}',
         'globle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
         'worldle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
         'flagle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
@@ -132,6 +135,11 @@ def build_game_regexes(puzzle_numbers):
         {
             'key': 'pips',
             'pattern': re.compile(rf'Pips #{pn["pips_puzzle_number"]} Hard', re.IGNORECASE),
+            'needs_timestamp': False,
+        },
+        {
+            'key': 'maptap_challenge',
+            'pattern': re.compile(rf'MapTap Challenge Round.*{pn["maptap_challenge_date"]}', re.IGNORECASE),
             'needs_timestamp': False,
         },
         {
@@ -213,6 +221,20 @@ def match_message(content, timestamp, game_regexes, timestamp_checker):
                 minutes = int(pips_match.group(1))
                 seconds = int(pips_match.group(2))
                 return (key, minutes * 60 + seconds, metadata)
+        elif key == 'maptap_challenge':
+            score_match = re.search(r'Score: (\d+)', content, re.IGNORECASE)
+            if score_match:
+                weighted_score = int(score_match.group(1))
+                lines = content.split('\n')
+                raw_score = weighted_score
+                for line in lines:
+                    if 'score' in line.lower() or 'maptap' in line.lower():
+                        continue
+                    nums = re.findall(r'\d+', line)
+                    if len(nums) >= 3:
+                        raw_score = sum(int(n) for n in nums)
+                        break
+                return (key, (weighted_score, raw_score), metadata)
         elif key == 'maptap':
             score_match = re.search(r'Final Score: (\d+)', content, re.IGNORECASE)
             if score_match:
@@ -251,6 +273,7 @@ def build_games_list(puzzle_numbers):
         ('flagle', '🏁', 'Flagle', 'guesses', 0, f'{pn["flagle_number"]}', FLAGLE_LINK),
         ('globle', '🌍', 'Globle', 'guesses', 0, f'{pn["globle_number"]}', GLOBLE_LINK),
         ('maptap', '🎯', 'MapTap', 'maptap', 0, pn['maptap_number'], MAPTAP_LINK),
+        ('maptap_challenge', '⚡', 'MapTap Challenge', 'maptap', 0, pn['maptap_number'], MAPTAP_CHALLENGE_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pn['pips_puzzle_number'], PIPS_LINK),
         ('quizl', '⁉️', 'Quizl', 'score', quizl_total, pn['quizl_puzzle_number'], QUIZL_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, pn['sports_puzzle_number'], SPORTS_CONNECTIONS_LINK),

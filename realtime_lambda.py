@@ -8,7 +8,7 @@ from collections import defaultdict
 from game_parser import (
     compute_puzzle_numbers, build_game_regexes, match_message,
     format_scoreboard, make_timestamp_checker, BANDLE_LINK, PIPS_LINK,
-    CONNECTIONS_LINK, SPORTS_CONNECTIONS_LINK, MAPTAP_LINK, GLOBLE_LINK,
+    CONNECTIONS_LINK, SPORTS_CONNECTIONS_LINK, MAPTAP_LINK, MAPTAP_CHALLENGE_LINK, GLOBLE_LINK,
     FLAGLE_LINK, WORLDLE_LINK, WHEREDLE_LINK, QUIZL_LINK, CHRONOPHOTO_LINK,
     DEFAULT_BANDLE_TOTAL, DEFAULT_WHEREDLE_TOTAL, DEFAULT_QUIZL_TOTAL,
 )
@@ -34,6 +34,7 @@ GAME_EMOJIS = {
     'sports': '🏈',
     'pips': '🎲',
     'maptap': '🎯',
+    'maptap_challenge': '⚡',
     'chronophoto': '📷',
     'globle': '🌍',
     'worldle': '🗺️',
@@ -48,6 +49,7 @@ GAME_TITLES = {
     'sports': 'Sports Connections',
     'pips': 'Pips',
     'maptap': 'MapTap',
+    'maptap_challenge': 'MapTap Challenge',
     'chronophoto': 'Chronophoto',
     'globle': 'Globle',
     'worldle': 'Worldle',
@@ -62,6 +64,7 @@ GAME_LINKS = {
     'sports': SPORTS_CONNECTIONS_LINK,
     'pips': PIPS_LINK,
     'maptap': MAPTAP_LINK,
+    'maptap_challenge': MAPTAP_CHALLENGE_LINK,
     'chronophoto': CHRONOPHOTO_LINK,
     'globle': GLOBLE_LINK,
     'worldle': WORLDLE_LINK,
@@ -76,6 +79,7 @@ GAME_METRICS = {
     'sports': 'connections',
     'pips': 'time',
     'maptap': 'maptap',
+    'maptap_challenge': 'maptap',
     'chronophoto': 'score',
     'globle': 'guesses',
     'worldle': 'guesses',
@@ -85,7 +89,7 @@ GAME_METRICS = {
 }
 
 # Games disabled from realtime processing (handled by dedicated bots)
-REALTIME_DISABLED_GAMES = {'maptap'}
+REALTIME_DISABLED_GAMES = {'maptap', 'maptap_challenge'}
 
 
 def get_headers():
