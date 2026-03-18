@@ -300,7 +300,7 @@ def compute_medals(results, puzzle_numbers, minimum_players=1):
         elif metric == 'score':
             players = sorted(results[game_key].items(), key=lambda x: (-x[1]))
         elif metric == 'maptap':
-            players = sorted(results[game_key].items(), key=lambda x: (-x[1][0], -x[1][1]))
+            players = sorted(results[game_key].items(), key=lambda x: (-x[1][1], -x[1][0]))
         else:
             players = sorted(results[game_key].items(), key=lambda x: x[1])
 
@@ -397,24 +397,24 @@ def _format_game_players(game_scores, metric, total):
     lines = ''
 
     if metric == 'maptap':
-        sorted_players = sorted(game_scores.items(), key=lambda x: (-x[1][0], -x[1][1]))
+        sorted_players = sorted(game_scores.items(), key=lambda x: (-x[1][1], -x[1][0]))
         rank = 0
         prev_val = None
         i = 0
         while i < len(sorted_players):
             weighted = sorted_players[i][1][0]
             unweighted = sorted_players[i][1][1]
-            score_tuple = (weighted, unweighted)
+            score_tuple = (unweighted, weighted)
             if score_tuple != prev_val:
                 rank = i + 1
             tied = [f'<@{sorted_players[i][0]}>']
             j = i + 1
-            while j < len(sorted_players) and (sorted_players[j][1][0], sorted_players[j][1][1]) == score_tuple:
+            while j < len(sorted_players) and (sorted_players[j][1][1], sorted_players[j][1][0]) == score_tuple:
                 tied.append(f'<@{sorted_players[j][0]}>')
                 j += 1
             medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
             players_str = " ".join(reversed(tied))
-            lines += f'{medal}{players_str}: {weighted} ({unweighted} total)\n'
+            lines += f'{medal}{players_str}: {unweighted} ({weighted} weighted)\n'
             prev_val = score_tuple
             i = j
         return lines
