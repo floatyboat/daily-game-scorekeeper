@@ -12,9 +12,10 @@ Reads a channel in a discord server for daily puzzle games and posts a scoreboar
 8. [Pips](https://www.nytimes.com/games/pips)
 9. [Quizl](https://quizl.io)
 10. [Wheredle](https://wheredle.xyz)
-11. [Worldle](https://worldlegame.io)
+11. [Wordle](https://www.nytimes.com/games/wordle)
+12. [Worldle](https://worldlegame.io)
 
-Note: Wordle has official support. So, it is left out of this project.
+Wordle supports both pasted share text and image recognition from the official Wordle Discord bot.
 ## Setup
 1. Download the code into a directory.
 2. Create a `.env` file in the directory.
@@ -38,3 +39,13 @@ Note: Wordle has official support. So, it is left out of this project.
     For example, I have mine set to `America/New_York` for `TIMEZONE`, 3 for `HOURS_AFTER_MIDNIGHT`, and 21 for `TIME_WINDOW_HOURS`. This allows submissions from 3AM - 12 AM and prevents the bot from counting the wrong submission if someone were to submit a puzzle score in UTC -7 during that window, where it would still be the day prior.
 - `HUNDREDS_OF_MESSAGES` - if your input channel gets more than 100 messages a day, set this variable for how many hundreds of messages it gets per day. (default: 1)
 - `MINIMUM_PLAYERS` - filter out games below a minimum player count. (default: 1)
+
+### Wordle Image Recognition (Optional)
+The bot can parse Wordle result images posted by the official [Wordle Discord bot](https://support.nytimes.com/s/article/wordle-discord-bot). This requires [Pillow](https://pypi.org/project/Pillow/) to be available in the runtime.
+
+1. Set `WORDLE_BOT_ID` to the Wordle bot's Discord user ID in your `.env` file.
+2. Make Pillow available to your Lambda function. Either:
+   - **Lambda Layer**: Attach a pre-built Pillow layer (e.g. from [Klayers](https://github.com/keithrozario/Klayers)) matching your Python version and region.
+   - **Bundled in deploy zip**: Build Pillow in a Lambda-compatible container during CI (see `deploy.yml` for an example).
+
+Without Pillow, the bot still tracks Wordle via pasted share text — image recognition is skipped gracefully.
