@@ -15,6 +15,7 @@ FLAGLE_LINK = 'https://flagle.org'
 WORLDLE_LINK = 'https://worldlegame.io'
 QUIZL_LINK = 'https://quizl.io'
 CHRONOPHOTO_LINK = 'https://www.chronophoto.app/daily.html'
+WORDLE_LINK = 'https://www.nytimes.com/games/wordle'
 
 # Accent color constants (Discord integer colors)
 HEADER_COLOR = 16766720       # gold
@@ -30,6 +31,7 @@ GAME_COLORS = {
     'worldle': 1752220,       # cyan
     'flagle': 15105570,       # orange
     'quizl': 9807270,         # blue-gray
+    'wordle': 5763719,        # green
 }
 
 # Start date constants
@@ -39,10 +41,12 @@ PIPS_START_DATE = datetime(2025, 8, 18)
 SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
 MAPTAP_START_DATE = datetime(2024, 6, 22)
 QUIZL_START_DATE = datetime(2022, 3, 16)
+WORDLE_START_DATE = datetime(2021, 6, 19)
 
 # Default totals
 DEFAULT_BANDLE_TOTAL = 6
 DEFAULT_QUIZL_TOTAL = 5
+DEFAULT_WORDLE_TOTAL = 6
 
 
 def compute_puzzle_numbers(reference_date):
@@ -59,6 +63,7 @@ def compute_puzzle_numbers(reference_date):
         'worldle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
         'flagle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
         'chronophoto_number': f'{reference_date.month}/{reference_date.day}/{reference_date.year}',
+        'wordle_puzzle_number': int((reference_date - WORDLE_START_DATE).days),
         'bandle_total': DEFAULT_BANDLE_TOTAL,
         'quizl_total': DEFAULT_QUIZL_TOTAL,
     }
@@ -82,6 +87,63 @@ def make_timestamp_checker(reference_date, tz, hours_after_midnight, time_window
         return window_start <= timestamp_in_ref_tz < window_end
 
     return check
+
+
+def parse_wordle_image(image_bytes):
+    """Parse a Wordle result image and return the number of guesses (1-6) or 7 for X/6.
+
+    Analyzes the 5x6 grid from Wordle bot images (512x280 PNG).
+    Returns None on parse failure.
+    """
+    from PIL import Image
+    import io
+
+    img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+
+    # Grid layout for standard 512x280 Wordle bot images
+    GRID_X, GRID_Y = 269, 89
+    CELL_SIZE = 23
+    STRIDE = 24  # cell + 1px gap
+
+    # Known Wordle cell colors (RGB)
+    GREEN = (83, 141, 78)
+    YELLOW = (181, 159, 59)
+    GRAY = (58, 58, 60)
+    EMPTY = (18, 18, 19)
+
+    def color_distance(c1, c2):
+        return sum((a - b) ** 2 for a, b in zip(c1, c2)) ** 0.5
+
+    def classify(px):
+        distances = {
+            'green': color_distance(px, GREEN),
+            'yellow': color_distance(px, YELLOW),
+            'gray': color_distance(px, GRAY),
+            'empty': color_distance(px, EMPTY),
+        }
+        closest = min(distances, key=distances.get)
+        return closest if distances[closest] < 40 else 'unknown'
+
+    filled_rows = 0
+    last_row_all_green = False
+
+    for row in range(6):
+        cy = GRID_Y + row * STRIDE + CELL_SIZE // 2
+        row_colors = [classify(img.getpixel((GRID_X + col * STRIDE + CELL_SIZE // 2, cy))) for col in range(5)]
+
+        if all(c == 'empty' for c in row_colors):
+            break
+
+        filled_rows += 1
+        last_row_all_green = all(c == 'green' for c in row_colors)
+
+    if filled_rows == 0:
+        return None
+
+    if filled_rows == 6 and not last_row_all_green:
+        return DEFAULT_WORDLE_TOTAL + 1  # X/6
+
+    return filled_rows
 
 
 def get_connections_results(content):
@@ -165,6 +227,11 @@ def build_game_regexes(puzzle_numbers):
             'pattern': re.compile(rf'Quizl#{pn["quizl_puzzle_number"]}', re.IGNORECASE),
             'needs_timestamp': False,
         },
+        {
+            'key': 'wordle',
+            'pattern': re.compile(rf'Wordle\s+{pn["wordle_puzzle_number"]:,}\s+([1-6X])/6', re.IGNORECASE),
+            'needs_timestamp': False,
+        },
     ]
 
 
@@ -234,6 +301,10 @@ def match_message(content, timestamp, game_regexes, timestamp_checker):
         elif key == 'quizl':
             score = len(re.findall(r'🟩', content))
             return (key, score, metadata)
+        elif key == 'wordle':
+            score_str = match.group(1)
+            score = DEFAULT_WORDLE_TOTAL + 1 if score_str.upper() == 'X' else int(score_str)
+            return (key, score, metadata)
 
     return None
 
@@ -254,6 +325,7 @@ def build_games_list(puzzle_numbers):
         ('pips', '🎲', 'Pips', 'time', 0, pn['pips_puzzle_number'], PIPS_LINK),
         ('quizl', '⁉️', 'Quizl', 'score', quizl_total, pn['quizl_puzzle_number'], QUIZL_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, pn['sports_puzzle_number'], SPORTS_CONNECTIONS_LINK),
+        ('wordle', '📗', 'Wordle', 'guesses', DEFAULT_WORDLE_TOTAL, pn['wordle_puzzle_number'], WORDLE_LINK),
         ('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{pn["worldle_number"]}', WORLDLE_LINK),
     ]
 
