@@ -10,6 +10,7 @@ BANDLE_LINK = 'https://bandle.app/daily'
 PIPS_LINK = 'https://www.nytimes.com/games/pips'
 SPORTS_CONNECTIONS_LINK = 'https://www.nytimes.com/athletic/connections-sports-edition'
 MAPTAP_LINK = 'https://maptap.gg'
+MAPTAP_CHALLENGE_LINK = 'https://maptap.gg/adventures?gametype=challenge'
 GLOBLE_LINK = 'https://globle.org'
 FLAGLE_LINK = 'https://flagle.org'
 WORLDLE_LINK = 'https://worldlegame.io'
@@ -26,6 +27,7 @@ GAME_COLORS = {
     'sports': 5763719,        # green
     'pips': 10181046,         # purple
     'maptap': 15105570,       # orange
+    'maptap_challenge': 15105570,  # orange
     'chronophoto': 11027200,  # brown
     'globle': 3447003,        # blue
     'worldle': 1752220,       # cyan
@@ -59,6 +61,7 @@ def compute_puzzle_numbers(reference_date):
         'maptap_number': int((reference_date - MAPTAP_START_DATE).days + 1),
         'quizl_puzzle_number': int((reference_date - QUIZL_START_DATE).days + 1),
         'maptap_date': f'{reference_date.strftime("%B")} {reference_date.day}',
+        'maptap_challenge_date': f'{reference_date.strftime("%b")} {reference_date.day}',
         'globle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
         'worldle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
         'flagle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
@@ -197,6 +200,11 @@ def build_game_regexes(puzzle_numbers):
             'needs_timestamp': False,
         },
         {
+            'key': 'maptap_challenge',
+            'pattern': re.compile(rf'MapTap Challenge Round.*{pn["maptap_challenge_date"]}', re.IGNORECASE),
+            'needs_timestamp': False,
+        },
+        {
             'key': 'maptap',
             'pattern': re.compile(rf'(.*)MapTap(.*){pn["maptap_date"]}', re.IGNORECASE),
             'needs_timestamp': False,
@@ -280,6 +288,20 @@ def match_message(content, timestamp, game_regexes, timestamp_checker):
                 minutes = int(pips_match.group(1))
                 seconds = int(pips_match.group(2))
                 return (key, minutes * 60 + seconds, metadata)
+        elif key == 'maptap_challenge':
+            score_match = re.search(r'Score: (\d+)', content, re.IGNORECASE)
+            if score_match:
+                weighted_score = int(score_match.group(1))
+                lines = content.split('\n')
+                raw_score = weighted_score
+                for line in lines:
+                    if 'score' in line.lower() or 'maptap' in line.lower():
+                        continue
+                    nums = re.findall(r'\d+', line)
+                    if len(nums) >= 3:
+                        raw_score = sum(int(n) for n in nums)
+                        break
+                return (key, (weighted_score, raw_score), metadata)
         elif key == 'maptap':
             score_match = re.search(r'Final Score: (\d+)', content, re.IGNORECASE)
             if score_match:
@@ -322,6 +344,7 @@ def build_games_list(puzzle_numbers):
         ('flagle', '🏁', 'Flagle', 'guesses', 0, f'{pn["flagle_number"]}', FLAGLE_LINK),
         ('globle', '🌍', 'Globle', 'guesses', 0, f'{pn["globle_number"]}', GLOBLE_LINK),
         ('maptap', '🎯', 'MapTap', 'maptap', 0, pn['maptap_number'], MAPTAP_LINK),
+        ('maptap_challenge', '⚡', 'MapTap Challenge', 'maptap', 0, pn['maptap_number'], MAPTAP_CHALLENGE_LINK),
         ('pips', '🎲', 'Pips', 'time', 0, pn['pips_puzzle_number'], PIPS_LINK),
         ('quizl', '⁉️', 'Quizl', 'score', quizl_total, pn['quizl_puzzle_number'], QUIZL_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, pn['sports_puzzle_number'], SPORTS_CONNECTIONS_LINK),
@@ -349,7 +372,7 @@ def compute_medals(results, puzzle_numbers, minimum_players=1):
         elif metric == 'score':
             players = sorted(results[game_key].items(), key=lambda x: (-x[1]))
         elif metric == 'maptap':
-            players = sorted(results[game_key].items(), key=lambda x: (-x[1][0], -x[1][1]))
+            players = sorted(results[game_key].items(), key=lambda x: (-x[1][1], -x[1][0]))
         else:
             players = sorted(results[game_key].items(), key=lambda x: x[1])
 
@@ -446,24 +469,24 @@ def _format_game_players(game_scores, metric, total):
     lines = ''
 
     if metric == 'maptap':
-        sorted_players = sorted(game_scores.items(), key=lambda x: (-x[1][0], -x[1][1]))
+        sorted_players = sorted(game_scores.items(), key=lambda x: (-x[1][1], -x[1][0]))
         rank = 0
         prev_val = None
         i = 0
         while i < len(sorted_players):
             weighted = sorted_players[i][1][0]
             unweighted = sorted_players[i][1][1]
-            score_tuple = (weighted, unweighted)
+            score_tuple = (unweighted, weighted)
             if score_tuple != prev_val:
                 rank = i + 1
             tied = [f'<@{sorted_players[i][0]}>']
             j = i + 1
-            while j < len(sorted_players) and (sorted_players[j][1][0], sorted_players[j][1][1]) == score_tuple:
+            while j < len(sorted_players) and (sorted_players[j][1][1], sorted_players[j][1][0]) == score_tuple:
                 tied.append(f'<@{sorted_players[j][0]}>')
                 j += 1
             medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
             players_str = " ".join(reversed(tied))
-            lines += f'{medal}{players_str}: {weighted} ({unweighted} total)\n'
+            lines += f'{medal}{players_str}: {unweighted} ({weighted} weighted)\n'
             prev_val = score_tuple
             i = j
         return lines

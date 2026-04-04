@@ -34,12 +34,14 @@ def get_messages(channel_id):
 
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages?limit=100'
     response = requests.get(url, headers=headers)
+    response.raise_for_status()
     messages = response.json()
 
     for x in range(HUNDREDS_OF_MESSAGES - 1):
         last_msg_id = messages[-1]['id']
         url_id = url + f'&before={last_msg_id}'
         response = requests.get(url_id, headers=headers)
+        response.raise_for_status()
         messages += response.json()
     return messages
 
@@ -61,6 +63,7 @@ def send_message(channel_id, message=None, components=None):
         payload = {'content': message, 'allowed_mentions': {'parse': ['users']}, 'flags': 4}
 
     response = requests.post(url, headers=headers, json=payload)
+    response.raise_for_status()
 
     return response.json()
 
