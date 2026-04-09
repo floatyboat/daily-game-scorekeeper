@@ -322,6 +322,12 @@ def compute_medals(results, puzzle_numbers, minimum_players=1):
             elif metric == 'guesses' and total > 0:
                 if current_score > total:
                     is_poop = True
+            elif metric == 'score':
+                if current_score == 0:
+                    is_poop = True
+            elif metric == 'maptap':
+                if current_score[1] == 0:
+                    is_poop = True
 
             # Collect tied players
             j = i + 1
@@ -413,6 +419,8 @@ def _format_game_players(game_scores, metric, total):
                 tied.append(f'<@{sorted_players[j][0]}>')
                 j += 1
             medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
+            if unweighted == 0:
+                medal = '💩 '
             players_str = " ".join(reversed(tied))
             lines += f'{medal}{players_str}: {unweighted} ({weighted} weighted)\n'
             prev_val = score_tuple
@@ -455,10 +463,12 @@ def _format_game_players(game_scores, metric, total):
             elif mistakes == total:
                 score_str = f"{mistakes}/{total} mistakes ({solved} solved)"
                 if solved == 0:
-                    medal = '💩'
+                    medal = '💩 '
             else:
                 score_str = f"{mistakes}/{total} mistakes"
         elif metric == 'score':
+            if current_score == 0:
+                medal = '💩 '
             score_str = f"{str(current_score)}"
             if total > 0:
                 score_str = f"{score_str}/{total}"
@@ -467,7 +477,7 @@ def _format_game_players(game_scores, metric, total):
                 score_str = f"{str(current_score)} {metric}"
             else:
                 if current_score > total:
-                    medal = '💩'
+                    medal = '💩 '
                     current_score = 'X'
                 score_str = f"{str(current_score)}/{total} {metric}"
 
