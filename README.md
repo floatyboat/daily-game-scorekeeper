@@ -11,9 +11,8 @@ Reads a channel in a discord server for daily puzzle games and posts a scoreboar
 7. [MapTap](https://maptap.gg)
 8. [Pips](https://www.nytimes.com/games/pips)
 9. [Quizl](https://quizl.io)
-10. [Wheredle](https://wheredle.xyz)
-11. [Wordle](https://www.nytimes.com/games/wordle)
-12. [Worldle](https://worldlegame.io)
+10. [Wordle](https://www.nytimes.com/games/wordle)
+11. [Worldle](https://worldlegame.io)
 
 Wordle supports both pasted share text and image recognition from the official Wordle Discord bot.
 ## Setup

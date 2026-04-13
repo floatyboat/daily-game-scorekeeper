@@ -111,7 +111,8 @@ def lambda_handler(event, context):
             for attachment in msg['attachments']:
                 if not attachment.get('content_type', '').startswith('image/'):
                     continue
-                if 'finished game' not in attachment.get('description', ''):
+                desc = attachment.get('description', '')
+                if 'finished game' not in desc or 'unfinished' in desc:
                     continue
                 try:
                     img_response = requests.get(attachment['url'], timeout=5)

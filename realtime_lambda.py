@@ -9,8 +9,8 @@ from game_parser import (
     compute_puzzle_numbers, build_game_regexes, match_message,
     format_scoreboard, make_timestamp_checker, BANDLE_LINK, PIPS_LINK,
     CONNECTIONS_LINK, SPORTS_CONNECTIONS_LINK, MAPTAP_LINK, MAPTAP_CHALLENGE_LINK, GLOBLE_LINK,
-    FLAGLE_LINK, WORLDLE_LINK, WHEREDLE_LINK, QUIZL_LINK, CHRONOPHOTO_LINK,
-    DEFAULT_BANDLE_TOTAL, DEFAULT_WHEREDLE_TOTAL, DEFAULT_QUIZL_TOTAL,
+    FLAGLE_LINK, WORLDLE_LINK, QUIZL_LINK, CHRONOPHOTO_LINK,
+    DEFAULT_BANDLE_TOTAL, DEFAULT_QUIZL_TOTAL,
 )
 
 DISCORD_API_BASE = 'https://discord.com/api/v10'
@@ -39,7 +39,6 @@ GAME_EMOJIS = {
     'globle': '🌍',
     'worldle': '🗺️',
     'flagle': '🏁',
-    'wheredle': '🛣️',
     'quizl': '⁉️',
 }
 
@@ -54,7 +53,7 @@ GAME_TITLES = {
     'globle': 'Globle',
     'worldle': 'Worldle',
     'flagle': 'Flagle',
-    'wheredle': 'Wheredle',
+
     'quizl': 'Quizl',
 }
 
@@ -69,7 +68,7 @@ GAME_LINKS = {
     'globle': GLOBLE_LINK,
     'worldle': WORLDLE_LINK,
     'flagle': FLAGLE_LINK,
-    'wheredle': WHEREDLE_LINK,
+
     'quizl': QUIZL_LINK,
 }
 
@@ -84,7 +83,7 @@ GAME_METRICS = {
     'globle': 'guesses',
     'worldle': 'guesses',
     'flagle': 'guesses',
-    'wheredle': 'guesses',
+
     'quizl': 'score',
 }
 
@@ -185,7 +184,6 @@ def format_mini_scoreboard(game_key, game_scores, puzzle_numbers):
     medals = ['👑', '🥈', '🥉']
 
     bandle_total = puzzle_numbers.get('bandle_total', DEFAULT_BANDLE_TOTAL)
-    wheredle_total = puzzle_numbers.get('wheredle_total', DEFAULT_WHEREDLE_TOTAL)
     quizl_total = puzzle_numbers.get('quizl_total', DEFAULT_QUIZL_TOTAL)
 
     # Get total for this game
@@ -194,7 +192,6 @@ def format_mini_scoreboard(game_key, game_scores, puzzle_numbers):
         'connections': 4,
         'sports': 4,
         'quizl': quizl_total,
-        'wheredle': wheredle_total,
     }
     total = total_map.get(game_key, 0)
 
