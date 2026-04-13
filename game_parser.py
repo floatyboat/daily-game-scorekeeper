@@ -149,6 +149,29 @@ def parse_wordle_image(image_bytes):
     return filled_rows
 
 
+def parse_wordle_attachment(attachment):
+    """Parse a Wordle bot attachment and return the number of guesses, or None to skip.
+
+    Checks the attachment description for finished/unfinished status,
+    downloads the image if needed, and returns the score.
+    """
+    import requests
+
+    if not attachment.get('content_type', '').startswith('image/'):
+        return None
+    desc = attachment.get('description', '')
+    if 'finished game' not in desc:
+        return None
+    if 'unfinished' in desc:
+        return DEFAULT_WORDLE_TOTAL + 1  # X/6
+    try:
+        img_response = requests.get(attachment['url'], timeout=5)
+        img_response.raise_for_status()
+        return parse_wordle_image(img_response.content)
+    except Exception:
+        return None
+
+
 def get_connections_results(content):
     """Parse connections-style emoji grids and return (mistakes, solved_groups)."""
     squares = re.findall(r'[🟨🟩🟦🟪🟡🟢🔵🟣]', content)
@@ -243,12 +266,15 @@ def build_game_regexes(puzzle_numbers):
     ]
 
 
-def match_message(content, timestamp, game_regexes, timestamp_checker):
-    """Run a single message through all game regexes.
+def match_message(msg, game_regexes, timestamp_checker, wordle_bot_id=None):
+    """Run a single message through all game regexes, including Wordle bot image parsing.
 
     Returns (game_key, score, metadata) or None.
     metadata may contain {'bandle_total': N} etc.
     """
+    content = msg['content']
+    timestamp = msg['timestamp']
+
     for game in game_regexes:
         key = game['key']
 
@@ -327,6 +353,16 @@ def match_message(content, timestamp, game_regexes, timestamp_checker):
             score_str = match.group(1)
             score = DEFAULT_WORDLE_TOTAL + 1 if score_str.upper() == 'X' else int(score_str)
             return (key, score, metadata)
+
+    # Wordle bot image parsing
+    if (wordle_bot_id
+            and msg['author']['id'] == wordle_bot_id
+            and msg.get('attachments')
+            and timestamp_checker(timestamp)):
+        for attachment in msg['attachments']:
+            guesses = parse_wordle_attachment(attachment)
+            if guesses is not None:
+                return ('wordle', guesses, {})
 
     return None
 

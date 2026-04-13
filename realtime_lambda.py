@@ -267,10 +267,11 @@ def poll_once(is_test=False):
     new_messages = []  # (msg, game_key) tuples for unprocessed matched messages
 
     for msg in input_messages:
-        result = match_message(msg['content'], msg['timestamp'], game_regexes, checker)
+        result = match_message(msg, game_regexes, checker)
         if result:
             game_key, score, metadata = result
-            results[game_key][msg['author']['id']] = score
+            user_id = msg.get('interaction_metadata', {}).get('user', {}).get('id') or msg['author']['id']
+            results[game_key][user_id] = score
             puzzle_numbers.update(metadata)
 
             if not is_processed(msg):

@@ -8,7 +8,6 @@ from collections import defaultdict
 from game_parser import (
     compute_puzzle_numbers, build_game_regexes, match_message,
     format_scoreboard, format_scoreboard_components, make_timestamp_checker,
-    parse_wordle_image
 )
 
 DISCORD_API_BASE = 'https://discord.com/api/v10'
@@ -96,35 +95,12 @@ def lambda_handler(event, context):
 
     results = defaultdict(dict)
     for msg in messages:
-        result = match_message(msg['content'], msg['timestamp'], game_regexes, checker)
+        result = match_message(msg, game_regexes, checker, wordle_bot_id=WORDLE_BOT_ID)
         if result:
             game_key, score, metadata = result
-            results[game_key][msg['author']['id']] = score
+            user_id = msg.get('interaction_metadata', {}).get('user', {}).get('id') or msg['author']['id']
+            results[game_key][user_id] = score
             puzzle_numbers.update(metadata)
-            continue
-
-        # Image-based Wordle parsing from the Wordle bot
-        if (WORDLE_BOT_ID
-                and msg['author']['id'] == WORDLE_BOT_ID
-                and msg.get('attachments')
-                and checker(msg['timestamp'])):
-            for attachment in msg['attachments']:
-                if not attachment.get('content_type', '').startswith('image/'):
-                    continue
-                desc = attachment.get('description', '')
-                if 'finished game' not in desc or 'unfinished' in desc:
-                    continue
-                try:
-                    img_response = requests.get(attachment['url'], timeout=5)
-                    img_response.raise_for_status()
-                    guesses = parse_wordle_image(img_response.content)
-                    if guesses is not None:
-                        user_id = msg.get('interaction_metadata', {}).get('user', {}).get('id')
-                        if user_id:
-                            results['wordle'][user_id] = guesses
-                        break
-                except Exception:
-                    continue
 
     components = format_scoreboard_components(results, yesterday, puzzle_numbers, minimum_players=MINIMUM_PLAYERS)
 
