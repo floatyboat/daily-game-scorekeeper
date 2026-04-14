@@ -8,6 +8,7 @@ from collections import defaultdict
 from game_parser import (
     compute_puzzle_numbers, build_game_regexes, match_message,
     format_scoreboard, format_scoreboard_components, make_timestamp_checker,
+    _avatar_ahash,
 )
 
 DISCORD_API_BASE = 'https://discord.com/api/v10'
@@ -75,6 +76,59 @@ def pin_message(channel_id, message_id):
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages/pins/{message_id}'
     requests.put(url, headers=headers)
 
+
+def _fetch_user_avatar_hash(user_id):
+    """Fetch a Discord user's global avatar and return its aHash.
+
+    Returns None for users with no custom avatar (default gradient), or on any
+    fetch/download failure. Uses a module-level cache so repeated calls within
+    one invocation don't hit the CDN twice.
+    """
+    from PIL import Image
+    import io
+    if user_id in _avatar_hash_cache:
+        return _avatar_hash_cache[user_id]
+    try:
+        headers = {'Authorization': f'Bot {DISCORD_BOT_TOKEN}'}
+        r = requests.get(f'{DISCORD_API_BASE}/users/{user_id}', headers=headers, timeout=5)
+        r.raise_for_status()
+        avatar = r.json().get('avatar')
+        if not avatar:
+            _avatar_hash_cache[user_id] = None
+            return None
+        cdn_url = f'https://cdn.discordapp.com/avatars/{user_id}/{avatar}.png?size=128'
+        img_resp = requests.get(cdn_url, timeout=5)
+        img_resp.raise_for_status()
+        img = Image.open(io.BytesIO(img_resp.content)).convert('RGB')
+        h = _avatar_ahash(img)
+        _avatar_hash_cache[user_id] = h
+        return h
+    except Exception:
+        _avatar_hash_cache[user_id] = None
+        return None
+
+
+_avatar_hash_cache = {}
+
+
+def build_avatar_pool(messages):
+    """Collect unique user IDs from channel messages and build {uid: ahash}."""
+    user_ids = set()
+    for m in messages:
+        author = m.get('author', {})
+        if author.get('id'):
+            user_ids.add(author['id'])
+        iu_id = m.get('interaction_metadata', {}).get('user', {}).get('id')
+        if iu_id:
+            user_ids.add(iu_id)
+    pool = {}
+    for uid in user_ids:
+        h = _fetch_user_avatar_hash(uid)
+        if h is not None:
+            pool[uid] = h
+    return pool
+
+
 def lambda_handler(event, context):
     yesterday = datetime.now() - timedelta(days=1)
     puzzle_numbers = compute_puzzle_numbers(yesterday)
@@ -93,12 +147,13 @@ def lambda_handler(event, context):
             'body': json.dumps('Function triggered twice. No message sent.')
         }
 
+    avatar_pool = build_avatar_pool(messages)
+
     results = defaultdict(dict)
     for msg in messages:
-        result = match_message(msg, game_regexes, checker, wordle_bot_id=WORDLE_BOT_ID)
-        if result:
-            game_key, score, metadata = result
-            user_id = msg.get('interaction_metadata', {}).get('user', {}).get('id') or msg['author']['id']
+        entries = match_message(msg, game_regexes, checker, wordle_bot_id=WORDLE_BOT_ID, avatar_hashes=avatar_pool)
+        for game_key, score, metadata, uid_override in entries:
+            user_id = uid_override or msg.get('interaction_metadata', {}).get('user', {}).get('id') or msg['author']['id']
             results[game_key][user_id] = score
             puzzle_numbers.update(metadata)
 

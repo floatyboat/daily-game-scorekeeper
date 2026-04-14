@@ -92,82 +92,298 @@ def make_timestamp_checker(reference_date, tz, hours_after_midnight, time_window
     return check
 
 
-def parse_wordle_image(image_bytes):
-    """Parse a Wordle result image and return the number of guesses (1-6) or 7 for X/6.
+# Wordle bot preview image: cell colors
+_WORDLE_GREEN = (83, 141, 78)
+_WORDLE_YELLOW = (181, 159, 59)
+_WORDLE_GRAY = (58, 58, 60)
+_WORDLE_EMPTY = (18, 18, 19)
 
-    Analyzes the 5x6 grid from Wordle bot images (512x280 PNG).
-    Returns None on parse failure.
+
+def _color_distance(c1, c2):
+    return sum((a - b) ** 2 for a, b in zip(c1, c2)) ** 0.5
+
+
+def _classify_cell(px):
+    distances = {
+        'green': _color_distance(px, _WORDLE_GREEN),
+        'yellow': _color_distance(px, _WORDLE_YELLOW),
+        'gray': _color_distance(px, _WORDLE_GRAY),
+        'empty': _color_distance(px, _WORDLE_EMPTY),
+    }
+    closest = min(distances, key=distances.get)
+    return closest if distances[closest] < 40 else 'unknown'
+
+
+def _is_tile_color(px, tol=5):
+    """True for GRAY/GREEN/YELLOW pixels. Excludes EMPTY (aliases background)."""
+    return min(
+        _color_distance(px, _WORDLE_GREEN),
+        _color_distance(px, _WORDLE_YELLOW),
+        _color_distance(px, _WORDLE_GRAY),
+    ) < tol
+
+
+def _detect_grids(img):
+    """Detect Wordle grid positions in a preview image.
+
+    Scans rows for runs of 5 similarly-sized tile-colored cells; picks the row with
+    the most such groups (= player count). For each group, finds grid_y and pitches.
+
+    Returns a list of dicts: {grid_x, grid_y, cell_size, pitch_x, pitch_y,
+    avatar_cx, avatar_cy, avatar_r}. Empty list if nothing detected.
     """
-    from PIL import Image
-    import io
+    w, h = img.size
+    pixels = img.load()
 
-    img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+    def cell_runs_on_row(y):
+        runs = []
+        in_run = False
+        start = 0
+        for x in range(w):
+            if _is_tile_color(pixels[x, y]):
+                if not in_run:
+                    start = x
+                    in_run = True
+            elif in_run:
+                if x - start >= 3:
+                    runs.append((start, x - 1))
+                in_run = False
+        if in_run and w - start >= 3:
+            runs.append((start, w - 1))
+        return runs
 
-    # Grid layout for standard 512x280 Wordle bot images
-    GRID_X, GRID_Y = 269, 89
-    CELL_SIZE = 23
-    STRIDE = 24  # cell + 1px gap
+    def group_by_player(runs):
+        if not runs:
+            return []
+        bands = []
+        cur = [runs[0]]
+        for r in runs[1:]:
+            # Cells in same grid have gaps < 4px (1px stride gap). Player separators are wider.
+            if r[0] - cur[-1][1] < 8:
+                cur.append(r)
+            else:
+                bands.append(cur)
+                cur = [r]
+        bands.append(cur)
+        # Keep only bands that look like a Wordle row: exactly 5 cells of similar width
+        valid = []
+        for band in bands:
+            if len(band) != 5:
+                continue
+            widths = [r[1] - r[0] + 1 for r in band]
+            if max(widths) - min(widths) <= 2:
+                valid.append(band)
+        return valid
 
-    # Known Wordle cell colors (RGB)
-    GREEN = (83, 141, 78)
-    YELLOW = (181, 159, 59)
-    GRAY = (58, 58, 60)
-    EMPTY = (18, 18, 19)
+    best_y = None
+    best_bands = []
+    for y in range(h):
+        runs = cell_runs_on_row(y)
+        if not runs:
+            continue
+        bands = group_by_player(runs)
+        if len(bands) > len(best_bands):
+            best_bands = bands
+            best_y = y
 
-    def color_distance(c1, c2):
-        return sum((a - b) ** 2 for a, b in zip(c1, c2)) ** 0.5
+    if not best_bands:
+        return []
 
-    def classify(px):
-        distances = {
-            'green': color_distance(px, GREEN),
-            'yellow': color_distance(px, YELLOW),
-            'gray': color_distance(px, GRAY),
-            'empty': color_distance(px, EMPTY),
-        }
-        closest = min(distances, key=distances.get)
-        return closest if distances[closest] < 40 else 'unknown'
+    grids = []
+    for band in best_bands:
+        grid_x = band[0][0]
+        cell_size = band[0][1] - band[0][0] + 1
+        pitch_x = band[1][0] - band[0][0]
+        cx = (band[0][0] + band[0][1]) // 2
 
+        # Walk column cx top-to-bottom, find tile runs (each = one row of cells)
+        tile_rows = []
+        in_run = False
+        rs = 0
+        for y in range(h):
+            if _is_tile_color(pixels[cx, y]):
+                if not in_run:
+                    rs = y
+                    in_run = True
+            elif in_run:
+                if abs((y - rs) - cell_size) <= 2:
+                    tile_rows.append((rs, y - 1))
+                in_run = False
+        if in_run and abs((h - rs) - cell_size) <= 2:
+            tile_rows.append((rs, h - 1))
+
+        if not tile_rows:
+            continue
+
+        grid_y = tile_rows[0][0]
+        pitch_y = tile_rows[1][0] - tile_rows[0][0] if len(tile_rows) > 1 else pitch_x
+
+        # Multi-player layouts stack the avatar circle directly above each grid.
+        # Avatar diameter ≈ grid width; sits with a small gap above grid_y.
+        grid_width = pitch_x * 5 - (pitch_x - cell_size)
+        avatar_r = grid_width // 2
+        avatar_cx = grid_x + grid_width // 2
+        avatar_cy = max(0, grid_y - avatar_r - 18)
+
+        grids.append({
+            'grid_x': grid_x,
+            'grid_y': grid_y,
+            'cell_size': cell_size,
+            'pitch_x': pitch_x,
+            'pitch_y': pitch_y,
+            'avatar_cx': avatar_cx,
+            'avatar_cy': avatar_cy,
+            'avatar_r': avatar_r,
+        })
+
+    return grids
+
+
+def _parse_single_grid(img, grid_x, grid_y, cell_size, pitch_x, pitch_y):
+    """Read a single 5x6 Wordle grid.
+
+    Returns:
+        int 1..6: solved in that many guesses
+        7: X/6 (6 rows filled, last row not all green)
+        -1: in progress (some rows filled, not solved, fewer than 6)
+        None: empty (no rows filled)
+    """
     filled_rows = 0
     last_row_all_green = False
-
     for row in range(6):
-        cy = GRID_Y + row * STRIDE + CELL_SIZE // 2
-        row_colors = [classify(img.getpixel((GRID_X + col * STRIDE + CELL_SIZE // 2, cy))) for col in range(5)]
-
+        cy = grid_y + row * pitch_y + cell_size // 2
+        row_colors = [
+            _classify_cell(img.getpixel((grid_x + col * pitch_x + cell_size // 2, cy)))
+            for col in range(5)
+        ]
         if all(c == 'empty' for c in row_colors):
             break
-
         filled_rows += 1
         last_row_all_green = all(c == 'green' for c in row_colors)
 
     if filled_rows == 0:
         return None
-
-    if filled_rows == 6 and not last_row_all_green:
+    if last_row_all_green:
+        return filled_rows
+    if filled_rows == 6:
         return DEFAULT_WORDLE_TOTAL + 1  # X/6
+    return -1  # in progress
 
-    return filled_rows
+
+def _avatar_ahash(img_crop):
+    """8x8 grayscale average hash over the inscribed square of the crop.
+
+    Taking an inscribed square discards the corners, which are the part most
+    affected by the Wordle bot's circular avatar mask — the rendered crop has
+    black corners while the reference CDN avatar has image pixels in the
+    corners, and matching those directly blows up the hamming distance.
+    """
+    w, h = img_crop.size
+    side = min(w, h)
+    inscribed = int(side * 0.707)  # sqrt(2)/2 — inscribed square of the circle
+    left = (w - inscribed) // 2
+    upper = (h - inscribed) // 2
+    inner = img_crop.crop((left, upper, left + inscribed, upper + inscribed))
+    small = inner.convert('L').resize((8, 8))
+    pixels = list(small.getdata())
+    avg = sum(pixels) / 64
+    bits = 0
+    for i, p in enumerate(pixels):
+        if p > avg:
+            bits |= 1 << i
+    return bits
 
 
-def parse_wordle_attachment(attachment):
-    """Parse a Wordle bot attachment and return the number of guesses, or None to skip.
+def _hamming(a, b):
+    return bin(a ^ b).count('1')
 
-    Checks the attachment description for finished/unfinished status,
-    downloads the image if needed, and returns the score.
+
+def _match_avatar(img, grid, candidate_hashes, max_distance=18, margin=4):
+    """Crop the avatar at grid position, compare against candidate hashes.
+
+    Returns matched user_id or None. Requires the best match to beat the
+    second-best by at least `margin` bits to guard against default-avatar
+    look-alikes.
+    """
+    if not candidate_hashes:
+        return None
+    cx, cy, r = grid['avatar_cx'], grid['avatar_cy'], grid['avatar_r']
+    w, h = img.size
+    left = max(0, cx - r)
+    upper = max(0, cy - r)
+    right = min(w, cx + r)
+    lower = min(h, cy + r)
+    if right - left < 8 or lower - upper < 8:
+        return None
+    crop = img.crop((left, upper, right, lower))
+    crop_hash = _avatar_ahash(crop)
+
+    scored = [(uid, _hamming(crop_hash, h)) for uid, h in candidate_hashes.items()]
+    scored.sort(key=lambda x: x[1])
+    best_uid, best_d = scored[0]
+    if best_d > max_distance:
+        return None
+    if len(scored) > 1 and scored[1][1] - best_d < margin:
+        return None
+    return best_uid
+
+
+def parse_wordle_image(image_bytes, candidate_hashes=None):
+    """Parse a Wordle bot preview image.
+
+    Returns a list of (user_id_or_None, score) pairs for every finished grid we
+    could attribute. For single-player images, yields [(None, score)] and the
+    caller assigns the user from message metadata. For multi-player images,
+    yields one entry per grid that we matched to a candidate user. Unfinished
+    grids and unmatchable grids are dropped.
+    """
+    from PIL import Image
+    import io
+
+    img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+    grids = _detect_grids(img)
+    if not grids:
+        return []
+
+    results = []
+    if len(grids) == 1:
+        g = grids[0]
+        score = _parse_single_grid(img, g['grid_x'], g['grid_y'], g['cell_size'], g['pitch_x'], g['pitch_y'])
+        if score is not None and score != -1:
+            results.append((None, score))
+        return results
+
+    for g in grids:
+        score = _parse_single_grid(img, g['grid_x'], g['grid_y'], g['cell_size'], g['pitch_x'], g['pitch_y'])
+        if score is None or score == -1:
+            continue
+        uid = _match_avatar(img, g, candidate_hashes)
+        if uid is None:
+            continue
+        results.append((uid, score))
+    return results
+
+
+def parse_wordle_attachment(attachment, candidate_hashes=None):
+    """Download and parse a Wordle bot image attachment.
+
+    Returns list of (user_id_or_None, score) pairs; empty list on skip/failure.
+    Skips recap images (streak summaries) — those use "solved" in their
+    description rather than "finished"/"unfinished".
     """
     import requests
 
     if not attachment.get('content_type', '').startswith('image/'):
-        return None
+        return []
     desc = attachment.get('description', '')
-    if 'finished game' not in desc or 'unfinished' in desc:
-        return None
+    if 'finished' not in desc:
+        return []
     try:
         img_response = requests.get(attachment['url'], timeout=5)
         img_response.raise_for_status()
-        return parse_wordle_image(img_response.content)
+        return parse_wordle_image(img_response.content, candidate_hashes)
     except Exception:
-        return None
+        return []
 
 
 def get_connections_results(content):
@@ -264,11 +480,13 @@ def build_game_regexes(puzzle_numbers):
     ]
 
 
-def match_message(msg, game_regexes, timestamp_checker, wordle_bot_id=None):
+def match_message(msg, game_regexes, timestamp_checker, wordle_bot_id=None, avatar_hashes=None):
     """Run a single message through all game regexes, including Wordle bot image parsing.
 
-    Returns (game_key, score, metadata) or None.
-    metadata may contain {'bandle_total': N} etc.
+    Returns a list of (game_key, score, metadata, user_id_override) tuples.
+    user_id_override is None for everything except multi-player Wordle bot images,
+    where each entry is attributed to the user matched by avatar.
+    Returns [] if no match.
     """
     content = msg['content']
     timestamp = msg['timestamp']
@@ -284,7 +502,7 @@ def match_message(msg, game_regexes, timestamp_checker, wordle_bot_id=None):
             if match:
                 if game['needs_timestamp'] and not timestamp_checker(timestamp):
                     continue
-                return (key, int(match.group(1)), {})
+                return [(key, int(match.group(1)), {}, None)]
             continue
 
         match = game['pattern'].search(content)
@@ -297,21 +515,21 @@ def match_message(msg, game_regexes, timestamp_checker, wordle_bot_id=None):
         metadata = {}
 
         if key == 'connections':
-            return (key, get_connections_results(content), metadata)
+            return [(key, get_connections_results(content), metadata, None)]
         elif key == 'bandle':
             score_str = match.group(1)
             total = int(match.group(2))
             metadata['bandle_total'] = total
             score = total + 1 if score_str == 'x' else int(score_str)
-            return (key, score, metadata)
+            return [(key, score, metadata, None)]
         elif key == 'sports':
-            return (key, get_connections_results(content), metadata)
+            return [(key, get_connections_results(content), metadata, None)]
         elif key == 'pips':
             pips_match = re.search(r'(\d+):(\d+)', content, re.IGNORECASE)
             if pips_match:
                 minutes = int(pips_match.group(1))
                 seconds = int(pips_match.group(2))
-                return (key, minutes * 60 + seconds, metadata)
+                return [(key, minutes * 60 + seconds, metadata, None)]
         elif key == 'maptap_challenge':
             score_match = re.search(r'Score: (\d+)', content, re.IGNORECASE)
             if score_match:
@@ -325,7 +543,7 @@ def match_message(msg, game_regexes, timestamp_checker, wordle_bot_id=None):
                     if len(nums) >= 3:
                         raw_score = sum(int(n) for n in nums)
                         break
-                return (key, (weighted_score, raw_score), metadata)
+                return [(key, (weighted_score, raw_score), metadata, None)]
         elif key == 'maptap':
             score_match = re.search(r'Final Score: (\d+)', content, re.IGNORECASE)
             if score_match:
@@ -341,16 +559,16 @@ def match_message(msg, game_regexes, timestamp_checker, wordle_bot_id=None):
                     if len(nums) >= 3:
                         raw_score = sum(int(n) for n in nums)
                         break
-                return (key, (weighted_score, raw_score), metadata)
+                return [(key, (weighted_score, raw_score), metadata, None)]
         elif key in ('globle', 'worldle', 'flagle'):
-            return (key, int(match.group(1)), metadata)
+            return [(key, int(match.group(1)), metadata, None)]
         elif key == 'quizl':
             score = len(re.findall(r'🟩', content))
-            return (key, score, metadata)
+            return [(key, score, metadata, None)]
         elif key == 'wordle':
             score_str = match.group(1)
             score = DEFAULT_WORDLE_TOTAL + 1 if score_str.upper() == 'X' else int(score_str)
-            return (key, score, metadata)
+            return [(key, score, metadata, None)]
 
     # Wordle bot image parsing
     if (wordle_bot_id
@@ -358,11 +576,11 @@ def match_message(msg, game_regexes, timestamp_checker, wordle_bot_id=None):
             and msg.get('attachments')
             and timestamp_checker(timestamp)):
         for attachment in msg['attachments']:
-            guesses = parse_wordle_attachment(attachment)
-            if guesses is not None:
-                return ('wordle', guesses, {})
+            pairs = parse_wordle_attachment(attachment, avatar_hashes)
+            if pairs:
+                return [('wordle', score, {}, uid) for uid, score in pairs]
 
-    return None
+    return []
 
 
 def build_games_list(puzzle_numbers):
