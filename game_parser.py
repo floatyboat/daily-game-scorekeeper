@@ -160,10 +160,8 @@ def parse_wordle_attachment(attachment):
     if not attachment.get('content_type', '').startswith('image/'):
         return None
     desc = attachment.get('description', '')
-    if 'finished game' not in desc:
+    if 'finished game' not in desc or 'unfinished' in desc:
         return None
-    if 'unfinished' in desc:
-        return DEFAULT_WORDLE_TOTAL + 1  # X/6
     try:
         img_response = requests.get(attachment['url'], timeout=5)
         img_response.raise_for_status()
