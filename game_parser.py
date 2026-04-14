@@ -473,7 +473,7 @@ def build_game_regexes(puzzle_numbers):
         },
         {
             'key': 'sports',
-            'pattern': re.compile(rf'Connections: Sports Edition.*?puzzle #{pn["sports_puzzle_number"]}', re.IGNORECASE | re.DOTALL),
+            'pattern': re.compile(rf'Connections: Sports Edition.*? #{pn["sports_puzzle_number"]}', re.IGNORECASE | re.DOTALL),
             'needs_timestamp': False,
         },
         {
@@ -650,14 +650,19 @@ def build_games_list(puzzle_numbers):
     ]
 
 
-def compute_medals(results, puzzle_numbers, minimum_players=1):
-    """Compute medal counts per user across all games.
+def compute_points(results, puzzle_numbers, minimum_players=1):
+    """Compute total points per user across all games.
 
-    Returns {user_id: {'gold': int, 'silver': int, 'bronze': int}}.
+    Scoring: in a game with N players, 1st place gets N points and each place
+    below earns one fewer (so last place = 1). If N == 1 and the game passes
+    the minimum_players filter, the sole player gets 2 points. Poop scores
+    (failed games) earn 0 points. Ties share the higher rank's points, matching
+    the standard ranking used by the scoreboard display.
+
+    Returns {user_id: int}.
     """
     games = build_games_list(puzzle_numbers)
-    medal_counts = defaultdict(lambda: {'gold': 0, 'silver': 0, 'bronze': 0})
-    medal_keys = ['gold', 'silver', 'bronze']
+    points = defaultdict(int)
 
     for game_key, _, _, metric, total, _, _ in games:
         if game_key not in results or not results[game_key] or len(results[game_key]) < minimum_players:
@@ -673,6 +678,8 @@ def compute_medals(results, puzzle_numbers, minimum_players=1):
         else:
             players = sorted(results[game_key].items(), key=lambda x: x[1])
 
+        n = len(players)
+
         # Walk with tie-aware ranking
         rank = 0
         prev_score = None
@@ -682,7 +689,7 @@ def compute_medals(results, puzzle_numbers, minimum_players=1):
             if current_score != prev_score:
                 rank = i + 1
 
-            # Check for poop override (no medal)
+            # Check for poop override (no points)
             is_poop = False
             if metric == 'connections':
                 mistakes, solved = current_score
@@ -703,35 +710,28 @@ def compute_medals(results, puzzle_numbers, minimum_players=1):
             while j < len(players) and players[j][1] == current_score:
                 j += 1
 
-            # Award medals if rank <= 3 and not poop
-            if rank <= 3 and not is_poop:
-                medal_key = medal_keys[rank - 1]
+            if not is_poop:
+                player_points = 2 if n == 1 else n - rank + 1
                 for k in range(i, j):
-                    medal_counts[players[k][0]][medal_key] += 1
+                    points[players[k][0]] += player_points
 
             prev_score = current_score
             i = j
 
-    return dict(medal_counts)
+    return dict(points)
 
 
-def format_medal_summary(medal_counts):
-    """Format the medal count summary section.
+def format_points_summary(points):
+    """Format the points summary section.
 
-    Returns empty string if no medals earned.
+    Returns empty string if no points earned.
     """
-    users_with_medals = {
-        uid: counts for uid, counts in medal_counts.items()
-        if counts['gold'] + counts['silver'] + counts['bronze'] > 0
-    }
+    users_with_points = {uid: p for uid, p in points.items() if p > 0}
 
-    if not users_with_medals:
+    if not users_with_points:
         return ''
 
-    sorted_users = sorted(
-        users_with_medals.items(),
-        key=lambda x: (-x[1]['gold'], -x[1]['silver'], -x[1]['bronze'])
-    )
+    sorted_users = sorted(users_with_points.items(), key=lambda x: -x[1])
 
     medals = ['👑', '🥈', '🥉']
     message = ''
@@ -740,22 +740,19 @@ def format_medal_summary(medal_counts):
     prev_val = None
     i = 0
     while i < len(sorted_users):
-        g, s, b = sorted_users[i][1]['gold'], sorted_users[i][1]['silver'], sorted_users[i][1]['bronze']
-        current_val = (g, s, b)
+        current_val = sorted_users[i][1]
         if current_val != prev_val:
             rank = i + 1
 
         j = i + 1
-        while j < len(sorted_users):
-            gj, sj, bj = sorted_users[j][1]['gold'], sorted_users[j][1]['silver'], sorted_users[j][1]['bronze']
-            if (gj, sj, bj) != current_val:
-                break
+        while j < len(sorted_users) and sorted_users[j][1] == current_val:
             j += 1
 
         medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
+        unit = 'pt' if current_val == 1 else 'pts'
         for k in range(i, j):
             uid = sorted_users[k][0]
-            message += f'{medal}<@{uid}>: 👑x{g} 🥈x{s} 🥉x{b}\n'
+            message += f'{medal}<@{uid}>: {current_val} {unit}\n'
 
         prev_val = current_val
         i = j
@@ -868,10 +865,10 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
         message += "\n\nNo results found!"
     else:
         message += f" - {reference_date.strftime('%B %d, %Y')}\n\n"
-        medal_counts = compute_medals(results, puzzle_numbers, minimum_players)
-        medal_section = format_medal_summary(medal_counts)
-        if medal_section:
-            message += medal_section
+        points = compute_points(results, puzzle_numbers, minimum_players)
+        points_section = format_points_summary(points)
+        if points_section:
+            message += points_section
         games.sort(key=lambda x: len(results.get(x[0], {})), reverse=True)
         for game_key, game_emoji, game_title, metric, total, puzzle, link in games:
             if game_key not in results or not results[game_key] or len(results[game_key]) < minimum_players:
@@ -903,13 +900,13 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
             {"type": 10, "content": "No results found!"},
         ]}]
 
-    # --- Medal container (gold accent) ---
-    medal_counts = compute_medals(results, puzzle_numbers, minimum_players)
-    medal_section = format_medal_summary(medal_counts)
-    if medal_section:
+    # --- Points container (gold accent) ---
+    points = compute_points(results, puzzle_numbers, minimum_players)
+    points_section = format_points_summary(points)
+    if points_section:
         components.append({"type": 17, "accent_color": HEADER_COLOR, "components": [
             {"type": 10, "content": header_text},
-            {"type": 10, "content": medal_section.rstrip('\n')},
+            {"type": 10, "content": points_section.rstrip('\n')},
         ]})
     else:
         components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": [
