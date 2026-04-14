@@ -77,55 +77,92 @@ def pin_message(channel_id, message_id):
     requests.put(url, headers=headers)
 
 
-def _fetch_user_avatar_hash(user_id):
-    """Fetch a Discord user's global avatar and return its aHash.
-
-    Returns None for users with no custom avatar (default gradient), or on any
-    fetch/download failure. Uses a module-level cache so repeated calls within
-    one invocation don't hit the CDN twice.
-    """
-    from PIL import Image
-    import io
-    if user_id in _avatar_hash_cache:
-        return _avatar_hash_cache[user_id]
-    try:
-        headers = {'Authorization': f'Bot {DISCORD_BOT_TOKEN}'}
-        r = requests.get(f'{DISCORD_API_BASE}/users/{user_id}', headers=headers, timeout=5)
-        r.raise_for_status()
-        avatar = r.json().get('avatar')
-        if not avatar:
-            _avatar_hash_cache[user_id] = None
-            return None
-        cdn_url = f'https://cdn.discordapp.com/avatars/{user_id}/{avatar}.png?size=128'
-        img_resp = requests.get(cdn_url, timeout=5)
-        img_resp.raise_for_status()
-        img = Image.open(io.BytesIO(img_resp.content)).convert('RGB')
-        h = _avatar_ahash(img)
-        _avatar_hash_cache[user_id] = h
-        return h
-    except Exception:
-        _avatar_hash_cache[user_id] = None
-        return None
-
-
 _avatar_hash_cache = {}
 
 
-def build_avatar_pool(messages):
-    """Collect unique user IDs from channel messages and build {uid: ahash}."""
-    user_ids = set()
+def _extract_user_avatars(messages):
+    """Collect unique (user_id, discord_avatar_hash) pairs from message payloads.
+
+    Reads from `author` and `interaction_metadata.user` — no HTTP calls.
+    Skips users with no custom avatar (default gradient avatars can't be
+    distinguished by aHash, so there's no point fetching them).
+    """
+    out = {}
     for m in messages:
-        author = m.get('author', {})
-        if author.get('id'):
-            user_ids.add(author['id'])
-        iu_id = m.get('interaction_metadata', {}).get('user', {}).get('id')
-        if iu_id:
-            user_ids.add(iu_id)
+        candidates = [m.get('author')]
+        iu = m.get('interaction_metadata', {})
+        if iu:
+            candidates.append(iu.get('user'))
+        for src in candidates:
+            if not src:
+                continue
+            uid = src.get('id')
+            avatar = src.get('avatar')
+            if uid and avatar and uid not in out:
+                out[uid] = avatar
+    return out
+
+
+def _has_multiplayer_wordle(messages):
+    """True if any Wordle bot attachment description signals multiple grids.
+
+    Avatar matching is only needed for multi-player images. Single-player
+    images attribute the score to `interaction_metadata.user` without lookups.
+    """
+    for m in messages:
+        if m.get('author', {}).get('id') != WORDLE_BOT_ID:
+            continue
+        for att in (m.get('attachments') or []):
+            desc = att.get('description', '')
+            # "2 finished games", "1 unfinished and 2 finished games", etc.
+            if 'finished games' in desc:
+                return True
+    return False
+
+
+def _download_avatar_hash(uid, discord_avatar):
+    """Download one avatar PNG and return its aHash. None on failure."""
+    if uid in _avatar_hash_cache:
+        return _avatar_hash_cache[uid]
+    from PIL import Image
+    import io
+    try:
+        url = f'https://cdn.discordapp.com/avatars/{uid}/{discord_avatar}.png?size=64'
+        r = requests.get(url, timeout=4)
+        r.raise_for_status()
+        img = Image.open(io.BytesIO(r.content)).convert('RGB')
+        h = _avatar_ahash(img)
+        _avatar_hash_cache[uid] = h
+        return h
+    except Exception:
+        _avatar_hash_cache[uid] = None
+        return None
+
+
+def build_avatar_pool(messages):
+    """Build {user_id: ahash} for candidate users, only if needed.
+
+    Short-circuits to `{}` when no multi-player Wordle image is present.
+    Otherwise fetches avatars in parallel via a thread pool.
+    """
+    if not _has_multiplayer_wordle(messages):
+        return {}
+    uid_to_discord_avatar = _extract_user_avatars(messages)
+    if not uid_to_discord_avatar:
+        return {}
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     pool = {}
-    for uid in user_ids:
-        h = _fetch_user_avatar_hash(uid)
-        if h is not None:
-            pool[uid] = h
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        futures = {
+            ex.submit(_download_avatar_hash, uid, avatar): uid
+            for uid, avatar in uid_to_discord_avatar.items()
+        }
+        for fut in as_completed(futures):
+            uid = futures[fut]
+            h = fut.result()
+            if h is not None:
+                pool[uid] = h
     return pool
 
 
