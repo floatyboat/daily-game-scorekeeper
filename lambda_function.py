@@ -26,31 +26,33 @@ TIMEZONE = ZoneInfo(os.getenv('TIMEZONE') or 'UTC')
 TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
 HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
 
-def get_messages(channel_id):
-    headers = {
-        'Authorization': f'Bot {DISCORD_BOT_TOKEN}',
-        'Content-Type': 'application/json'
-    }
+# Shared HTTPS session so TCP/TLS handshakes are reused across all Discord calls.
+# Cold-start cost is significant on Lambda; a single handshake per host beats
+# paying it on every bare `requests.get()`.
+_session = requests.Session()
+_session.headers.update({
+    'Authorization': f'Bot {DISCORD_BOT_TOKEN}',
+    'Content-Type': 'application/json',
+})
+_adapter = requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=32)
+_session.mount('https://', _adapter)
 
+
+def get_messages(channel_id):
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages?limit=100'
-    response = requests.get(url, headers=headers)
+    response = _session.get(url)
     response.raise_for_status()
     messages = response.json()
 
     for x in range(HUNDREDS_OF_MESSAGES - 1):
         last_msg_id = messages[-1]['id']
         url_id = url + f'&before={last_msg_id}'
-        response = requests.get(url_id, headers=headers)
+        response = _session.get(url_id)
         response.raise_for_status()
         messages += response.json()
     return messages
 
 def send_message(channel_id, message=None, components=None):
-    headers = {
-        'Authorization': f'Bot {DISCORD_BOT_TOKEN}',
-        'Content-Type': 'application/json'
-    }
-
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages'
 
     if components is not None:
@@ -62,19 +64,14 @@ def send_message(channel_id, message=None, components=None):
     else:
         payload = {'content': message, 'allowed_mentions': {'parse': ['users']}, 'flags': 4}
 
-    response = requests.post(url, headers=headers, json=payload)
+    response = _session.post(url, json=payload)
     response.raise_for_status()
 
     return response.json()
 
 def pin_message(channel_id, message_id):
-    headers = {
-        'Authorization': f'Bot {DISCORD_BOT_TOKEN}',
-        'Content-Type': 'application/json'
-    }
-
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages/pins/{message_id}'
-    requests.put(url, headers=headers)
+    _session.put(url)
 
 
 _avatar_hash_cache = {}
@@ -128,7 +125,7 @@ def _download_avatar_hash(uid, discord_avatar):
     import io
     try:
         url = f'https://cdn.discordapp.com/avatars/{uid}/{discord_avatar}.png?size=64'
-        r = requests.get(url, timeout=4)
+        r = _session.get(url, timeout=3)
         r.raise_for_status()
         img = Image.open(io.BytesIO(r.content)).convert('RGB')
         h = _avatar_ahash(img)
@@ -167,12 +164,17 @@ def build_avatar_pool(messages):
 
 
 def lambda_handler(event, context):
+    import time
+    t0 = time.time()
+
     yesterday = datetime.now() - timedelta(days=1)
     puzzle_numbers = compute_puzzle_numbers(yesterday)
     game_regexes = build_game_regexes(puzzle_numbers)
     checker = make_timestamp_checker(yesterday, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
 
     messages = get_messages(INPUT_CHANNEL_ID)
+    print(f'[t+{time.time()-t0:.2f}s] fetched {len(messages)} messages')
+
     if not messages:
         return {
             'statusCode': 400,
@@ -185,6 +187,7 @@ def lambda_handler(event, context):
         }
 
     avatar_pool = build_avatar_pool(messages)
+    print(f'[t+{time.time()-t0:.2f}s] avatar pool has {len(avatar_pool)} users')
 
     results = defaultdict(dict)
     for msg in messages:
@@ -193,11 +196,13 @@ def lambda_handler(event, context):
             user_id = uid_override or msg.get('interaction_metadata', {}).get('user', {}).get('id') or msg['author']['id']
             results[game_key][user_id] = score
             puzzle_numbers.update(metadata)
+    print(f'[t+{time.time()-t0:.2f}s] parsed {sum(len(v) for v in results.values())} game results')
 
     components = format_scoreboard_components(results, yesterday, puzzle_numbers, minimum_players=MINIMUM_PLAYERS)
 
     channel = TEST_CHANNEL_ID if 'test' in event else OUTPUT_CHANNEL_ID
     response = send_message(channel, components=components)
+    print(f'[t+{time.time()-t0:.2f}s] posted scoreboard')
 
     if 'test' in event:
         msg = 'TEST: Scoreboard posted'

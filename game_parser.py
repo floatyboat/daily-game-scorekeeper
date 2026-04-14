@@ -126,8 +126,12 @@ def _is_tile_color(px, tol=5):
 def _detect_grids(img):
     """Detect Wordle grid positions in a preview image.
 
-    Scans rows for runs of 5 similarly-sized tile-colored cells; picks the row with
-    the most such groups (= player count). For each group, finds grid_y and pitches.
+    Two-phase scan to keep Python hot loops small:
+      1. Coarse pass (every 4th row) to find rows that contain any tile-colored
+         pixels — produces a small candidate list.
+      2. Full scan of each candidate row to extract 5-cell player groups; stop
+         as soon as a row yields at least one valid group since cells are much
+         taller than the sample stride.
 
     Returns a list of dicts: {grid_x, grid_y, cell_size, pitch_x, pitch_y,
     avatar_cx, avatar_cy, avatar_r}. Empty list if nothing detected.
@@ -135,12 +139,30 @@ def _detect_grids(img):
     w, h = img.size
     pixels = img.load()
 
+    # Inline tile check — 3 squared distances under a tolerance. Hoisting the
+    # color constants into locals avoids repeated global lookups in the hot loop.
+    gR, gG, gB = _WORDLE_GREEN
+    yR, yG, yB = _WORDLE_YELLOW
+    aR, aG, aB = _WORDLE_GRAY
+    tol2 = 25  # tol=5 squared
+
+    def is_tile(px):
+        r, g, b = px
+        dr = r - gR; dg = g - gG; db = b - gB
+        if dr * dr + dg * dg + db * db < tol2:
+            return True
+        dr = r - yR; dg = g - yG; db = b - yB
+        if dr * dr + dg * dg + db * db < tol2:
+            return True
+        dr = r - aR; dg = g - aG; db = b - aB
+        return dr * dr + dg * dg + db * db < tol2
+
     def cell_runs_on_row(y):
         runs = []
         in_run = False
         start = 0
         for x in range(w):
-            if _is_tile_color(pixels[x, y]):
+            if is_tile(pixels[x, y]):
                 if not in_run:
                     start = x
                     in_run = True
@@ -165,7 +187,6 @@ def _detect_grids(img):
                 bands.append(cur)
                 cur = [r]
         bands.append(cur)
-        # Keep only bands that look like a Wordle row: exactly 5 cells of similar width
         valid = []
         for band in bands:
             if len(band) != 5:
@@ -175,9 +196,19 @@ def _detect_grids(img):
                 valid.append(band)
         return valid
 
+    # Phase 1: coarse pass — find rows with tile pixels. Cells are ≥15px tall,
+    # so sampling every 4 rows cannot miss a grid row entirely.
+    candidate_ys = []
+    for y in range(0, h, 4):
+        for x in range(0, w, 8):  # also stride horizontally — cells are ≥15px wide
+            if is_tile(pixels[x, y]):
+                candidate_ys.append(y)
+                break
+
+    # Phase 2: full scan of each candidate row; keep best
     best_y = None
     best_bands = []
-    for y in range(h):
+    for y in candidate_ys:
         runs = cell_runs_on_row(y)
         if not runs:
             continue
@@ -201,7 +232,7 @@ def _detect_grids(img):
         in_run = False
         rs = 0
         for y in range(h):
-            if _is_tile_color(pixels[cx, y]):
+            if is_tile(pixels[cx, y]):
                 if not in_run:
                     rs = y
                     in_run = True
@@ -364,6 +395,22 @@ def parse_wordle_image(image_bytes, candidate_hashes=None):
     return results
 
 
+_wordle_fetch_session = None
+
+
+def _get_wordle_fetch_session():
+    """Lazy module-level Session so CDN connections are reused across calls."""
+    global _wordle_fetch_session
+    if _wordle_fetch_session is None:
+        import requests
+        _wordle_fetch_session = requests.Session()
+        _wordle_fetch_session.mount(
+            'https://',
+            requests.adapters.HTTPAdapter(pool_connections=2, pool_maxsize=8),
+        )
+    return _wordle_fetch_session
+
+
 def parse_wordle_attachment(attachment, candidate_hashes=None):
     """Download and parse a Wordle bot image attachment.
 
@@ -371,15 +418,13 @@ def parse_wordle_attachment(attachment, candidate_hashes=None):
     Skips recap images (streak summaries) — those use "solved" in their
     description rather than "finished"/"unfinished".
     """
-    import requests
-
     if not attachment.get('content_type', '').startswith('image/'):
         return []
     desc = attachment.get('description', '')
     if 'finished' not in desc:
         return []
     try:
-        img_response = requests.get(attachment['url'], timeout=5)
+        img_response = _get_wordle_fetch_session().get(attachment['url'], timeout=4)
         img_response.raise_for_status()
         return parse_wordle_image(img_response.content, candidate_hashes)
     except Exception:
