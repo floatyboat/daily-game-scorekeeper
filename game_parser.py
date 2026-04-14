@@ -473,7 +473,7 @@ def build_game_regexes(puzzle_numbers):
         },
         {
             'key': 'sports',
-            'pattern': re.compile(rf'Connections: Sports Edition.*?puzzle #{pn["sports_puzzle_number"]}', re.IGNORECASE | re.DOTALL),
+            'pattern': re.compile(rf'Connections: Sports Edition.*? #{pn["sports_puzzle_number"]}', re.IGNORECASE | re.DOTALL),
             'needs_timestamp': False,
         },
         {
