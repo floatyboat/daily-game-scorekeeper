@@ -100,14 +100,18 @@ def _extract_user_avatars(messages):
     return out
 
 
-def _has_multiplayer_wordle(messages):
-    """True if any Wordle bot attachment description signals multiple grids.
+def _has_multiplayer_wordle(messages, checker):
+    """True if any in-window Wordle bot attachment description signals multiple grids.
 
     Avatar matching is only needed for multi-player images. Single-player
     images attribute the score to `interaction_metadata.user` without lookups.
+    Scoped to the scoreboard's time window so a multi-player game from an
+    earlier day doesn't force avatar downloads on a single-player day.
     """
     for m in messages:
         if m.get('author', {}).get('id') != WORDLE_BOT_ID:
+            continue
+        if not checker(m['timestamp']):
             continue
         for att in (m.get('attachments') or []):
             desc = att.get('description', '')
@@ -136,13 +140,13 @@ def _download_avatar_hash(uid, discord_avatar):
         return None
 
 
-def build_avatar_pool(messages):
+def build_avatar_pool(messages, checker):
     """Build {user_id: ahash} for candidate users, only if needed.
 
-    Short-circuits to `{}` when no multi-player Wordle image is present.
-    Otherwise fetches avatars in parallel via a thread pool.
+    Short-circuits to `{}` when no in-window multi-player Wordle image is
+    present. Otherwise fetches avatars in parallel via a thread pool.
     """
-    if not _has_multiplayer_wordle(messages):
+    if not _has_multiplayer_wordle(messages, checker):
         return {}
     uid_to_discord_avatar = _extract_user_avatars(messages)
     if not uid_to_discord_avatar:
@@ -186,7 +190,7 @@ def lambda_handler(event, context):
             'body': json.dumps('Function triggered twice. No message sent.')
         }
 
-    avatar_pool = build_avatar_pool(messages)
+    avatar_pool = build_avatar_pool(messages, checker)
     print(f'[t+{time.time()-t0:.2f}s] avatar pool has {len(avatar_pool)} users')
 
     results = defaultdict(dict)
