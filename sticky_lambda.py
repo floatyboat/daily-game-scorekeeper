@@ -54,22 +54,21 @@ def get_messages(channel_id, limit=100):
 
 
 PLAY_BUTTON_CUSTOM_ID = 'sticky_play'
+SCORES_BUTTON_CUSTOM_ID = 'sticky_scores'
 
-PLAY_BUTTON_COMPONENTS = [{
+STICKY_COMPONENTS = [{
     'type': 1,
-    'components': [{
-        'type': 2,
-        'style': 1,
-        'label': '\U0001F47E Play',
-        'custom_id': PLAY_BUTTON_CUSTOM_ID,
-    }],
+    'components': [
+        {'type': 2, 'style': 1, 'label': 'Play', 'custom_id': PLAY_BUTTON_CUSTOM_ID},
+        {'type': 2, 'style': 2, 'label': 'Scores', 'custom_id': SCORES_BUTTON_CUSTOM_ID},
+    ],
 }]
 
 
 def send_sticky(channel_id, content):
     payload = {
         'content': content,
-        'components': PLAY_BUTTON_COMPONENTS,
+        'components': STICKY_COMPONENTS,
         'flags': FLAG_SUPPRESS_NOTIFICATIONS,
         'allowed_mentions': {'parse': []},
     }
@@ -122,16 +121,17 @@ def _has_play_button(sticky):
     )
 
 
+STICKY_HEADING = "\U0001F47E **Now Playing**"
+
+
 def build_sticky_content(results):
     player_count = count_unique_players(results)
     game_count = sum(1 for scores in results.values() if scores)
     if player_count == 0:
-        highlight = "No scores yet today"
-    else:
-        p = 'player' if player_count == 1 else 'players'
-        g = 'game' if game_count == 1 else 'games'
-        highlight = f"\U0001F47E {player_count} {p} · {game_count} {g} today"
-    return f"{highlight}\n\nType `/play` to join!"
+        return f"{STICKY_HEADING}\nNo scores yet today"
+    p = 'player' if player_count == 1 else 'players'
+    g = 'game' if game_count == 1 else 'games'
+    return f"{STICKY_HEADING}\n{player_count} {p} · {game_count} {g} today"
 
 
 def update_sticky(channel_id, channel_messages, results):

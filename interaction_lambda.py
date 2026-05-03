@@ -1,13 +1,33 @@
 import base64
 import json
 import os
-from datetime import datetime
+import requests
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from collections import defaultdict
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 
-from game_parser import compute_puzzle_numbers, build_games_list
+from game_parser import (
+    compute_puzzle_numbers, build_games_list, build_game_regexes,
+    match_message, make_timestamp_checker, format_scoreboard_components,
+)
+
+DISCORD_API_BASE = 'https://discord.com/api/v10'
 
 DISCORD_PUBLIC_KEY = os.getenv('DISCORD_PUBLIC_KEY', '')
+DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
+TIMEZONE = ZoneInfo(os.getenv('TIMEZONE') or 'UTC')
+TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
+HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
+MINIMUM_PLAYERS = int(os.getenv('MINIMUM_PLAYERS') or 1)
+
+_session = requests.Session()
+_session.headers.update({
+    'Authorization': f'Bot {DISCORD_BOT_TOKEN}',
+    'Content-Type': 'application/json',
+})
 
 
 def get_body(event):
@@ -26,6 +46,53 @@ def verify_signature(body, event):
 
     verify_key = VerifyKey(bytes.fromhex(DISCORD_PUBLIC_KEY))
     verify_key.verify(f'{timestamp}{body}'.encode(), bytes.fromhex(signature))
+
+
+def get_reference_date():
+    now = datetime.now(TIMEZONE)
+    if now.hour < HOURS_AFTER_MIDNIGHT:
+        now = now - timedelta(days=1)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
+
+
+def build_scoreboard_response():
+    """Build today's scoreboard as an ephemeral text reply.
+
+    Single page (limit=100) keeps the call under Discord's 3-second
+    interaction-response budget; the daily summary lambda is the source
+    of truth for the full archive, this is a live preview.
+    """
+    today = get_reference_date()
+    puzzle_numbers = compute_puzzle_numbers(today)
+    game_regexes = build_game_regexes(puzzle_numbers)
+    checker = make_timestamp_checker(today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
+
+    url = f'{DISCORD_API_BASE}/channels/{INPUT_CHANNEL_ID}/messages?limit=100'
+    r = _session.get(url)
+    r.raise_for_status()
+    messages = r.json() if isinstance(r.json(), list) else []
+
+    results = defaultdict(dict)
+    for msg in messages:
+        for game_key, score, metadata, uid_override in match_message(msg, game_regexes, checker):
+            user_id = uid_override or msg.get('interaction_metadata', {}).get('user', {}).get('id') or msg['author']['id']
+            results[game_key][user_id] = score
+            puzzle_numbers.update(metadata)
+
+    components = format_scoreboard_components(
+        results, today, puzzle_numbers,
+        title="Today's Scores", minimum_players=MINIMUM_PLAYERS,
+    )
+
+    # 64 (EPHEMERAL) | 1<<15 (IS_COMPONENTS_V2). V2 messages can't have a
+    # content field, so the builder's output goes directly into components.
+    return {
+        "type": 4,
+        "data": {
+            "flags": 32832,
+            "components": components,
+        },
+    }
 
 
 def build_play_response():
@@ -86,13 +153,20 @@ def lambda_handler(event, context):
                 'body': json.dumps(build_play_response()),
             }
 
-    # MESSAGE_COMPONENT (type 3) — sticky's Play button
+    # MESSAGE_COMPONENT (type 3) — sticky buttons
     if body.get('type') == 3:
-        if body.get('data', {}).get('custom_id') == 'sticky_play':
+        custom_id = body.get('data', {}).get('custom_id')
+        if custom_id == 'sticky_play':
             return {
                 'statusCode': 200,
                 'headers': {'Content-Type': 'application/json'},
                 'body': json.dumps(build_play_response()),
+            }
+        if custom_id == 'sticky_scores':
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps(build_scoreboard_response()),
             }
 
     return {'statusCode': 400, 'body': 'Unknown interaction type'}
