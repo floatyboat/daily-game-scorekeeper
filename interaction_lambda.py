@@ -86,4 +86,13 @@ def lambda_handler(event, context):
                 'body': json.dumps(build_play_response()),
             }
 
+    # MESSAGE_COMPONENT (type 3) — sticky's Play button
+    if body.get('type') == 3:
+        if body.get('data', {}).get('custom_id') == 'sticky_play':
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps(build_play_response()),
+            }
+
     return {'statusCode': 400, 'body': 'Unknown interaction type'}

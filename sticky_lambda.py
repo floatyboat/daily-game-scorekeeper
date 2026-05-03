@@ -53,9 +53,23 @@ def get_messages(channel_id, limit=100):
     return messages
 
 
+PLAY_BUTTON_CUSTOM_ID = 'sticky_play'
+
+PLAY_BUTTON_COMPONENTS = [{
+    'type': 1,
+    'components': [{
+        'type': 2,
+        'style': 1,
+        'label': '\U0001F47E Play',
+        'custom_id': PLAY_BUTTON_CUSTOM_ID,
+    }],
+}]
+
+
 def send_sticky(channel_id, content):
     payload = {
         'content': content,
+        'components': PLAY_BUTTON_COMPONENTS,
         'flags': FLAG_SUPPRESS_NOTIFICATIONS,
         'allowed_mentions': {'parse': []},
     }
@@ -100,6 +114,14 @@ def count_unique_players(results):
     return len(players)
 
 
+def _has_play_button(sticky):
+    return any(
+        c.get('custom_id') == PLAY_BUTTON_CUSTOM_ID
+        for row in (sticky.get('components') or [])
+        for c in row.get('components', [])
+    )
+
+
 def build_sticky_content(results):
     player_count = count_unique_players(results)
     game_count = sum(1 for scores in results.values() if scores)
@@ -125,7 +147,8 @@ def update_sticky(channel_id, channel_messages, results):
 
     if (sticky and channel_messages
             and channel_messages[0]['id'] == sticky['id']
-            and sticky.get('content', '') == content):
+            and sticky.get('content', '') == content
+            and _has_play_button(sticky)):
         return 'unchanged'
 
     if sticky:
