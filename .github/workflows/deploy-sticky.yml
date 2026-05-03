@@ -1,0 +1,71 @@
+name: Deploy Sticky Lambda
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'sticky_lambda.py'
+      - 'game_parser.py'
+      - '.github/workflows/deploy-sticky.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+      LAMBDA_FUNCTION_NAME: daily-game-sticky
+      FILE_NAME: sticky_lambda.py
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_DEFAULT_REGION }}
+
+    - name: Package Lambda function
+      run: |
+        echo "Installing requests in Lambda-compatible container..."
+        docker run --rm -v "$PWD":/var/task public.ecr.aws/sam/build-python3.13:latest \
+          bash -c "pip install requests -t /var/task/package/"
+        cd package && zip -r ../function.zip . && cd ..
+        zip function.zip ${{ env.FILE_NAME }} game_parser.py
+        echo "Package created: $(ls -lh function.zip | awk '{print $5}')"
+
+    - name: Deploy to Lambda
+      run: |
+        echo "Deploying to Lambda function: $LAMBDA_FUNCTION_NAME"
+        aws lambda update-function-code \
+          --function-name $LAMBDA_FUNCTION_NAME \
+          --zip-file fileb://function.zip \
+          --output json | jq '.LastModified'
+
+    - name: Wait for deployment
+      run: |
+        echo "Waiting for Lambda update to complete..."
+        aws lambda wait function-updated \
+          --function-name $LAMBDA_FUNCTION_NAME
+        echo "Deployment complete!"
+
+    - name: Run test event
+      timeout-minutes: 1
+      run: |
+        echo '{"test": true}' > test-event.json
+        aws lambda invoke \
+          --function-name $LAMBDA_FUNCTION_NAME \
+          --payload file://test-event.json \
+          --cli-binary-format raw-in-base64-out \
+          response.json
+        cat response.json | jq '.'
+        if cat response.json | jq -e '.statusCode == 200' > /dev/null 2>&1; then
+          echo "Test passed!"
+        else
+          echo "Test failed - check the response above"
+          exit 1
+        fi
