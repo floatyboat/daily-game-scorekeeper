@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from collections import defaultdict
 
 from game_parser import (
-    compute_puzzle_numbers, build_game_regexes, build_games_list,
+    compute_puzzle_numbers, build_game_regexes,
     match_message, make_timestamp_checker,
 )
 
@@ -20,8 +20,6 @@ TEST_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
 TIMEZONE = ZoneInfo(os.getenv('TIMEZONE') or 'UTC')
 TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
 HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
-
-STICKY_MARKER = "\U0001F4CC **Today's Highlights**"
 
 # Discord's @silent flag — message posts without pinging users who have
 # channel notifications enabled. Required so reposts don't notify everyone.
@@ -55,10 +53,9 @@ def get_messages(channel_id, limit=100):
     return messages
 
 
-def send_sticky(channel_id, content, components):
+def send_sticky(channel_id, content):
     payload = {
         'content': content,
-        'components': components,
         'flags': FLAG_SUPPRESS_NOTIFICATIONS,
         'allowed_mentions': {'parse': []},
     }
@@ -74,10 +71,13 @@ def delete_message(channel_id, message_id):
 
 
 def find_sticky(messages):
-    """Locate our most recent sticky in a newest-first message list."""
+    """Locate the bot's most recent message — that's our sticky.
+
+    The bot only posts stickies in this channel (the daily scoreboard
+    posts to OUTPUT_CHANNEL, /play replies are ephemeral), so author
+    identity alone uniquely identifies our sticky.
+    """
     for msg in messages:
-        if STICKY_MARKER not in msg.get('content', ''):
-            continue
         author = msg.get('author', {})
         if DISCORD_BOT_ID and author.get('id') == str(DISCORD_BOT_ID):
             return msg
@@ -100,33 +100,19 @@ def count_unique_players(results):
     return len(players)
 
 
-def build_play_buttons(puzzle_numbers):
-    """Same link-button grid /play renders, packed into action rows of 5."""
-    games = build_games_list(puzzle_numbers)
-    buttons = [
-        {"type": 2, "style": 5, "label": f"{emoji} {name}", "url": url}
-        for _, emoji, name, _, _, _, url in games
-    ]
-    return [{"type": 1, "components": buttons[i:i + 5]} for i in range(0, len(buttons), 5)]
-
-
-def build_sticky_payload(results, puzzle_numbers):
+def build_sticky_content(results):
     player_count = count_unique_players(results)
     game_count = sum(1 for scores in results.values() if scores)
-
     if player_count == 0:
-        highlight = "No scores yet today — be the first!"
+        highlight = "No scores yet today"
     else:
         p = 'player' if player_count == 1 else 'players'
         g = 'game' if game_count == 1 else 'games'
-        highlight = f"\U0001F3AE {player_count} {p} · {game_count} {g} today"
-
-    content = f"{STICKY_MARKER}\n\n{highlight}\n\n_Tap a game below to play._"
-    components = build_play_buttons(puzzle_numbers)
-    return content, components
+        highlight = f"\U0001F47E {player_count} {p} · {game_count} {g} today"
+    return f"{highlight}\n\nType `/play` to join!"
 
 
-def update_sticky(channel_id, channel_messages, results, puzzle_numbers):
+def update_sticky(channel_id, channel_messages, results):
     """Maintain a single sticky at the bottom of channel_id.
 
     No-op only when our sticky is already the most recent message AND its
@@ -135,7 +121,7 @@ def update_sticky(channel_id, channel_messages, results, puzzle_numbers):
     yesterday's stats.
     """
     sticky = find_sticky(channel_messages)
-    content, components = build_sticky_payload(results, puzzle_numbers)
+    content = build_sticky_content(results)
 
     if (sticky and channel_messages
             and channel_messages[0]['id'] == sticky['id']
@@ -145,7 +131,7 @@ def update_sticky(channel_id, channel_messages, results, puzzle_numbers):
     if sticky:
         delete_message(channel_id, sticky['id'])
 
-    send_sticky(channel_id, content, components)
+    send_sticky(channel_id, content)
     return 'reposted' if sticky else 'created'
 
 
@@ -177,7 +163,7 @@ def lambda_handler(event, context):
     # to the real input channel during local runs.
     sticky_channel = TEST_CHANNEL_ID if is_test else INPUT_CHANNEL_ID
     sticky_messages = get_messages(TEST_CHANNEL_ID, limit=50) if is_test else input_messages
-    action = update_sticky(sticky_channel, sticky_messages, results, puzzle_numbers)
+    action = update_sticky(sticky_channel, sticky_messages, results)
 
     return {'statusCode': 200, 'body': json.dumps(f'Sticky: {action}')}
 
