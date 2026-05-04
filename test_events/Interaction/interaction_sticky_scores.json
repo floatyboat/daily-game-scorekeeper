@@ -1,5 +1,6 @@
 {
   "type": 3,
+  "channel_id": "${TEST_CHANNEL_ID}",
   "data": {
     "custom_id": "sticky_scores",
     "component_type": 2

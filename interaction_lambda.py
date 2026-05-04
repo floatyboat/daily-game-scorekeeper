@@ -17,7 +17,6 @@ DISCORD_API_BASE = 'https://discord.com/api/v10'
 
 DISCORD_PUBLIC_KEY = os.getenv('DISCORD_PUBLIC_KEY', '')
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
 TIMEZONE = ZoneInfo(os.getenv('TIMEZONE') or 'UTC')
 TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
 HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
@@ -55,19 +54,21 @@ def get_reference_date():
     return now.replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
 
 
-def build_scoreboard_response():
+def build_scoreboard_response(channel_id):
     """Build today's scoreboard as an ephemeral text reply.
 
-    Single page (limit=100) keeps the call under Discord's 3-second
-    interaction-response budget; the daily summary lambda is the source
-    of truth for the full archive, this is a live preview.
+    Reads from the channel the interaction came from so the sticky's Scores
+    button always reflects the channel it was clicked in. Single page
+    (limit=100) keeps the call under Discord's 3-second interaction-response
+    budget; the daily summary lambda is the source of truth for the full
+    archive, this is a live preview.
     """
     today = get_reference_date()
     puzzle_numbers = compute_puzzle_numbers(today)
     game_regexes = build_game_regexes(puzzle_numbers)
     checker = make_timestamp_checker(today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
 
-    url = f'{DISCORD_API_BASE}/channels/{INPUT_CHANNEL_ID}/messages?limit=100'
+    url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages?limit=100'
     r = _session.get(url)
     r.raise_for_status()
     messages = r.json() if isinstance(r.json(), list) else []
@@ -166,7 +167,18 @@ def lambda_handler(event, context):
             return {
                 'statusCode': 200,
                 'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps(build_scoreboard_response()),
+                'body': json.dumps(build_scoreboard_response(body['channel_id'])),
             }
 
     return {'statusCode': 400, 'body': 'Unknown interaction type'}
+
+
+if __name__ == '__main__':
+    import sys, re
+    # Fixtures use ${VAR} placeholders for installation-specific values
+    # (e.g. channel_id) so the handler can stay env-free.
+    fixture = sys.argv[1] if len(sys.argv) > 1 else 'test_events/Interaction/interaction_sticky_scores.json'
+    with open(fixture) as f:
+        raw = f.read()
+    raw = re.sub(r'\$\{(\w+)\}', lambda m: os.environ[m.group(1)], raw)
+    print(lambda_handler(json.loads(raw), None))
