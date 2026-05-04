@@ -24,6 +24,7 @@ HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
 # Discord's @silent flag — message posts without pinging users who have
 # channel notifications enabled. Required so reposts don't notify everyone.
 FLAG_SUPPRESS_NOTIFICATIONS = 1 << 12
+FLAG_SUPPRESS_EMBEDS = 1 << 2
 
 _session = requests.Session()
 _session.headers.update({
@@ -81,6 +82,23 @@ def send_sticky(channel_id, content):
 def delete_message(channel_id, message_id):
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}'
     _session.delete(url)
+
+
+def suppress_embeds(channel_id, message):
+    """Strip URL previews on a matched game-score message.
+
+    No-op when the message has no embeds or already has the flag set. Requires
+    MANAGE_MESSAGES for messages the bot didn't author; failures are swallowed
+    so a missing perm or since-deleted message doesn't kill the run.
+    """
+    if not message.get('embeds'):
+        return False
+    flags = message.get('flags') or 0
+    if flags & FLAG_SUPPRESS_EMBEDS:
+        return False
+    url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages/{message["id"]}'
+    r = _session.patch(url, json={'flags': flags | FLAG_SUPPRESS_EMBEDS})
+    return r.ok
 
 
 def find_sticky(messages):
@@ -173,22 +191,28 @@ def lambda_handler(event, context):
     game_regexes = build_game_regexes(puzzle_numbers)
     checker = make_timestamp_checker(today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
 
-    input_messages = get_messages(INPUT_CHANNEL_ID, limit=200)
+    # Operate end-to-end on a single channel: counts and the sticky live
+    # together. Test events redirect to TEST_CHANNEL_ID so local runs never
+    # touch real user messages.
+    channel_id = TEST_CHANNEL_ID if is_test else INPUT_CHANNEL_ID
+    messages = get_messages(channel_id, limit=200)
 
     results = defaultdict(dict)
-    for msg in input_messages:
-        for game_key, score, metadata, uid_override in match_message(msg, game_regexes, checker):
+    suppressed = 0
+    for msg in messages:
+        entries = match_message(msg, game_regexes, checker)
+        if not entries:
+            continue
+        if suppress_embeds(channel_id, msg):
+            suppressed += 1
+        for game_key, score, metadata, uid_override in entries:
             user_id = uid_override or msg.get('interaction_metadata', {}).get('user', {}).get('id') or msg['author']['id']
             results[game_key][user_id] = score
             puzzle_numbers.update(metadata)
 
-    # Sticky lives in the test channel under a test event so we don't post
-    # to the real input channel during local runs.
-    sticky_channel = TEST_CHANNEL_ID if is_test else INPUT_CHANNEL_ID
-    sticky_messages = get_messages(TEST_CHANNEL_ID, limit=50) if is_test else input_messages
-    action = update_sticky(sticky_channel, sticky_messages, results)
+    action = update_sticky(channel_id, messages, results)
 
-    return {'statusCode': 200, 'body': json.dumps(f'Sticky: {action}')}
+    return {'statusCode': 200, 'body': json.dumps(f'Sticky: {action} (embeds suppressed: {suppressed})')}
 
 
 if __name__ == '__main__':
