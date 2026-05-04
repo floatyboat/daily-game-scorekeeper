@@ -1,7 +1,6 @@
 import json
 import os
-import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 from collections import defaultdict
 
@@ -9,8 +8,10 @@ from game_parser import (
     compute_puzzle_numbers, build_game_regexes,
     match_message, make_timestamp_checker,
 )
-
-DISCORD_API_BASE = 'https://discord.com/api/v10'
+from scoreboard import (
+    DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
+    make_session, fetch_messages, reference_date,
+)
 
 DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
@@ -21,37 +22,7 @@ TIMEZONE = ZoneInfo(os.getenv('TIMEZONE') or 'UTC')
 TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
 HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
 
-# Discord's @silent flag — message posts without pinging users who have
-# channel notifications enabled. Required so reposts don't notify everyone.
-FLAG_SUPPRESS_NOTIFICATIONS = 1 << 12
-FLAG_SUPPRESS_EMBEDS = 1 << 2
-
-_session = requests.Session()
-_session.headers.update({
-    'Authorization': f'Bot {DISCORD_BOT_TOKEN}',
-    'Content-Type': 'application/json',
-})
-
-
-def get_messages(channel_id, limit=100):
-    per_page = min(limit, 100)
-    url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages?limit={per_page}'
-    r = _session.get(url)
-    r.raise_for_status()
-    messages = r.json()
-    if not isinstance(messages, list):
-        return []
-    while len(messages) < limit:
-        last_id = messages[-1]['id']
-        remaining = min(limit - len(messages), 100)
-        page_url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages?limit={remaining}&before={last_id}'
-        r = _session.get(page_url)
-        r.raise_for_status()
-        page = r.json()
-        if not isinstance(page, list) or not page:
-            break
-        messages += page
-    return messages
+_session = make_session(DISCORD_BOT_TOKEN)
 
 
 PLAY_BUTTON_CUSTOM_ID = 'sticky_play'
@@ -117,13 +88,6 @@ def find_sticky(messages):
     return None
 
 
-def get_reference_date():
-    now = datetime.now(TIMEZONE)
-    if now.hour < HOURS_AFTER_MIDNIGHT:
-        now = now - timedelta(days=1)
-    return now.replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
-
-
 def count_unique_players(results):
     players = set()
     for game_scores in results.values():
@@ -186,7 +150,7 @@ def lambda_handler(event, context):
     if not is_test and datetime.now(TIMEZONE).hour < HOURS_AFTER_MIDNIGHT:
         return {'statusCode': 200, 'body': json.dumps('Outside active window')}
 
-    today = get_reference_date()
+    today = reference_date(datetime.now(), TIMEZONE, HOURS_AFTER_MIDNIGHT)
     puzzle_numbers = compute_puzzle_numbers(today)
     game_regexes = build_game_regexes(puzzle_numbers)
     checker = make_timestamp_checker(today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
@@ -195,7 +159,7 @@ def lambda_handler(event, context):
     # together. Test events redirect to TEST_CHANNEL_ID so local runs never
     # touch real user messages.
     channel_id = TEST_CHANNEL_ID if is_test else INPUT_CHANNEL_ID
-    messages = get_messages(channel_id, limit=200)
+    messages = fetch_messages(_session, channel_id, limit=200)
 
     results = defaultdict(dict)
     suppressed = 0

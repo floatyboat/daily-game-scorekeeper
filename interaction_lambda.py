@@ -1,19 +1,13 @@
 import base64
 import json
 import os
-import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
-from collections import defaultdict
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 
-from game_parser import (
-    compute_puzzle_numbers, build_games_list, build_game_regexes,
-    match_message, make_timestamp_checker, format_scoreboard_components,
-)
-
-DISCORD_API_BASE = 'https://discord.com/api/v10'
+from game_parser import build_games_list, compute_puzzle_numbers, format_scoreboard_components
+from scoreboard import make_session, fetch_messages, reference_date, parse_results
 
 DISCORD_PUBLIC_KEY = os.getenv('DISCORD_PUBLIC_KEY', '')
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
@@ -22,11 +16,7 @@ TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
 HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
 MINIMUM_PLAYERS = int(os.getenv('MINIMUM_PLAYERS') or 1)
 
-_session = requests.Session()
-_session.headers.update({
-    'Authorization': f'Bot {DISCORD_BOT_TOKEN}',
-    'Content-Type': 'application/json',
-})
+_session = make_session(DISCORD_BOT_TOKEN)
 
 
 def get_body(event):
@@ -47,13 +37,6 @@ def verify_signature(body, event):
     verify_key.verify(f'{timestamp}{body}'.encode(), bytes.fromhex(signature))
 
 
-def get_reference_date():
-    now = datetime.now(TIMEZONE)
-    if now.hour < HOURS_AFTER_MIDNIGHT:
-        now = now - timedelta(days=1)
-    return now.replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=None)
-
-
 def build_scoreboard_response(channel_id):
     """Build today's scoreboard as an ephemeral text reply.
 
@@ -63,22 +46,11 @@ def build_scoreboard_response(channel_id):
     budget; the daily summary lambda is the source of truth for the full
     archive, this is a live preview.
     """
-    today = get_reference_date()
-    puzzle_numbers = compute_puzzle_numbers(today)
-    game_regexes = build_game_regexes(puzzle_numbers)
-    checker = make_timestamp_checker(today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
-
-    url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages?limit=100'
-    r = _session.get(url)
-    r.raise_for_status()
-    messages = r.json() if isinstance(r.json(), list) else []
-
-    results = defaultdict(dict)
-    for msg in messages:
-        for game_key, score, metadata, uid_override in match_message(msg, game_regexes, checker):
-            user_id = uid_override or msg.get('interaction_metadata', {}).get('user', {}).get('id') or msg['author']['id']
-            results[game_key][user_id] = score
-            puzzle_numbers.update(metadata)
+    today = reference_date(datetime.now(), TIMEZONE, HOURS_AFTER_MIDNIGHT)
+    messages = fetch_messages(_session, channel_id, limit=100)
+    results, puzzle_numbers = parse_results(
+        messages, today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS,
+    )
 
     components = format_scoreboard_components(
         results, today, puzzle_numbers,

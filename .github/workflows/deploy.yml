@@ -6,6 +6,7 @@ on:
     paths:
       - 'lambda_function.py'
       - 'game_parser.py'
+      - 'scoreboard.py'
       - '.github/workflows/deploy.yml'
 
 jobs:
@@ -35,7 +36,7 @@ jobs:
         docker run --rm -v "$PWD":/var/task public.ecr.aws/sam/build-python3.13:latest \
           bash -c "pip install Pillow -t /var/task/package/"
         cd package && zip -r ../function.zip . && cd ..
-        zip function.zip ${{ env.FILE_NAME }} game_parser.py
+        zip function.zip ${{ env.FILE_NAME }} game_parser.py scoreboard.py
         echo "✅ Package created: $(ls -lh function.zip | awk '{print $5}')"
     
     - name: Deploy to Lambda

@@ -6,6 +6,7 @@ on:
     paths:
       - 'sticky_lambda.py'
       - 'game_parser.py'
+      - 'scoreboard.py'
       - '.github/workflows/deploy-sticky.yml'
 
 jobs:
@@ -35,7 +36,7 @@ jobs:
         docker run --rm -v "$PWD":/var/task public.ecr.aws/sam/build-python3.13:latest \
           bash -c "pip install requests -t /var/task/package/"
         cd package && zip -r ../function.zip . && cd ..
-        zip function.zip ${{ env.FILE_NAME }} game_parser.py
+        zip function.zip ${{ env.FILE_NAME }} game_parser.py scoreboard.py
         echo "Package created: $(ls -lh function.zip | awk '{print $5}')"
 
     - name: Deploy to Lambda
