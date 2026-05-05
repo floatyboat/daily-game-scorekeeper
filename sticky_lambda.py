@@ -10,7 +10,7 @@ from game_parser import (
 )
 from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
-    make_session, fetch_messages, reference_date,
+    make_session, fetch_messages, reference_date, is_scoreboard_message,
 )
 
 DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
@@ -28,19 +28,21 @@ _session = make_session(DISCORD_BOT_TOKEN)
 PLAY_BUTTON_CUSTOM_ID = 'sticky_play'
 SCORES_BUTTON_CUSTOM_ID = 'sticky_scores'
 
-STICKY_COMPONENTS = [{
-    'type': 1,
-    'components': [
+
+def build_sticky_components(yesterday_url=None):
+    buttons = [
         {'type': 2, 'style': 1, 'label': 'Play', 'custom_id': PLAY_BUTTON_CUSTOM_ID},
         {'type': 2, 'style': 2, 'label': 'Scores', 'custom_id': SCORES_BUTTON_CUSTOM_ID},
-    ],
-}]
+    ]
+    if yesterday_url:
+        buttons.append({'type': 2, 'style': 5, 'label': 'Yesterday', 'url': yesterday_url})
+    return [{'type': 1, 'components': buttons}]
 
 
-def send_sticky(channel_id, content):
+def send_sticky(channel_id, content, components):
     payload = {
         'content': content,
-        'components': STICKY_COMPONENTS,
+        'components': components,
         'flags': FLAG_SUPPRESS_NOTIFICATIONS,
         'allowed_mentions': {'parse': []},
     }
@@ -73,18 +75,27 @@ def suppress_embeds(channel_id, message):
 
 
 def find_sticky(messages):
-    """Locate the bot's most recent message — that's our sticky.
+    """Locate the bot's most recent non-scoreboard message — that's our sticky.
 
-    The bot only posts stickies in this channel (the daily scoreboard
-    posts to OUTPUT_CHANNEL, /play replies are ephemeral), so author
-    identity alone uniquely identifies our sticky.
+    The daily scoreboard post and the sticky can share a channel, so we skip
+    scoreboard messages (identified by the v2-components flag) when scanning.
+    /play replies are ephemeral and never appear in fetch_messages.
     """
     for msg in messages:
+        if is_scoreboard_message(msg):
+            continue
         author = msg.get('author', {})
         if DISCORD_BOT_ID and author.get('id') == str(DISCORD_BOT_ID):
             return msg
         if not DISCORD_BOT_ID and author.get('bot'):
             return msg
+    return None
+
+
+def find_latest_scoreboard_id(messages):
+    for msg in messages:
+        if is_scoreboard_message(msg):
+            return msg['id']
     return None
 
 
@@ -95,12 +106,15 @@ def count_unique_players(results):
     return len(players)
 
 
-def _has_play_button(sticky):
-    return any(
-        c.get('custom_id') == PLAY_BUTTON_CUSTOM_ID
-        for row in (sticky.get('components') or [])
-        for c in row.get('components', [])
-    )
+def _sticky_is_current(sticky, content, want_url):
+    if sticky.get('content', '') != content:
+        return False
+    btns = [c for row in (sticky.get('components') or [])
+            for c in row.get('components', [])]
+    if not any(c.get('custom_id') == PLAY_BUTTON_CUSTOM_ID for c in btns):
+        return False
+    existing_url = next((c.get('url') for c in btns if c.get('style') == 5), None)
+    return existing_url == want_url
 
 
 STICKY_HEADING = "\U0001F47E **Now Playing**"
@@ -122,21 +136,29 @@ def update_sticky(channel_id, channel_messages, results):
     No-op only when our sticky is already the most recent message AND its
     content matches what we'd render now — content comparison catches the
     day-transition case where the sticky is still at the bottom but shows
-    yesterday's stats.
+    yesterday's stats, and URL comparison catches the case where the daily
+    scoreboard just posted and the Yesterday link is now stale.
     """
     sticky = find_sticky(channel_messages)
     content = build_sticky_content(results)
 
+    yesterday_url = None
+    scoreboard_id = find_latest_scoreboard_id(channel_messages)
+    if scoreboard_id:
+        # Discord's client routes by channel_id/message_id; the guild slot
+        # accepts @me even for guild messages.
+        yesterday_url = f'https://discord.com/channels/@me/{channel_id}/{scoreboard_id}'
+    components = build_sticky_components(yesterday_url)
+
     if (sticky and channel_messages
             and channel_messages[0]['id'] == sticky['id']
-            and sticky.get('content', '') == content
-            and _has_play_button(sticky)):
+            and _sticky_is_current(sticky, content, yesterday_url)):
         return 'unchanged'
 
     if sticky:
         delete_message(channel_id, sticky['id'])
 
-    send_sticky(channel_id, content)
+    send_sticky(channel_id, content, components)
     return 'reposted' if sticky else 'created'
 
 
