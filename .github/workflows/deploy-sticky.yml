@@ -32,9 +32,9 @@ jobs:
 
     - name: Package Lambda function
       run: |
-        echo "Installing requests in Lambda-compatible container..."
+        echo "Installing requests and Pillow in Lambda-compatible container..."
         docker run --rm -v "$PWD":/var/task public.ecr.aws/sam/build-python3.13:latest \
-          bash -c "pip install requests -t /var/task/package/"
+          bash -c "pip install requests Pillow -t /var/task/package/"
         cd package && zip -r ../function.zip . && cd ..
         zip function.zip ${{ env.FILE_NAME }} game_parser.py scoreboard.py
         echo "Package created: $(ls -lh function.zip | awk '{print $5}')"

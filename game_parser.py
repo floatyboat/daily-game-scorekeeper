@@ -932,3 +932,4 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
         components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": scores_children})
 
     return components
+
