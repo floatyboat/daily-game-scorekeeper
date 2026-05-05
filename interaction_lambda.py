@@ -6,11 +6,12 @@ from zoneinfo import ZoneInfo
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 
-from game_parser import build_games_list, compute_puzzle_numbers, format_scoreboard_components
-from scoreboard import make_session, fetch_messages, reference_date, parse_results
+from game_parser import build_games_list, compute_puzzle_numbers, format_scoreboard_components, make_timestamp_checker
+from scoreboard import make_session, fetch_messages, reference_date, parse_results, build_avatar_pool
 
 DISCORD_PUBLIC_KEY = os.getenv('DISCORD_PUBLIC_KEY', '')
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+WORDLE_BOT_ID = os.getenv('WORDLE_BOT_ID')
 TIMEZONE = ZoneInfo(os.getenv('TIMEZONE') or 'UTC')
 TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
 HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
@@ -48,8 +49,11 @@ def build_scoreboard_response(channel_id):
     """
     today = reference_date(datetime.now(), TIMEZONE, HOURS_AFTER_MIDNIGHT)
     messages = fetch_messages(_session, channel_id, limit=100)
+    checker = make_timestamp_checker(today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
+    avatar_pool = build_avatar_pool(_session, messages, checker, WORDLE_BOT_ID)
     results, puzzle_numbers = parse_results(
         messages, today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS,
+        wordle_bot_id=WORDLE_BOT_ID, avatar_hashes=avatar_pool,
     )
 
     components = format_scoreboard_components(

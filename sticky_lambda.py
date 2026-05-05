@@ -11,12 +11,14 @@ from game_parser import (
 from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
     make_session, fetch_messages, reference_date, is_scoreboard_message,
+    build_avatar_pool,
 )
 
 DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
 TEST_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
+WORDLE_BOT_ID = os.getenv('WORDLE_BOT_ID')
 
 TIMEZONE = ZoneInfo(os.getenv('TIMEZONE') or 'UTC')
 TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
@@ -183,10 +185,13 @@ def lambda_handler(event, context):
     channel_id = TEST_CHANNEL_ID if is_test else INPUT_CHANNEL_ID
     messages = fetch_messages(_session, channel_id, limit=200)
 
+    avatar_pool = build_avatar_pool(_session, messages, checker, WORDLE_BOT_ID)
+
     results = defaultdict(dict)
     suppressed = 0
     for msg in messages:
-        entries = match_message(msg, game_regexes, checker)
+        entries = match_message(msg, game_regexes, checker,
+                                wordle_bot_id=WORDLE_BOT_ID, avatar_hashes=avatar_pool)
         if not entries:
             continue
         if suppress_embeds(channel_id, msg):

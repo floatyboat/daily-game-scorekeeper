@@ -91,10 +91,9 @@ def build_avatar_pool(session, messages, checker, wordle_bot_id):
         return {}
     from concurrent.futures import ThreadPoolExecutor, as_completed
     pool = {}
-    cache = {}
     with ThreadPoolExecutor(max_workers=16) as ex:
         futures = {
-            ex.submit(_download_avatar_hash, session, uid, avatar, cache): uid
+            ex.submit(_download_avatar_hash, session, uid, avatar): uid
             for uid, avatar in uid_to_avatar.items()
         }
         for fut in as_completed(futures):
@@ -144,9 +143,13 @@ def _has_multiplayer_wordle(messages, checker, wordle_bot_id):
     return False
 
 
-def _download_avatar_hash(session, uid, discord_avatar, cache):
-    if uid in cache:
-        return cache[uid]
+_avatar_hash_cache = {}  # (uid, avatar_id) -> hash; survives across calls within a warm process
+
+
+def _download_avatar_hash(session, uid, discord_avatar):
+    key = (uid, discord_avatar)
+    if key in _avatar_hash_cache:
+        return _avatar_hash_cache[key]
     from PIL import Image
     import io
     try:
@@ -155,8 +158,7 @@ def _download_avatar_hash(session, uid, discord_avatar, cache):
         r.raise_for_status()
         img = Image.open(io.BytesIO(r.content)).convert('RGB')
         h = _avatar_ahash(img)
-        cache[uid] = h
+        _avatar_hash_cache[key] = h
         return h
     except Exception:
-        cache[uid] = None
         return None
