@@ -17,6 +17,7 @@ WORLDLE_LINK = 'https://worldlegame.io'
 QUIZL_LINK = 'https://quizl.io'
 CHRONOPHOTO_LINK = 'https://www.chronophoto.app/daily.html'
 WORDLE_LINK = 'https://www.nytimes.com/games/wordle'
+TRAVLE_LINK = 'https://travle.earth'
 
 # Accent color constants (Discord integer colors)
 HEADER_COLOR = 16766720       # gold
@@ -34,6 +35,7 @@ GAME_COLORS = {
     'flagle': 15105570,       # orange
     'quizl': 9807270,         # blue-gray
     'wordle': 5763719,        # green
+    'travle': 3066993,        # forest green
 }
 
 # Start date constants
@@ -44,6 +46,7 @@ SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
 MAPTAP_START_DATE = datetime(2024, 6, 22)
 QUIZL_START_DATE = datetime(2022, 3, 16)
 WORDLE_START_DATE = datetime(2021, 6, 19)
+TRAVLE_START_DATE = datetime(2022, 12, 15)
 
 # Default totals
 DEFAULT_BANDLE_TOTAL = 6
@@ -67,6 +70,7 @@ def compute_puzzle_numbers(reference_date):
         'flagle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
         'chronophoto_number': f'{reference_date.month}/{reference_date.day}/{reference_date.year}',
         'wordle_puzzle_number': int((reference_date - WORDLE_START_DATE).days),
+        'travle_puzzle_number': int((reference_date - TRAVLE_START_DATE).days + 1),
         'bandle_total': DEFAULT_BANDLE_TOTAL,
         'quizl_total': DEFAULT_QUIZL_TOTAL,
     }
@@ -522,6 +526,11 @@ def build_game_regexes(puzzle_numbers):
             'pattern': re.compile(rf'Wordle\s+{pn["wordle_puzzle_number"]:,}\s+([1-6X])/6', re.IGNORECASE),
             'needs_timestamp': False,
         },
+        {
+            'key': 'travle',
+            'pattern': re.compile(rf'#travle\s+#{pn["travle_puzzle_number"]}\s+(?:\+(\d+)|\((\d+)\s+away\))[^\n]*(?:\n([^\n]*))?', re.IGNORECASE),
+            'needs_timestamp': False,
+        },
     ]
 
 
@@ -614,6 +623,19 @@ def match_message(msg, game_regexes, timestamp_checker, wordle_bot_id=None, avat
             score_str = match.group(1)
             score = DEFAULT_WORDLE_TOTAL + 1 if score_str.upper() == 'X' else int(score_str)
             return [(key, score, metadata, None)]
+        elif key == 'travle':
+            plus_str = match.group(1)
+            away_str = match.group(2)
+            squares = match.group(3) or ''
+            checkmarks = squares.count('✅')  # path countries guessed in-order
+            # Encode as (tier, n, -checkmarks): 0=solved(+N), 1=failed but got
+            # at least one correct country (✅ or 🟩), 2=complete wiff (no greens).
+            # Negate checkmarks so natural ascending tuple order ranks more ✅
+            # higher within the same +N (tiebreaker for in-order distinction).
+            if plus_str is not None:
+                return [(key, (0, int(plus_str), -checkmarks), metadata, None)]
+            tier = 1 if (checkmarks or '🟩' in squares) else 2
+            return [(key, (tier, int(away_str), -checkmarks), metadata, None)]
 
     # Wordle bot image parsing
     if (wordle_bot_id
@@ -645,6 +667,7 @@ def build_games_list(puzzle_numbers):
         ('pips', '🎲', 'Pips', 'time', 0, pn['pips_puzzle_number'], PIPS_LINK),
         ('quizl', '⁉️', 'Quizl', 'score', quizl_total, pn['quizl_puzzle_number'], QUIZL_LINK),
         ('sports', '🏈', 'Sports Connections', 'connections', 4, pn['sports_puzzle_number'], SPORTS_CONNECTIONS_LINK),
+        ('travle', '✈️', 'Travle', 'travle', 0, pn['travle_puzzle_number'], TRAVLE_LINK),
         ('wordle', '📗', 'Wordle', 'guesses', DEFAULT_WORDLE_TOTAL, pn['wordle_puzzle_number'], WORDLE_LINK),
         ('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{pn["worldle_number"]}', WORLDLE_LINK),
     ]
@@ -703,6 +726,9 @@ def compute_points(results, puzzle_numbers, minimum_players=1):
                     is_poop = True
             elif metric == 'maptap':
                 if current_score[1] == 0:
+                    is_poop = True
+            elif metric == 'travle':
+                if current_score[0] == 2:
                     is_poop = True
 
             # Collect tied players
@@ -838,6 +864,16 @@ def _format_game_players(game_scores, metric, total):
             score_str = f"{str(current_score)}"
             if total > 0:
                 score_str = f"{score_str}/{total}"
+        elif metric == 'travle':
+            tier, n, neg_cm = current_score
+            k = -neg_cm
+            if tier == 0:
+                score_str = f"+{n} ({k}✅)"
+            elif tier == 1:
+                score_str = f"{n} away" + (f" ({k}✅)" if k else "")
+            else:  # tier == 2: complete wiff
+                medal = '💩 '
+                score_str = f"{n} away"
         else:  # guesses
             if total == 0:
                 score_str = f"{str(current_score)} {metric}"
