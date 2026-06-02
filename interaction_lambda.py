@@ -38,14 +38,15 @@ def verify_signature(body, event):
     verify_key.verify(f'{timestamp}{body}'.encode(), bytes.fromhex(signature))
 
 
-def build_scoreboard_response(channel_id):
-    """Build today's scoreboard as an ephemeral text reply.
+def fetch_today_results(channel_id):
+    """Fetch one page of channel history and parse today's game results.
 
-    Reads from the channel the interaction came from so the sticky's Scores
-    button always reflects the channel it was clicked in. Single page
-    (limit=100) keeps the call under Discord's 3-second interaction-response
-    budget; the daily summary lambda is the source of truth for the full
-    archive, this is a live preview.
+    Shared by the Scores and Play buttons so both reflect the same live view of
+    the channel they were clicked in. Single page (limit=100) keeps the call
+    under Discord's 3-second interaction-response budget; the daily summary
+    lambda is the source of truth for the full archive, this is a live preview.
+
+    Returns (results, puzzle_numbers, today).
     """
     today = reference_date(datetime.now(), TIMEZONE, HOURS_AFTER_MIDNIGHT)
     messages = fetch_messages(_session, channel_id, limit=100)
@@ -55,6 +56,12 @@ def build_scoreboard_response(channel_id):
         messages, today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS,
         wordle_bot_id=WORDLE_BOT_ID, avatar_hashes=avatar_pool,
     )
+    return results, puzzle_numbers, today
+
+
+def build_scoreboard_response(channel_id):
+    """Build today's scoreboard as an ephemeral Components V2 reply."""
+    results, puzzle_numbers, today = fetch_today_results(channel_id)
 
     components = format_scoreboard_components(
         results, today, puzzle_numbers,
@@ -72,16 +79,33 @@ def build_scoreboard_response(channel_id):
     }
 
 
-def build_play_response():
-    """Build an ephemeral message with link buttons for all tracked games."""
-    today = datetime.utcnow()
-    puzzle_numbers = compute_puzzle_numbers(today)
+def build_play_response(channel_id):
+    """Build an ephemeral message with link buttons for all tracked games.
+
+    Buttons are ordered by how many people have already played each game today
+    (descending), then alphabetically by title. A game played by at least one
+    person gets a "(count)" suffix; games nobody has played yet sort last with
+    no suffix, so the most active games surface first.
+    """
+    try:
+        results, puzzle_numbers, _ = fetch_today_results(channel_id)
+    except Exception:
+        # Counts are a nice-to-have; never let a fetch/parse hiccup block the
+        # core Play action. Fall back to today's games with no counts.
+        results, puzzle_numbers = {}, compute_puzzle_numbers(datetime.utcnow())
+
     games = build_games(puzzle_numbers)
 
-    buttons = [
-        {"type": 2, "style": 5, "label": f"{g.emoji} {g.title}", "url": g.url}
-        for g in games
-    ]
+    def player_count(game):
+        return len(results.get(game.key, {}))
+
+    games.sort(key=lambda g: (-player_count(g), g.title.lower()))
+
+    buttons = []
+    for g in games:
+        count = player_count(g)
+        label = f"{g.emoji} {g.title} ({count})" if count else f"{g.emoji} {g.title}"
+        buttons.append({"type": 2, "style": 5, "label": label, "url": g.url})
 
     action_rows = []
     for i in range(0, len(buttons), 5):
@@ -127,7 +151,7 @@ def lambda_handler(event, context):
             return {
                 'statusCode': 200,
                 'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps(build_play_response()),
+                'body': json.dumps(build_play_response(body['channel_id'])),
             }
 
     # MESSAGE_COMPONENT (type 3) — sticky buttons
@@ -137,7 +161,7 @@ def lambda_handler(event, context):
             return {
                 'statusCode': 200,
                 'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps(build_play_response()),
+                'body': json.dumps(build_play_response(body['channel_id'])),
             }
         if custom_id == 'sticky_scores':
             return {

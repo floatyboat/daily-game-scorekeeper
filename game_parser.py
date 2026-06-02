@@ -495,9 +495,9 @@ def build_games(puzzle_numbers):
     Order is parse priority and is load-bearing: maptap_challenge must precede
     maptap, whose '(.*)MapTap(.*)' pattern would otherwise swallow challenge
     messages (match_message returns on the first hit). The scoreboard re-sorts by
-    player count at render time, so this order does not affect display. Games in
-    DISABLED_GAMES are dropped here, so they are skipped by both the parser and
-    the scoreboard.
+    player count then title at render time, so this order does not affect display.
+    Games in DISABLED_GAMES are dropped here, so they are skipped by both the
+    parser and the scoreboard.
     """
     pn = puzzle_numbers
     bandle_total = pn.get('bandle_total', DEFAULT_BANDLE_TOTAL)
@@ -898,7 +898,7 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
         points_section = format_points_summary(points)
         if points_section:
             message += points_section
-        games.sort(key=lambda g: len(results.get(g.key, {})), reverse=True)
+        games.sort(key=lambda g: (-len(results.get(g.key, {})), g.title.lower()))
         for game in games:
             if game.key not in results or not results[game.key] or len(results[game.key]) < minimum_players:
                 continue
@@ -942,8 +942,8 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
             {"type": 10, "content": header_text},
         ]})
 
-    # Sort games by player count descending
-    games.sort(key=lambda g: len(results.get(g.key, {})), reverse=True)
+    # Sort games by player count descending, then title alphabetically
+    games.sort(key=lambda g: (-len(results.get(g.key, {})), g.title.lower()))
 
     qualified = [g for g in games if g.key in results and results[g.key] and len(results[g.key]) >= minimum_players]
 
