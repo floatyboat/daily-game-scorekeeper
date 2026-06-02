@@ -6,7 +6,7 @@ from collections import defaultdict
 
 from game_parser import (
     compute_puzzle_numbers, build_game_regexes,
-    match_message, make_timestamp_checker, EMBED_SCORE_GAMES,
+    match_message, make_timestamp_checker,
 )
 from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
@@ -194,12 +194,7 @@ def lambda_handler(event, context):
                                 wordle_bot_id=WORDLE_BOT_ID, avatar_hashes=avatar_pool)
         if not entries:
             continue
-        # Most games share their score as text, so the URL preview is noise we
-        # strip. But for embed-score games (e.g. Dialed) the embed *is* the
-        # score — suppressing it would erase the score from chat and from our
-        # only parse source, so leave those previews intact.
-        keep_embed = any(game_key in EMBED_SCORE_GAMES for game_key, *_ in entries)
-        if not keep_embed and suppress_embeds(channel_id, msg):
+        if suppress_embeds(channel_id, msg):
             suppressed += 1
         for game_key, score, metadata, uid_override in entries:
             user_id = uid_override or msg.get('interaction_metadata', {}).get('user', {}).get('id') or msg['author']['id']

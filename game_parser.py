@@ -18,7 +18,8 @@ QUIZL_LINK = 'https://quizl.io'
 CHRONOPHOTO_LINK = 'https://www.chronophoto.app/daily.html'
 WORDLE_LINK = 'https://www.nytimes.com/games/wordle'
 TRAVLE_LINK = 'https://travle.earth'
-DIALED_LINK = 'https://dialed.gg'
+DIALED_COLOR_LINK = 'https://dialed.gg/?d=1'
+DIALED_SOUND_LINK = 'https://dialed.gg/sound?d=1'
 
 # Accent color constants (Discord integer colors)
 HEADER_COLOR = 16766720       # gold
@@ -37,14 +38,9 @@ GAME_COLORS = {
     'quizl': 9807270,         # blue-gray
     'wordle': 5763719,        # green
     'travle': 3066993,        # forest green
-    'dialed': 16738155,       # coral
+    'dialed_color': 16738155,  # coral
+    'dialed_sound': 9442302,   # violet
 }
-
-# Games whose score lives only in Discord's link-preview embed, not in the
-# message text. The sticky must NOT suppress these embeds — doing so removes
-# the score from chat and from the only place we can parse it. See
-# match_message's dialed branch and sticky_lambda's suppression guard.
-EMBED_SCORE_GAMES = {'dialed'}
 
 # Start date constants
 CONNECTIONS_START_DATE = datetime(2023, 6, 12)
@@ -444,29 +440,6 @@ def parse_wordle_attachment(attachment, candidate_hashes=None):
         return []
 
 
-def _extract_dialed_score(embeds):
-    """Pull a Dialed score out of Discord's link-preview embed.
-
-    Dialed shares are a bare URL (https://dialed.gg/?c=CODE); the score appears
-    only in the embed title Discord generates, e.g. "david says you can't beat
-    45.0/50". Fetching the page ourselves is unreliable — dialed.gg serves a
-    generic title to most clients and only renders the personalized one for the
-    embed crawler — so we read what Discord already captured.
-
-    Returns the score as a float, or None when no embed carries a parseable
-    title yet (Discord populates embeds a moment after the message posts; the
-    next sticky run picks it up).
-    """
-    for embed in embeds or []:
-        match = re.search(r'([\d.]+)\s*/\s*\d+', embed.get('title') or '')
-        if match:
-            try:
-                return float(match.group(1))
-            except ValueError:
-                continue
-    return None
-
-
 def get_connections_results(content):
     """Parse connections-style emoji grids and return (mistakes, solved_groups)."""
     squares = re.findall(r'[🟨🟩🟦🟪🟡🟢🔵🟣]', content)
@@ -564,8 +537,13 @@ def build_game_regexes(puzzle_numbers):
             'needs_timestamp': False,
         },
         {
-            'key': 'dialed',
-            'pattern': re.compile(r'dialed\.gg/\?c=', re.IGNORECASE),
+            'key': 'dialed_color',
+            'pattern': re.compile(r'dialed\.gg/\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
+            'needs_timestamp': True,
+        },
+        {
+            'key': 'dialed_sound',
+            'pattern': re.compile(r'dialed\.gg/sound\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
             'needs_timestamp': True,
         },
     ]
@@ -673,12 +651,10 @@ def match_message(msg, game_regexes, timestamp_checker, wordle_bot_id=None, avat
                 return [(key, (0, int(plus_str), -checkmarks), metadata, None)]
             tier = 1 if (checkmarks or '🟩' in squares) else 2
             return [(key, (tier, int(away_str), -checkmarks), metadata, None)]
-        elif key == 'dialed':
-            # Score lives in Discord's link-preview embed title, not the text.
-            # If the embed hasn't populated yet, skip — the next run catches it.
-            score = _extract_dialed_score(msg.get('embeds'))
-            if score is not None:
-                return [(key, score, metadata, None)]
+        elif key in ('dialed_color', 'dialed_sound'):
+            # Score (e.g. 45.32) comes from the share URL's &s= param, also
+            # shown as "<score>/50" in the message text.
+            return [(key, float(match.group(1)), metadata, None)]
 
     # Wordle bot image parsing
     if (wordle_bot_id
@@ -703,7 +679,8 @@ def build_games_list(puzzle_numbers):
         ('bandle', '🎵', 'Bandle', 'guesses', bandle_total, pn['bandle_puzzle_number'], BANDLE_LINK),
         ('chronophoto', '📷', 'Chronophoto', 'score', 0, pn['chronophoto_number'], CHRONOPHOTO_LINK),
         ('connections', '🔗', 'Connections', 'connections', 4, pn['connections_puzzle_number'], CONNECTIONS_LINK),
-        ('dialed', '🎨', 'Dialed', 'score', 50, f'{pn["dialed_number"]}', DIALED_LINK),
+        ('dialed_color', '🎨', 'Color', 'score', 50, f'{pn["dialed_number"]}', DIALED_COLOR_LINK),
+        ('dialed_sound', '🔊', 'Sound', 'score', 50, f'{pn["dialed_number"]}', DIALED_SOUND_LINK),
         ('flagle', '🏁', 'Flagle', 'guesses', 0, f'{pn["flagle_number"]}', FLAGLE_LINK),
         ('globle', '🌍', 'Globle', 'guesses', 0, f'{pn["globle_number"]}', GLOBLE_LINK),
         ('maptap', '🎯', 'MapTap', 'maptap', 0, pn['maptap_number'], MAPTAP_LINK),
