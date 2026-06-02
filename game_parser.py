@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dateutil import parser as dateutil_parser
 from collections import defaultdict
+from dataclasses import dataclass
 
 # Game link constants
 CONNECTIONS_LINK = 'https://www.nytimes.com/games/connections'
@@ -56,6 +57,28 @@ TRAVLE_START_DATE = datetime(2022, 12, 15)
 DEFAULT_BANDLE_TOTAL = 6
 DEFAULT_QUIZL_TOTAL = 5
 DEFAULT_WORDLE_TOTAL = 6
+
+# Games turned fully off: skipped everywhere (parsing + scoreboard + Play button).
+DISABLED_GAMES = {'globle', 'flagle', 'worldle'}
+
+
+@dataclass
+class Game:
+    """One tracked game: display metadata plus the regex used to parse its scores.
+
+    Single source of truth consumed by both the scoreboard (emoji/title/metric/
+    total/puzzle/url) and the message parser (pattern/needs_timestamp/search_pattern).
+    """
+    key: str
+    emoji: str
+    title: str
+    metric: str
+    total: int
+    puzzle: object            # int or pre-formatted str; display only
+    url: str
+    pattern: re.Pattern
+    needs_timestamp: bool = False
+    search_pattern: re.Pattern = None   # chronophoto: cheap pre-check before the full pattern
 
 
 def compute_puzzle_numbers(reference_date):
@@ -466,91 +489,58 @@ def get_connections_results(content):
     return (69, 0)
 
 
-def build_game_regexes(puzzle_numbers):
-    """Return a list of game descriptors with compiled regex patterns."""
+def build_games(puzzle_numbers):
+    """Build the single ordered list of Game descriptors.
+
+    Order is parse priority and is load-bearing: maptap_challenge must precede
+    maptap, whose '(.*)MapTap(.*)' pattern would otherwise swallow challenge
+    messages (match_message returns on the first hit). The scoreboard re-sorts by
+    player count at render time, so this order does not affect display. Games in
+    DISABLED_GAMES are dropped here, so they are skipped by both the parser and
+    the scoreboard.
+    """
     pn = puzzle_numbers
-    return [
-        {
-            'key': 'connections',
-            'pattern': re.compile(rf'Connections.*?Puzzle #{pn["connections_puzzle_number"]}', re.IGNORECASE | re.DOTALL),
-            'needs_timestamp': False,
-        },
-        {
-            'key': 'bandle',
-            'pattern': re.compile(rf'Bandle #{pn["bandle_puzzle_number"]} (\d+|x)/(\d+)', re.IGNORECASE),
-            'needs_timestamp': False,
-        },
-        {
-            'key': 'sports',
-            'pattern': re.compile(rf'Connections: Sports Edition.*? #{pn["sports_puzzle_number"]}', re.IGNORECASE | re.DOTALL),
-            'needs_timestamp': False,
-        },
-        {
-            'key': 'pips',
-            'pattern': re.compile(rf'Pips #{pn["pips_puzzle_number"]} Hard', re.IGNORECASE),
-            'needs_timestamp': False,
-        },
-        {
-            'key': 'maptap_challenge',
-            'pattern': re.compile(rf'MapTap Challenge Round.*{pn["maptap_challenge_date"]}', re.IGNORECASE),
-            'needs_timestamp': False,
-        },
-        {
-            'key': 'maptap',
-            'pattern': re.compile(rf'(.*)MapTap(.*){pn["maptap_date"]}', re.IGNORECASE),
-            'needs_timestamp': False,
-        },
-        {
-            'key': 'chronophoto',
-            'search_pattern': re.compile(re.escape(pn["chronophoto_number"]), re.IGNORECASE),
-            'pattern': re.compile(rf"I got a score of (\d+) on today's Chronophoto: {re.escape(pn['chronophoto_number'])}", re.IGNORECASE),
-            'needs_timestamp': False,
-        },
-        {
-            'key': 'globle',
-            'pattern': re.compile(r"I guessed today['\u2019]s Globle in (\d+) tr", re.IGNORECASE),
-            'needs_timestamp': True,
-        },
-        {
-            'key': 'worldle',
-            'pattern': re.compile(r"I guessed today['\u2019]s Worldle in (\d+) tr", re.IGNORECASE),
-            'needs_timestamp': True,
-        },
-        {
-            'key': 'flagle',
-            'pattern': re.compile(r"I guessed today['\u2019]s Flag in (\d+) tr", re.IGNORECASE),
-            'needs_timestamp': True,
-        },
-        {
-            'key': 'quizl',
-            'pattern': re.compile(rf'Quizl#{pn["quizl_puzzle_number"]}', re.IGNORECASE),
-            'needs_timestamp': False,
-        },
-        {
-            'key': 'wordle',
-            'pattern': re.compile(rf'Wordle\s+{pn["wordle_puzzle_number"]:,}\s+([1-6X])/6', re.IGNORECASE),
-            'needs_timestamp': False,
-        },
-        {
-            'key': 'travle',
-            'pattern': re.compile(rf'#travle\s+#{pn["travle_puzzle_number"]}\s+(?:\+(\d+)|\((\d+)\s+away\))[^\n]*(?:\n([^\n]*))?', re.IGNORECASE),
-            'needs_timestamp': False,
-        },
-        {
-            'key': 'dialed_color',
-            'pattern': re.compile(r'dialed\.gg/\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
-            'needs_timestamp': True,
-        },
-        {
-            'key': 'dialed_sound',
-            'pattern': re.compile(r'dialed\.gg/sound\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
-            'needs_timestamp': True,
-        },
+    bandle_total = pn.get('bandle_total', DEFAULT_BANDLE_TOTAL)
+    quizl_total = pn.get('quizl_total', DEFAULT_QUIZL_TOTAL)
+
+    games = [
+        Game('connections', '🔗', 'Connections', 'connections', 4, pn['connections_puzzle_number'], CONNECTIONS_LINK,
+             re.compile(rf'Connections.*?Puzzle #{pn["connections_puzzle_number"]}', re.IGNORECASE | re.DOTALL)),
+        Game('bandle', '🎵', 'Bandle', 'guesses', bandle_total, pn['bandle_puzzle_number'], BANDLE_LINK,
+             re.compile(rf'Bandle #{pn["bandle_puzzle_number"]} (\d+|x)/(\d+)', re.IGNORECASE)),
+        Game('sports', '🏈', 'Sports Connections', 'connections', 4, pn['sports_puzzle_number'], SPORTS_CONNECTIONS_LINK,
+             re.compile(rf'Connections: Sports Edition.*? #{pn["sports_puzzle_number"]}', re.IGNORECASE | re.DOTALL)),
+        Game('pips', '🎲', 'Pips', 'time', 0, pn['pips_puzzle_number'], PIPS_LINK,
+             re.compile(rf'Pips #{pn["pips_puzzle_number"]} Hard', re.IGNORECASE)),
+        Game('maptap_challenge', '⚡', 'MapTap Challenge', 'maptap', 0, pn['maptap_number'], MAPTAP_CHALLENGE_LINK,
+             re.compile(rf'MapTap Challenge Round.*{pn["maptap_challenge_date"]}', re.IGNORECASE)),
+        Game('maptap', '🎯', 'MapTap', 'maptap', 0, pn['maptap_number'], MAPTAP_LINK,
+             re.compile(rf'(.*)MapTap(.*){pn["maptap_date"]}', re.IGNORECASE)),
+        Game('chronophoto', '📷', 'Chronophoto', 'score', 0, pn['chronophoto_number'], CHRONOPHOTO_LINK,
+             re.compile(rf"I got a score of (\d+) on today's Chronophoto: {re.escape(pn['chronophoto_number'])}", re.IGNORECASE),
+             search_pattern=re.compile(re.escape(pn["chronophoto_number"]), re.IGNORECASE)),
+        Game('globle', '🌍', 'Globle', 'guesses', 0, f'{pn["globle_number"]}', GLOBLE_LINK,
+             re.compile(r"I guessed today['\u2019]s Globle in (\d+) tr", re.IGNORECASE), needs_timestamp=True),
+        Game('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{pn["worldle_number"]}', WORLDLE_LINK,
+             re.compile(r"I guessed today['\u2019]s Worldle in (\d+) tr", re.IGNORECASE), needs_timestamp=True),
+        Game('flagle', '🏁', 'Flagle', 'guesses', 0, f'{pn["flagle_number"]}', FLAGLE_LINK,
+             re.compile(r"I guessed today['\u2019]s Flag in (\d+) tr", re.IGNORECASE), needs_timestamp=True),
+        Game('quizl', '⁉️', 'Quizl', 'score', quizl_total, pn['quizl_puzzle_number'], QUIZL_LINK,
+             re.compile(rf'Quizl#{pn["quizl_puzzle_number"]}', re.IGNORECASE)),
+        Game('wordle', '📗', 'Wordle', 'guesses', DEFAULT_WORDLE_TOTAL, pn['wordle_puzzle_number'], WORDLE_LINK,
+             re.compile(rf'Wordle\s+{pn["wordle_puzzle_number"]:,}\s+([1-6X])/6', re.IGNORECASE)),
+        Game('travle', '✈️', 'Travle', 'travle', 0, pn['travle_puzzle_number'], TRAVLE_LINK,
+             re.compile(rf'#travle\s+#{pn["travle_puzzle_number"]}\s+(?:\+(\d+)|\((\d+)\s+away\))[^\n]*(?:\n([^\n]*))?', re.IGNORECASE)),
+        Game('dialed_color', '🎨', 'Color', 'score', 50, f'{pn["dialed_number"]}', DIALED_COLOR_LINK,
+             re.compile(r'dialed\.gg/\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE), needs_timestamp=True),
+        Game('dialed_sound', '🔊', 'Sound', 'score', 50, f'{pn["dialed_number"]}', DIALED_SOUND_LINK,
+             re.compile(r'dialed\.gg/sound\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE), needs_timestamp=True),
     ]
+    return [g for g in games if g.key not in DISABLED_GAMES]
 
 
-def match_message(msg, game_regexes, timestamp_checker, wordle_bot_id=None, avatar_hashes=None):
-    """Run a single message through all game regexes, including Wordle bot image parsing.
+def match_message(msg, games, timestamp_checker, wordle_bot_id=None, avatar_hashes=None):
+    """Run a single message through all games, including Wordle bot image parsing.
 
     Returns a list of (game_key, score, metadata, user_id_override) tuples.
     user_id_override is None for everything except multi-player Wordle bot images,
@@ -560,25 +550,25 @@ def match_message(msg, game_regexes, timestamp_checker, wordle_bot_id=None, avat
     content = msg['content']
     timestamp = msg['timestamp']
 
-    for game in game_regexes:
-        key = game['key']
+    for game in games:
+        key = game.key
 
         # For chronophoto, use search_pattern for initial check
         if key == 'chronophoto':
-            if not game['search_pattern'].search(content):
+            if not game.search_pattern.search(content):
                 continue
-            match = game['pattern'].search(content)
+            match = game.pattern.search(content)
             if match:
-                if game['needs_timestamp'] and not timestamp_checker(timestamp):
+                if game.needs_timestamp and not timestamp_checker(timestamp):
                     continue
                 return [(key, int(match.group(1)), {}, None)]
             continue
 
-        match = game['pattern'].search(content)
+        match = game.pattern.search(content)
         if not match:
             continue
 
-        if game['needs_timestamp'] and not timestamp_checker(timestamp):
+        if game.needs_timestamp and not timestamp_checker(timestamp):
             continue
 
         metadata = {}
@@ -669,31 +659,6 @@ def match_message(msg, game_regexes, timestamp_checker, wordle_bot_id=None, avat
     return []
 
 
-def build_games_list(puzzle_numbers):
-    """Build the list of game descriptors used by scoreboard and medal computation."""
-    pn = puzzle_numbers
-    bandle_total = pn.get('bandle_total', DEFAULT_BANDLE_TOTAL)
-    quizl_total = pn.get('quizl_total', DEFAULT_QUIZL_TOTAL)
-
-    return [
-        ('bandle', '🎵', 'Bandle', 'guesses', bandle_total, pn['bandle_puzzle_number'], BANDLE_LINK),
-        ('chronophoto', '📷', 'Chronophoto', 'score', 0, pn['chronophoto_number'], CHRONOPHOTO_LINK),
-        ('connections', '🔗', 'Connections', 'connections', 4, pn['connections_puzzle_number'], CONNECTIONS_LINK),
-        ('dialed_color', '🎨', 'Color', 'score', 50, f'{pn["dialed_number"]}', DIALED_COLOR_LINK),
-        ('dialed_sound', '🔊', 'Sound', 'score', 50, f'{pn["dialed_number"]}', DIALED_SOUND_LINK),
-        ('flagle', '🏁', 'Flagle', 'guesses', 0, f'{pn["flagle_number"]}', FLAGLE_LINK),
-        ('globle', '🌍', 'Globle', 'guesses', 0, f'{pn["globle_number"]}', GLOBLE_LINK),
-        ('maptap', '🎯', 'MapTap', 'maptap', 0, pn['maptap_number'], MAPTAP_LINK),
-        ('maptap_challenge', '⚡', 'MapTap Challenge', 'maptap', 0, pn['maptap_number'], MAPTAP_CHALLENGE_LINK),
-        ('pips', '🎲', 'Pips', 'time', 0, pn['pips_puzzle_number'], PIPS_LINK),
-        ('quizl', '⁉️', 'Quizl', 'score', quizl_total, pn['quizl_puzzle_number'], QUIZL_LINK),
-        ('sports', '🏈', 'Sports Connections', 'connections', 4, pn['sports_puzzle_number'], SPORTS_CONNECTIONS_LINK),
-        ('travle', '✈️', 'Travle', 'travle', 0, pn['travle_puzzle_number'], TRAVLE_LINK),
-        ('wordle', '📗', 'Wordle', 'guesses', DEFAULT_WORDLE_TOTAL, pn['wordle_puzzle_number'], WORDLE_LINK),
-        ('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{pn["worldle_number"]}', WORLDLE_LINK),
-    ]
-
-
 def compute_points(results, puzzle_numbers, minimum_players=1):
     """Compute total points per user across all games.
 
@@ -705,10 +670,11 @@ def compute_points(results, puzzle_numbers, minimum_players=1):
 
     Returns {user_id: int}.
     """
-    games = build_games_list(puzzle_numbers)
+    games = build_games(puzzle_numbers)
     points = defaultdict(int)
 
-    for game_key, _, _, metric, total, _, _ in games:
+    for game in games:
+        game_key, metric, total = game.key, game.metric, game.total
         if game_key not in results or not results[game_key] or len(results[game_key]) < minimum_players:
             continue
 
@@ -916,7 +882,7 @@ def _format_game_players(game_scores, metric, total):
 
 def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1):
     """Format the scoreboard message. Parameterized version of format_message()."""
-    games = build_games_list(puzzle_numbers)
+    games = build_games(puzzle_numbers)
     message = f"🧮 **{title}**"
     if not results:
         message += "\n\nNo results found!"
@@ -926,14 +892,14 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
         points_section = format_points_summary(points)
         if points_section:
             message += points_section
-        games.sort(key=lambda x: len(results.get(x[0], {})), reverse=True)
-        for game_key, game_emoji, game_title, metric, total, puzzle, link in games:
-            if game_key not in results or not results[game_key] or len(results[game_key]) < minimum_players:
+        games.sort(key=lambda g: len(results.get(g.key, {})), reverse=True)
+        for game in games:
+            if game.key not in results or not results[game.key] or len(results[game.key]) < minimum_players:
                 continue
 
-            game_title = f"[{game_title}]({link})"
-            message += f'**{game_title} {game_emoji} {f"#{puzzle}" if type(puzzle) == int else f"#67"}**\n'
-            message += _format_game_players(results[game_key], metric, total)
+            title_link = f"[{game.title}]({game.url})"
+            message += f'**{title_link} {game.emoji} {f"#{game.puzzle}" if type(game.puzzle) == int else f"#67"}**\n'
+            message += _format_game_players(results[game.key], game.metric, game.total)
             message += "\n"
     return message
 
@@ -945,7 +911,7 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
 
     Returns a list[dict] suitable for the 'components' field in a Discord message.
     """
-    games = build_games_list(puzzle_numbers)
+    games = build_games(puzzle_numbers)
     components = []
 
     # --- Header container ---
@@ -971,18 +937,18 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
         ]})
 
     # Sort games by player count descending
-    games.sort(key=lambda x: len(results.get(x[0], {})), reverse=True)
+    games.sort(key=lambda g: len(results.get(g.key, {})), reverse=True)
 
-    qualified = [g for g in games if g[0] in results and results[g[0]] and len(results[g[0]]) >= minimum_players]
+    qualified = [g for g in games if g.key in results and results[g.key] and len(results[g.key]) >= minimum_players]
 
     # --- Scores container ---
     scores_children = []
-    for g_idx, (game_key, game_emoji, game_title, metric, total, puzzle, link) in enumerate(qualified):
+    for g_idx, game in enumerate(qualified):
         if g_idx > 0:
             scores_children.append({"type": 14, "spacing": 1})  # Separator
-        puzzle_label = f"#{puzzle}" if type(puzzle) == int else "#67"
-        score_text = f"**[{game_title}]({link}) {game_emoji} {puzzle_label}**\n"
-        score_text += _format_game_players(results[game_key], metric, total).rstrip('\n')
+        puzzle_label = f"#{game.puzzle}" if type(game.puzzle) == int else "#67"
+        score_text = f"**[{game.title}]({game.url}) {game.emoji} {puzzle_label}**\n"
+        score_text += _format_game_players(results[game.key], game.metric, game.total).rstrip('\n')
         scores_children.append({"type": 10, "content": score_text})
 
     if scores_children:

@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from collections import defaultdict
 
 from game_parser import (
-    compute_puzzle_numbers, build_game_regexes,
+    compute_puzzle_numbers, build_games,
     match_message, make_timestamp_checker,
 )
 from scoreboard import (
@@ -176,7 +176,7 @@ def lambda_handler(event, context):
 
     today = reference_date(datetime.now(), TIMEZONE, HOURS_AFTER_MIDNIGHT)
     puzzle_numbers = compute_puzzle_numbers(today)
-    game_regexes = build_game_regexes(puzzle_numbers)
+    games = build_games(puzzle_numbers)
     checker = make_timestamp_checker(today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
 
     # Operate end-to-end on a single channel: counts and the sticky live
@@ -190,7 +190,7 @@ def lambda_handler(event, context):
     results = defaultdict(dict)
     suppressed = 0
     for msg in messages:
-        entries = match_message(msg, game_regexes, checker,
+        entries = match_message(msg, games, checker,
                                 wordle_bot_id=WORDLE_BOT_ID, avatar_hashes=avatar_pool)
         if not entries:
             continue

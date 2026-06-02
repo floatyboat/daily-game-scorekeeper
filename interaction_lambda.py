@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 
-from game_parser import build_games_list, compute_puzzle_numbers, format_scoreboard_components, make_timestamp_checker
+from game_parser import build_games, compute_puzzle_numbers, format_scoreboard_components, make_timestamp_checker
 from scoreboard import make_session, fetch_messages, reference_date, parse_results, build_avatar_pool
 
 DISCORD_PUBLIC_KEY = os.getenv('DISCORD_PUBLIC_KEY', '')
@@ -76,11 +76,11 @@ def build_play_response():
     """Build an ephemeral message with link buttons for all tracked games."""
     today = datetime.utcnow()
     puzzle_numbers = compute_puzzle_numbers(today)
-    games = build_games_list(puzzle_numbers)
+    games = build_games(puzzle_numbers)
 
     buttons = [
-        {"type": 2, "style": 5, "label": f"{emoji} {name}", "url": url}
-        for _, emoji, name, _, _, _, url in games
+        {"type": 2, "style": 5, "label": f"{g.emoji} {g.title}", "url": g.url}
+        for g in games
     ]
 
     action_rows = []

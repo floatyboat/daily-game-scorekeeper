@@ -4,7 +4,7 @@ from datetime import timedelta
 from collections import defaultdict
 
 from game_parser import (
-    compute_puzzle_numbers, build_game_regexes,
+    compute_puzzle_numbers, build_games,
     make_timestamp_checker, match_message, _avatar_ahash,
 )
 
@@ -66,12 +66,12 @@ def reference_date(now, tz, hours_after_midnight, days_back=0):
 def parse_results(messages, ref_date, tz, hours_after_midnight, time_window_hours,
                   *, wordle_bot_id=None, avatar_hashes=None):
     puzzle_numbers = compute_puzzle_numbers(ref_date)
-    game_regexes = build_game_regexes(puzzle_numbers)
+    games = build_games(puzzle_numbers)
     checker = make_timestamp_checker(ref_date, tz, hours_after_midnight, time_window_hours)
     results = defaultdict(dict)
     for msg in messages:
         for game_key, score, metadata, uid_override in match_message(
-                msg, game_regexes, checker,
+                msg, games, checker,
                 wordle_bot_id=wordle_bot_id, avatar_hashes=avatar_hashes):
             user_id = (uid_override
                        or msg.get('interaction_metadata', {}).get('user', {}).get('id')
