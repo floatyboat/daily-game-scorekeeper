@@ -76,22 +76,41 @@ def suppress_embeds(channel_id, message):
     return r.ok
 
 
-def find_sticky(messages):
-    """Locate the bot's most recent non-scoreboard message — that's our sticky.
+def _is_sticky(msg):
+    """True for one of the bot's own sticky posts.
 
-    The daily scoreboard post and the sticky can share a channel, so we skip
-    scoreboard messages (identified by the v2-components flag) when scanning.
-    /play replies are ephemeral and never appear in fetch_messages.
+    Matched by the sticky's intrinsic Play button (custom_id), with the
+    "Now Playing" heading as a fallback for a sticky somehow posted without its
+    buttons. This is deliberately precise: a looser "any non-scoreboard bot
+    message" test also matches the daily scoreboard and any unrelated bot post
+    (e.g. leftovers from older code versions), and update_sticky deletes every
+    match — so a loose test would delete those too. We only ever collapse real
+    stickies.
     """
-    for msg in messages:
-        if is_scoreboard_message(msg):
-            continue
-        author = msg.get('author', {})
-        if DISCORD_BOT_ID and author.get('id') == str(DISCORD_BOT_ID):
-            return msg
-        if not DISCORD_BOT_ID and author.get('bot'):
-            return msg
-    return None
+    author = msg.get('author', {})
+    if DISCORD_BOT_ID:
+        if author.get('id') != str(DISCORD_BOT_ID):
+            return False
+    elif not author.get('bot'):
+        return False
+    for row in (msg.get('components') or []):
+        for c in row.get('components', []):
+            if c.get('custom_id') == PLAY_BUTTON_CUSTOM_ID:
+                return True
+    return (msg.get('content') or '').startswith(STICKY_HEADING)
+
+
+def find_stickies(messages):
+    """Every bot sticky in the channel, newest first (normally exactly one).
+
+    Returning *all* matches rather than just the newest is what lets
+    update_sticky collapse back to a single sticky. A scheduled run that
+    double-fires can briefly post two stickies; a single-match scan would then
+    delete only the newer one on each later run and orphan the older "No scores
+    yet today" post indefinitely. /play replies are ephemeral and never appear
+    in fetch_messages.
+    """
+    return [m for m in messages if _is_sticky(m)]
 
 
 def find_latest_scoreboard_id(messages):
@@ -133,15 +152,22 @@ def build_sticky_content(results):
 
 
 def update_sticky(channel_id, channel_messages, results):
-    """Maintain a single sticky at the bottom of channel_id.
+    """Maintain exactly one sticky at the bottom of channel_id.
 
-    No-op only when our sticky is already the most recent message AND its
+    No-op only when a single sticky is already the most recent message AND its
     content matches what we'd render now — content comparison catches the
     day-transition case where the sticky is still at the bottom but shows
     yesterday's stats, and URL comparison catches the case where the daily
     scoreboard just posted and the Yesterday link is now stale.
+
+    Otherwise delete *every* existing sticky before posting a fresh one. The
+    morning scoreboard de-positions the sticky and staleness forces a repost; a
+    double-fire of that run leaves two stickies, and deleting only the newest
+    (the old behavior) orphaned the older "No scores yet today" post forever.
+    Deleting all matches, plus the post-write sweep below, collapses any such
+    duplicates back to one.
     """
-    sticky = find_sticky(channel_messages)
+    stickies = find_stickies(channel_messages)
     content = build_sticky_content(results)
 
     yesterday_url = None
@@ -152,16 +178,27 @@ def update_sticky(channel_id, channel_messages, results):
         yesterday_url = f'https://discord.com/channels/@me/{channel_id}/{scoreboard_id}'
     components = build_sticky_components(yesterday_url)
 
-    if (sticky and channel_messages
-            and channel_messages[0]['id'] == sticky['id']
-            and _sticky_is_current(sticky, content, yesterday_url)):
+    if (len(stickies) == 1 and channel_messages
+            and channel_messages[0]['id'] == stickies[0]['id']
+            and _sticky_is_current(stickies[0], content, yesterday_url)):
         return 'unchanged'
 
-    if sticky:
-        delete_message(channel_id, sticky['id'])
+    for old in stickies:
+        delete_message(channel_id, old['id'])
 
     send_sticky(channel_id, content, components)
-    return 'reposted' if sticky else 'created'
+
+    # Close the double-fire window: a concurrent run can post a second sticky in
+    # parallel with ours. Re-read the tail and drop everything but the newest so
+    # the channel converges to one — both runs agree on "keep newest", and
+    # delete_message swallows the 404 when the other already removed it.
+    extra = find_stickies(fetch_messages(_session, channel_id, limit=10))
+    for dup in extra[1:]:
+        delete_message(channel_id, dup['id'])
+
+    if not stickies:
+        return 'created'
+    return 'collapsed' if len(stickies) > 1 else 'reposted'
 
 
 def lambda_handler(event, context):
