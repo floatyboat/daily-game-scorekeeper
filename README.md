@@ -4,15 +4,18 @@ Reads a channel in a discord server for daily puzzle games and posts a scoreboar
 ## Games Supported
 1. [Bandle](https://bandle.app/daily)
 2. [Chronophoto](https://www.chronophoto.app/daily.html)
-3. [Connections](https://www.nytimes.com/games/connections)
-4. [Connections: Sports Edition](https://www.nytimes.com/athletic/connections-sports-edition)
-5. [Flagle](https://flagle.org)
-6. [Globle](https://globle.org)
-7. [MapTap](https://maptap.gg)
-8. [Pips](https://www.nytimes.com/games/pips)
-9. [Quizl](https://quizl.io)
-10. [Wordle](https://www.nytimes.com/games/wordle)
-11. [Worldle](https://worldlegame.io)
+3. [Color](https://dialed.gg) (dialed.gg)
+4. [Connections](https://www.nytimes.com/games/connections)
+5. [Connections: Sports Edition](https://www.nytimes.com/athletic/connections-sports-edition)
+6. [Flagle](https://flagle.org)
+7. [Globle](https://globle.org)
+8. [MapTap](https://maptap.gg)
+9. [Pips](https://www.nytimes.com/games/pips)
+10. [Pop Culture Colors](https://dialed.gg/color2) (dialed.gg)
+11. [Quizl](https://quizl.io)
+12. [Sound](https://dialed.gg/sound) (dialed.gg)
+13. [Wordle](https://www.nytimes.com/games/wordle)
+14. [Worldle](https://worldlegame.io)
 
 Wordle supports both pasted share text and image recognition from the official Wordle Discord bot.
 ## Setup
