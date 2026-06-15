@@ -530,7 +530,7 @@ def build_games(puzzle_numbers):
         Game('wordle', '📗', 'Wordle', 'guesses', DEFAULT_WORDLE_TOTAL, pn['wordle_puzzle_number'], WORDLE_LINK,
              re.compile(rf'Wordle\s+{pn["wordle_puzzle_number"]:,}\s+([1-6X])/6', re.IGNORECASE)),
         Game('travle', '✈️', 'Travle', 'travle', 0, pn['travle_puzzle_number'], TRAVLE_LINK,
-             re.compile(rf'#travle\s+#{pn["travle_puzzle_number"]}\s+(?:\+(\d+)|\((\d+)\s+away\))[^\n]*(?:\n([^\n]*))?', re.IGNORECASE)),
+             re.compile(rf'#travle\s+#{pn["travle_puzzle_number"]}\s+(?:\+(\d+)|\((\d+)\s+away\))(?:[^\n]*?\((\d+)\s+hints?\))?[^\n]*(?:\n([^\n]*))?', re.IGNORECASE)),
         Game('dialed_color', '🎨', 'Color', 'score', 50, f'{pn["dialed_number"]}', DIALED_COLOR_LINK,
              re.compile(r'dialed\.gg/\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE), needs_timestamp=True),
         Game('dialed_sound', '🔊', 'Sound', 'score', 50, f'{pn["dialed_number"]}', DIALED_SOUND_LINK,
@@ -631,16 +631,23 @@ def match_message(msg, games, timestamp_checker, wordle_bot_id=None, avatar_hash
         elif key == 'travle':
             plus_str = match.group(1)
             away_str = match.group(2)
-            squares = match.group(3) or ''
+            hints = int(match.group(3)) if match.group(3) else 0
+            squares = match.group(4) or ''
             checkmarks = squares.count('✅')  # path countries guessed in-order
-            # Encode as (tier, n, -checkmarks): 0=solved(+N), 1=failed but got
-            # at least one correct country (✅ or 🟩), 2=complete wiff (no greens).
-            # Negate checkmarks so natural ascending tuple order ranks more ✅
-            # higher within the same +N (tiebreaker for in-order distinction).
+            # Escalating hint penalty (+1/+2/+3 per successive hint, since hint 2
+            # reveals all outlines and hint 3 adds initials) folded into the
+            # +N/away count, so hint-assisted results rank below clean ones on the
+            # same currency as wrong guesses. Triangular: 0/1/3/6 for 0-3 hints.
+            penalty = hints * (hints + 1) // 2
+            # Encode as (tier, effective_n, hints, -checkmarks): 0=solved(+N),
+            # 1=failed but got at least one correct country (✅ or 🟩), 2=complete
+            # wiff (no greens). hints is a tiebreak (fewer ranks higher at equal
+            # effective_n); raw +N = effective_n - penalty. Negate checkmarks so
+            # ascending tuple order ranks more ✅ higher (in-order tiebreaker).
             if plus_str is not None:
-                return [(key, (0, int(plus_str), -checkmarks), metadata, None)]
+                return [(key, (0, int(plus_str) + penalty, hints, -checkmarks), metadata, None)]
             tier = 1 if (checkmarks or '🟩' in squares) else 2
-            return [(key, (tier, int(away_str), -checkmarks), metadata, None)]
+            return [(key, (tier, int(away_str) + penalty, hints, -checkmarks), metadata, None)]
         elif key in ('dialed_color', 'dialed_sound'):
             # Score (e.g. 45.32) comes from the share URL's &s= param, also
             # shown as "<score>/50" in the message text.
@@ -858,15 +865,22 @@ def _format_game_players(game_scores, metric, total):
             if total > 0:
                 score_str = f"{score_str}/{total}"
         elif metric == 'travle':
-            tier, n, neg_cm = current_score
+            tier, eff_n, hints, neg_cm = current_score
             k = -neg_cm
+            raw_n = eff_n - hints * (hints + 1) // 2  # undo hint penalty for display
+            parts = []
+            if tier == 0 or k:
+                parts.append(f"{k}✅")
+            if hints:
+                parts.append(f"{hints} hint" + ("s" if hints != 1 else ""))
+            extra = f" ({', '.join(parts)})" if parts else ""
             if tier == 0:
-                score_str = f"+{n} ({k}✅)"
+                score_str = f"+{raw_n}{extra}"
             elif tier == 1:
-                score_str = f"{n} away" + (f" ({k}✅)" if k else "")
+                score_str = f"{raw_n} away{extra}"
             else:  # tier == 2: complete wiff
                 medal = '💩 '
-                score_str = f"{n} away"
+                score_str = f"{raw_n} away{extra}"
         else:  # guesses
             if total == 0:
                 score_str = f"{str(current_score)} {metric}"
