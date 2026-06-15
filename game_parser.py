@@ -21,6 +21,7 @@ WORDLE_LINK = 'https://www.nytimes.com/games/wordle'
 TRAVLE_LINK = 'https://travle.earth'
 DIALED_COLOR_LINK = 'https://dialed.gg/?d=1'
 DIALED_SOUND_LINK = 'https://dialed.gg/sound?d=1'
+DIALED_COLOR2_LINK = 'https://dialed.gg/color2?d=1'
 
 # Accent color constants (Discord integer colors)
 HEADER_COLOR = 16766720       # gold
@@ -41,6 +42,7 @@ GAME_COLORS = {
     'travle': 3066993,        # forest green
     'dialed_color': 16738155,  # coral
     'dialed_sound': 9442302,   # violet
+    'dialed_color2': 16711935,  # magenta
 }
 
 # Start date constants
@@ -535,6 +537,8 @@ def build_games(puzzle_numbers):
              re.compile(r'dialed\.gg/\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE), needs_timestamp=True),
         Game('dialed_sound', '🔊', 'Sound', 'score', 50, f'{pn["dialed_number"]}', DIALED_SOUND_LINK,
              re.compile(r'dialed\.gg/sound\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE), needs_timestamp=True),
+        Game('dialed_color2', '🎭', 'Pop Culture Colors', 'score', 50, f'{pn["dialed_number"]}', DIALED_COLOR2_LINK,
+             re.compile(r'dialed\.gg/color2\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE), needs_timestamp=True),
     ]
     return [g for g in games if g.key not in DISABLED_GAMES]
 
@@ -648,7 +652,7 @@ def match_message(msg, games, timestamp_checker, wordle_bot_id=None, avatar_hash
                 return [(key, (0, int(plus_str) + penalty, hints, -checkmarks), metadata, None)]
             tier = 1 if (checkmarks or '🟩' in squares) else 2
             return [(key, (tier, int(away_str) + penalty, hints, -checkmarks), metadata, None)]
-        elif key in ('dialed_color', 'dialed_sound'):
+        elif key in ('dialed_color', 'dialed_sound', 'dialed_color2'):
             # Score (e.g. 45.32) comes from the share URL's &s= param, also
             # shown as "<score>/50" in the message text.
             return [(key, float(match.group(1)), metadata, None)]
