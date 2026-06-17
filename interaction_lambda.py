@@ -79,13 +79,27 @@ def build_scoreboard_response(channel_id):
     }
 
 
-def build_play_response(channel_id):
-    """Build an ephemeral message with link buttons for all tracked games.
+def interaction_user_id(body):
+    """ID of the user who triggered an interaction.
 
-    Buttons are ordered by how many people have already played each game today
-    (descending), then alphabetically by title. A game played by at least one
-    person gets a "(count)" suffix; games nobody has played yet sort last with
-    no suffix, so the most active games surface first.
+    Discord nests the acting user under `member.user` for guild interactions and
+    promotes it to a top-level `user` in DMs, so check both. Returns None when
+    neither is present (e.g. a bare test fixture), which callers treat as
+    "unknown user" and fall back to listing every game.
+    """
+    member = body.get('member') or {}
+    return (member.get('user') or body.get('user') or {}).get('id')
+
+
+def build_play_response(channel_id, user_id=None):
+    """Build an ephemeral message with link buttons for tracked games.
+
+    When user_id is known, only games that user hasn't logged today are shown,
+    so the Play list is personal to whoever pressed the button. Remaining
+    buttons are ordered by how many *other* people have already played each game
+    today (descending), then alphabetically by title; a game played by at least
+    one person gets a "(count)" suffix, so the most active games surface first.
+    With no user_id (an unidentifiable presser) every game is listed.
     """
     try:
         results, puzzle_numbers, _ = fetch_today_results(channel_id)
@@ -99,6 +113,9 @@ def build_play_response(channel_id):
     def player_count(game):
         return len(results.get(game.key, {}))
 
+    if user_id is not None:
+        games = [g for g in games if user_id not in results.get(g.key, {})]
+
     games.sort(key=lambda g: (-player_count(g), g.title.lower()))
 
     buttons = []
@@ -111,11 +128,14 @@ def build_play_response(channel_id):
     for i in range(0, len(buttons), 5):
         action_rows.append({"type": 1, "components": buttons[i:i + 5]})
 
+    # Filtering can empty the list once a user has logged everything today.
+    content = "Pick a game to play!" if action_rows else "\U0001F389 You've played every tracked game today!"
+
     return {
         "type": 4,
         "data": {
             "flags": 64,
-            "content": "Pick a game to play!",
+            "content": content,
             "components": action_rows,
         },
     }
@@ -151,7 +171,7 @@ def lambda_handler(event, context):
             return {
                 'statusCode': 200,
                 'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps(build_play_response(body['channel_id'])),
+                'body': json.dumps(build_play_response(body['channel_id'], interaction_user_id(body))),
             }
 
     # MESSAGE_COMPONENT (type 3) — sticky buttons
@@ -161,7 +181,7 @@ def lambda_handler(event, context):
             return {
                 'statusCode': 200,
                 'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps(build_play_response(body['channel_id'])),
+                'body': json.dumps(build_play_response(body['channel_id'], interaction_user_id(body))),
             }
         if custom_id == 'sticky_scores':
             return {
