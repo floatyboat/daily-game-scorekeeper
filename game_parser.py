@@ -5,74 +5,23 @@ from dateutil import parser as dateutil_parser
 from collections import defaultdict, Counter
 from dataclasses import dataclass
 
-# Game link constants
-CONNECTIONS_LINK = 'https://www.nytimes.com/games/connections'
-BANDLE_LINK = 'https://bandle.app/daily'
-PIPS_LINK = 'https://www.nytimes.com/games/pips'
-SPORTS_CONNECTIONS_LINK = 'https://www.nytimes.com/athletic/connections-sports-edition'
-MAPTAP_LINK = 'https://maptap.gg'
-MAPTAP_CHALLENGE_LINK = 'https://maptap.gg/adventures?gametype=challenge'
-GLOBLE_LINK = 'https://globle.org'
-FLAGLE_LINK = 'https://flagle.org'
-WORLDLE_LINK = 'https://worldlegame.io'
-QUIZL_LINK = 'https://quizl.io'
-CHRONOPHOTO_LINK = 'https://www.chronophoto.app/daily.html'
-WORDLE_LINK = 'https://www.nytimes.com/games/wordle'
-TRAVLE_LINK = 'https://travle.earth'
-DIALED_COLOR_LINK = 'https://dialed.gg/?d=1'
-DIALED_SOUND_LINK = 'https://dialed.gg/sound?d=1'
-DIALED_COLOR2_LINK = 'https://dialed.gg/color2?d=1'
-ENCLOSE_LINK = 'https://enclose.horse'
-
-# Accent color constants (Discord integer colors)
+# Accent color constants (Discord integer colors) for the scoreboard containers.
 HEADER_COLOR = 16766720       # gold
 OTHER_GAMES_COLOR = 10395294  # gray
-GAME_COLORS = {
-    'connections': 10181046,  # purple
-    'bandle': 15277667,       # pink
-    'sports': 5763719,        # green
-    'pips': 10181046,         # purple
-    'maptap': 15105570,       # orange
-    'maptap_challenge': 15105570,  # orange
-    'chronophoto': 11027200,  # brown
-    'globle': 3447003,        # blue
-    'worldle': 1752220,       # cyan
-    'flagle': 15105570,       # orange
-    'quizl': 9807270,         # blue-gray
-    'wordle': 5763719,        # green
-    'travle': 3066993,        # forest green
-    'dialed_color': 16738155,  # coral
-    'dialed_sound': 9442302,   # violet
-    'dialed_color2': 16711935,  # magenta
-    'enclose': 12686443,      # tan
-}
 
-# Start date constants
-CONNECTIONS_START_DATE = datetime(2023, 6, 12)
-BANDLE_START_DATE = datetime(2022, 8, 18)
-PIPS_START_DATE = datetime(2025, 8, 18)
-SPORTS_CONNECTIONS_START_DATE = datetime(2024, 9, 24)
-MAPTAP_START_DATE = datetime(2024, 6, 22)
-QUIZL_START_DATE = datetime(2022, 3, 16)
-WORDLE_START_DATE = datetime(2021, 6, 19)
-TRAVLE_START_DATE = datetime(2022, 12, 15)
-ENCLOSE_START_DATE = datetime(2025, 12, 30)
-
-# Default totals
-DEFAULT_BANDLE_TOTAL = 6
-DEFAULT_QUIZL_TOTAL = 5
+# Wordle's guess limit. Shared by the Wordle game spec and the standalone
+# bot-image grid parser (_parse_single_grid), so it stays a module constant.
 DEFAULT_WORDLE_TOTAL = 6
-
-# Games turned fully off: skipped everywhere (parsing + scoreboard + Play button).
-DISABLED_GAMES = {'globle', 'flagle', 'worldle', 'maptap_challenge', 'dialed_color', 'dialed_sound'}
 
 
 @dataclass
 class Game:
-    """One tracked game: display metadata plus the regex used to parse its scores.
+    """One tracked game resolved for a specific date.
 
-    Single source of truth consumed by both the scoreboard (emoji/title/metric/
-    total/puzzle/url) and the message parser (pattern/needs_timestamp/search_pattern).
+    Produced by build_games() from a GameSpec: display metadata plus the
+    compiled regex and the score extractor. Consumed by both the scoreboard
+    (emoji/title/metric/total/puzzle/url) and the parser (pattern/parse/
+    needs_timestamp/search_pattern).
     """
     key: str
     emoji: str
@@ -83,31 +32,23 @@ class Game:
     url: str
     pattern: re.Pattern
     needs_timestamp: bool = False
-    search_pattern: re.Pattern = None   # chronophoto: cheap pre-check before the full pattern
+    search_pattern: re.Pattern = None   # optional cheap pre-check before the full pattern
+    parse: object = None                # callable(match, content) -> (score, metadata)
 
 
 def compute_puzzle_numbers(reference_date):
-    """Compute all puzzle numbers and date strings for a given reference date."""
-    return {
-        'connections_puzzle_number': int((reference_date - CONNECTIONS_START_DATE).days + 1),
-        'bandle_puzzle_number': int((reference_date - BANDLE_START_DATE).days + 1),
-        'sports_puzzle_number': int((reference_date - SPORTS_CONNECTIONS_START_DATE).days + 1),
-        'pips_puzzle_number': int((reference_date - PIPS_START_DATE).days + 1),
-        'maptap_number': int((reference_date - MAPTAP_START_DATE).days + 1),
-        'quizl_puzzle_number': int((reference_date - QUIZL_START_DATE).days + 1),
-        'maptap_date': f'{reference_date.strftime("%B")} {reference_date.day}',
-        'maptap_challenge_date': f'{reference_date.strftime("%b")} {reference_date.day}',
-        'globle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
-        'worldle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
-        'flagle_number': f'{reference_date.strftime("%B")} {reference_date.day}',
-        'dialed_number': f'{reference_date.strftime("%B")} {reference_date.day}',
-        'chronophoto_number': f'{reference_date.month}/{reference_date.day}/{reference_date.year}',
-        'wordle_puzzle_number': int((reference_date - WORDLE_START_DATE).days),
-        'travle_puzzle_number': int((reference_date - TRAVLE_START_DATE).days + 1),
-        'enclose_puzzle_number': int((reference_date - ENCLOSE_START_DATE).days + 1),
-        'bandle_total': DEFAULT_BANDLE_TOTAL,
-        'quizl_total': DEFAULT_QUIZL_TOTAL,
-    }
+    """Build the render context threaded through build_games / format_*.
+
+    Each game computes its own puzzle number from reference_date, so this only
+    carries the date plus default totals for games whose total can be overridden
+    by a parsed message (bandle). match_message returns those overrides in its
+    metadata dict, which callers merge back via puzzle_numbers.update(metadata).
+    """
+    pn = {'reference_date': reference_date}
+    for spec in GAME_SPECS:
+        if spec.total_key:
+            pn[spec.total_key] = spec.total
+    return pn
 
 
 def make_timestamp_checker(reference_date, tz, hours_after_midnight, time_window_hours):
@@ -495,58 +436,279 @@ def get_connections_results(content):
     return (69, 0)
 
 
-def build_games(puzzle_numbers):
-    """Build the single ordered list of Game descriptors.
+@dataclass
+class GameSpec:
+    """A game's complete definition -- THE single place to add or change a game.
 
-    Order is parse priority and is load-bearing: maptap_challenge must precede
-    maptap, whose '(.*)MapTap(.*)' pattern would otherwise swallow challenge
-    messages (match_message returns on the first hit). The scoreboard re-sorts by
-    player count then title at render time, so this order does not affect display.
-    Games in DISABLED_GAMES are dropped here, so they are skipped by both the
-    parser and the scoreboard.
+    build_games() resolves each spec into a Game for a given reference date:
+      puzzle(reference_date)          -> displayed puzzle number (int) or label (str)
+      pattern(reference_date, puzzle) -> compiled regex matched against a message
+      parse(match, content)           -> (score, metadata) once the pattern matches;
+                                         return (None, {}) to decline and let other
+                                         games try the same message
+    Optional:
+      search    cheap pre-filter regex builder (same signature as pattern); if set,
+                it must match before the full pattern is attempted
+      total_key puzzle_numbers slot whose value overrides `total` (bandle's total
+                comes off the message); parse must emit it in its metadata
+      disabled  drop the game from parsing AND the scoreboard entirely
     """
-    pn = puzzle_numbers
-    bandle_total = pn.get('bandle_total', DEFAULT_BANDLE_TOTAL)
-    quizl_total = pn.get('quizl_total', DEFAULT_QUIZL_TOTAL)
+    key: str
+    emoji: str
+    title: str
+    metric: str
+    total: int
+    url: str
+    puzzle: object              # callable(reference_date) -> int | str
+    pattern: object             # callable(reference_date, puzzle) -> re.Pattern
+    parse: object               # callable(match, content) -> (score, metadata)
+    needs_timestamp: bool = False
+    search: object = None       # callable(reference_date, puzzle) -> re.Pattern
+    total_key: str = None       # puzzle_numbers key that overrides `total`
+    disabled: bool = False
 
-    games = [
-        Game('connections', '🔗', 'Connections', 'connections', 4, pn['connections_puzzle_number'], CONNECTIONS_LINK,
-             re.compile(rf'Connections.*?Puzzle #{pn["connections_puzzle_number"]}', re.IGNORECASE | re.DOTALL)),
-        Game('bandle', '🎵', 'Bandle', 'guesses', bandle_total, pn['bandle_puzzle_number'], BANDLE_LINK,
-             re.compile(rf'Bandle #{pn["bandle_puzzle_number"]} (\d+|x)/(\d+)', re.IGNORECASE)),
-        Game('sports', '🏈', 'Sports Connections', 'connections', 4, pn['sports_puzzle_number'], SPORTS_CONNECTIONS_LINK,
-             re.compile(rf'Connections: Sports Edition.*? #{pn["sports_puzzle_number"]}', re.IGNORECASE | re.DOTALL)),
-        Game('pips', '🎲', 'Pips', 'time', 0, pn['pips_puzzle_number'], PIPS_LINK,
-             re.compile(rf'Pips #{pn["pips_puzzle_number"]} Hard', re.IGNORECASE)),
-        Game('maptap_challenge', '⚡', 'MapTap Challenge', 'maptap', 0, pn['maptap_number'], MAPTAP_CHALLENGE_LINK,
-             re.compile(rf'MapTap Challenge Round.*{pn["maptap_challenge_date"]}', re.IGNORECASE)),
-        Game('maptap', '🎯', 'MapTap', 'maptap', 0, pn['maptap_number'], MAPTAP_LINK,
-             re.compile(rf'(.*)MapTap(.*){pn["maptap_date"]}', re.IGNORECASE)),
-        Game('chronophoto', '📷', 'Chronophoto', 'score', 0, pn['chronophoto_number'], CHRONOPHOTO_LINK,
-             re.compile(rf"I got a score of (\d+) on today's Chronophoto: {re.escape(pn['chronophoto_number'])}", re.IGNORECASE),
-             search_pattern=re.compile(re.escape(pn["chronophoto_number"]), re.IGNORECASE)),
-        Game('globle', '🌍', 'Globle', 'guesses', 0, f'{pn["globle_number"]}', GLOBLE_LINK,
-             re.compile(r"I guessed today['\u2019]s Globle in (\d+) tr", re.IGNORECASE), needs_timestamp=True),
-        Game('worldle', '🗺️', 'Worldle', 'guesses', 0, f'{pn["worldle_number"]}', WORLDLE_LINK,
-             re.compile(r"I guessed today['\u2019]s Worldle in (\d+) tr", re.IGNORECASE), needs_timestamp=True),
-        Game('flagle', '🏁', 'Flagle', 'guesses', 0, f'{pn["flagle_number"]}', FLAGLE_LINK,
-             re.compile(r"I guessed today['\u2019]s Flag in (\d+) tr", re.IGNORECASE), needs_timestamp=True),
-        Game('quizl', '⁉️', 'Quizl', 'score', quizl_total, pn['quizl_puzzle_number'], QUIZL_LINK,
-             re.compile(rf'Quizl#{pn["quizl_puzzle_number"]}', re.IGNORECASE)),
-        Game('wordle', '📗', 'Wordle', 'guesses', DEFAULT_WORDLE_TOTAL, pn['wordle_puzzle_number'], WORDLE_LINK,
-             re.compile(rf'Wordle\s+{pn["wordle_puzzle_number"]:,}\s+([1-6X])/6', re.IGNORECASE)),
-        Game('travle', '✈️', 'Travle', 'travle', 0, pn['travle_puzzle_number'], TRAVLE_LINK,
-             re.compile(rf'#travle\s+#{pn["travle_puzzle_number"]}\s+(?:\+(\d+)|\((\d+)\s+away\))(?:[^\n]*?\((\d+)\s+hints?\))?[^\n]*(?:\n([^\n]*))?', re.IGNORECASE)),
-        Game('dialed_color', '🎨', 'Color', 'score', 50, f'{pn["dialed_number"]}', DIALED_COLOR_LINK,
-             re.compile(r'dialed\.gg/\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE), needs_timestamp=True),
-        Game('dialed_sound', '🔊', 'Sound', 'score', 50, f'{pn["dialed_number"]}', DIALED_SOUND_LINK,
-             re.compile(r'dialed\.gg/sound\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE), needs_timestamp=True),
-        Game('dialed_color2', '🎭', 'Pop Culture Colors', 'score', 50, f'{pn["dialed_number"]}', DIALED_COLOR2_LINK,
-             re.compile(r'dialed\.gg/color2\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE), needs_timestamp=True),
-        Game('enclose', '🐴', 'Enclose', 'score', 100, pn['enclose_puzzle_number'], ENCLOSE_LINK,
-             re.compile(rf'enclose\.horse Day {pn["enclose_puzzle_number"]}\b.*?(\d+)%', re.IGNORECASE | re.DOTALL)),
-    ]
-    return [g for g in games if g.key not in DISABLED_GAMES]
+
+# --- Per-game score extractors -------------------------------------------------
+# Trivial extractions are written inline in the specs below; these cover games
+# whose scoring needs more than one expression. Each returns (score, metadata),
+# or (None, {}) to decline the message after a pattern match (so another game may
+# still claim it).
+
+def _parse_bandle(m, content):
+    score_str = m.group(1)
+    total = int(m.group(2))
+    score = total + 1 if score_str == 'x' else int(score_str)
+    return score, {'bandle_total': total}
+
+
+def _parse_pips(m, content):
+    pips_match = re.search(r'(\d+):(\d+)', content, re.IGNORECASE)
+    if not pips_match:
+        return None, {}
+    minutes = int(pips_match.group(1))
+    seconds = int(pips_match.group(2))
+    return minutes * 60 + seconds, {}
+
+
+def _parse_maptap_challenge(m, content):
+    score_match = re.search(r'Score: (\d+)', content, re.IGNORECASE)
+    if not score_match:
+        return None, {}
+    weighted_score = int(score_match.group(1))
+    raw_score = weighted_score
+    for line in content.split('\n'):
+        if 'score' in line.lower() or 'maptap' in line.lower():
+            continue
+        nums = re.findall(r'\d+', line)
+        if len(nums) >= 3:
+            raw_score = sum(int(n) for n in nums)
+            break
+    return (weighted_score, raw_score), {}
+
+
+def _parse_maptap(m, content):
+    score_match = re.search(r'Final Score: (\d+)', content, re.IGNORECASE)
+    if not score_match:
+        return None, {}
+    weighted_score = int(score_match.group(1))
+    # Parse individual round scores from the emoji line: it has multiple numbers
+    # interspersed with emojis; their sum is the unweighted raw score.
+    raw_score = weighted_score
+    for line in content.split('\n'):
+        if 'final score' in line.lower() or 'maptap' in line.lower():
+            continue
+        nums = re.findall(r'\d+', line)
+        if len(nums) >= 3:
+            raw_score = sum(int(n) for n in nums)
+            break
+    return (weighted_score, raw_score), {}
+
+
+def _parse_quizl(m, content):
+    return len(re.findall('\U0001F7E9', content)), {}   # count green squares
+
+
+def _parse_wordle(m, content):
+    score_str = m.group(1)
+    score = DEFAULT_WORDLE_TOTAL + 1 if score_str.upper() == 'X' else int(score_str)
+    return score, {}
+
+
+def _parse_travle(m, content):
+    plus_str = m.group(1)
+    away_str = m.group(2)
+    hints = int(m.group(3)) if m.group(3) else 0
+    squares = m.group(4) or ''
+    checkmarks = squares.count('✅')  # path countries guessed in-order (check mark)
+    # Escalating hint penalty (+1/+2/+3 per successive hint, since hint 2 reveals
+    # all outlines and hint 3 adds initials) folded into the +N/away count, so
+    # hint-assisted results rank below clean ones on the same currency as wrong
+    # guesses. Triangular: 0/1/3/6 for 0-3 hints.
+    penalty = hints * (hints + 1) // 2
+    # Encode as (tier, effective_n, hints, -checkmarks): 0=solved(+N), 1=failed
+    # but got at least one correct country (check or green), 2=complete wiff (no
+    # greens). hints is a tiebreak (fewer ranks higher at equal effective_n);
+    # raw +N = effective_n - penalty. Negate checkmarks so ascending tuple order
+    # ranks more checks higher (in-order tiebreaker).
+    if plus_str is not None:
+        return (0, int(plus_str) + penalty, hints, -checkmarks), {}
+    tier = 1 if (checkmarks or '\U0001F7E9' in squares) else 2
+    return (tier, int(away_str) + penalty, hints, -checkmarks), {}
+
+
+# --- The single source of truth ------------------------------------------------
+# List order is PARSE PRIORITY and is load-bearing: maptap_challenge must precede
+# maptap, whose '(.*)MapTap(.*)' pattern would otherwise swallow challenge
+# messages (match_message returns on the first hit). The scoreboard re-sorts by
+# player count then title at render time, so order does not affect display.
+
+GAME_SPECS = [
+    GameSpec(
+        key='connections', emoji='🔗', title='Connections', metric='connections',
+        total=4, url='https://www.nytimes.com/games/connections',
+        puzzle=lambda ref: (ref - datetime(2023, 6, 12)).days + 1,
+        pattern=lambda ref, n: re.compile(rf'Connections.*?Puzzle #{n}', re.IGNORECASE | re.DOTALL),
+        parse=lambda m, c: (get_connections_results(c), {}),
+    ),
+    GameSpec(
+        key='bandle', emoji='🎵', title='Bandle', metric='guesses',
+        total=6, total_key='bandle_total', url='https://bandle.app/daily',
+        puzzle=lambda ref: (ref - datetime(2022, 8, 18)).days + 1,
+        pattern=lambda ref, n: re.compile(rf'Bandle #{n} (\d+|x)/(\d+)', re.IGNORECASE),
+        parse=_parse_bandle,
+    ),
+    GameSpec(
+        key='sports', emoji='🏈', title='Sports Connections', metric='connections',
+        total=4, url='https://www.nytimes.com/athletic/connections-sports-edition',
+        puzzle=lambda ref: (ref - datetime(2024, 9, 24)).days + 1,
+        pattern=lambda ref, n: re.compile(rf'Connections: Sports Edition.*? #{n}', re.IGNORECASE | re.DOTALL),
+        parse=lambda m, c: (get_connections_results(c), {}),
+    ),
+    GameSpec(
+        key='pips', emoji='🎲', title='Pips', metric='time',
+        total=0, url='https://www.nytimes.com/games/pips',
+        puzzle=lambda ref: (ref - datetime(2025, 8, 18)).days + 1,
+        pattern=lambda ref, n: re.compile(rf'Pips #{n} Hard', re.IGNORECASE),
+        parse=_parse_pips,
+    ),
+    GameSpec(
+        key='maptap_challenge', emoji='⚡', title='MapTap Challenge', metric='maptap',
+        total=0, url='https://maptap.gg/adventures?gametype=challenge', disabled=True,
+        puzzle=lambda ref: (ref - datetime(2024, 6, 22)).days + 1,
+        pattern=lambda ref, n: re.compile(rf'MapTap Challenge Round.*{ref.strftime("%b")} {ref.day}', re.IGNORECASE),
+        parse=_parse_maptap_challenge,
+    ),
+    GameSpec(
+        key='maptap', emoji='🎯', title='MapTap', metric='maptap',
+        total=0, url='https://maptap.gg',
+        puzzle=lambda ref: (ref - datetime(2024, 6, 22)).days + 1,
+        pattern=lambda ref, n: re.compile(rf'(.*)MapTap(.*){ref.strftime("%B")} {ref.day}', re.IGNORECASE),
+        parse=_parse_maptap,
+    ),
+    GameSpec(
+        key='chronophoto', emoji='📷', title='Chronophoto', metric='score',
+        total=0, url='https://www.chronophoto.app/daily.html',
+        puzzle=lambda ref: f'{ref.month}/{ref.day}/{ref.year}',
+        pattern=lambda ref, n: re.compile(rf"I got a score of (\d+) on today's Chronophoto: {re.escape(n)}", re.IGNORECASE),
+        search=lambda ref, n: re.compile(re.escape(n), re.IGNORECASE),
+        parse=lambda m, c: (int(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='globle', emoji='🌍', title='Globle', metric='guesses',
+        total=0, url='https://globle.org', needs_timestamp=True, disabled=True,
+        puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
+        pattern=lambda ref, n: re.compile(r"I guessed today['’]s Globle in (\d+) tr", re.IGNORECASE),
+        parse=lambda m, c: (int(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='worldle', emoji='🗺️', title='Worldle', metric='guesses',
+        total=0, url='https://worldlegame.io', needs_timestamp=True, disabled=True,
+        puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
+        pattern=lambda ref, n: re.compile(r"I guessed today['’]s Worldle in (\d+) tr", re.IGNORECASE),
+        parse=lambda m, c: (int(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='flagle', emoji='🏁', title='Flagle', metric='guesses',
+        total=0, url='https://flagle.org', needs_timestamp=True, disabled=True,
+        puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
+        pattern=lambda ref, n: re.compile(r"I guessed today['’]s Flag in (\d+) tr", re.IGNORECASE),
+        parse=lambda m, c: (int(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='quizl', emoji='⁉️', title='Quizl', metric='score',
+        total=5, url='https://quizl.io',
+        puzzle=lambda ref: (ref - datetime(2022, 3, 16)).days + 1,
+        pattern=lambda ref, n: re.compile(rf'Quizl#{n}', re.IGNORECASE),
+        parse=_parse_quizl,
+    ),
+    GameSpec(
+        key='wordle', emoji='📗', title='Wordle', metric='guesses',
+        total=DEFAULT_WORDLE_TOTAL, url='https://www.nytimes.com/games/wordle',
+        puzzle=lambda ref: (ref - datetime(2021, 6, 19)).days,
+        pattern=lambda ref, n: re.compile(rf'Wordle\s+{n:,}\s+([1-6X])/6', re.IGNORECASE),
+        parse=_parse_wordle,
+    ),
+    GameSpec(
+        key='travle', emoji='✈️', title='Travle', metric='travle',
+        total=0, url='https://travle.earth',
+        puzzle=lambda ref: (ref - datetime(2022, 12, 15)).days + 1,
+        pattern=lambda ref, n: re.compile(rf'#travle\s+#{n}\s+(?:\+(\d+)|\((\d+)\s+away\))(?:[^\n]*?\((\d+)\s+hints?\))?[^\n]*(?:\n([^\n]*))?', re.IGNORECASE),
+        parse=_parse_travle,
+    ),
+    GameSpec(
+        key='dialed_color', emoji='🎨', title='Color', metric='score',
+        total=50, url='https://dialed.gg/?d=1', needs_timestamp=True, disabled=True,
+        puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
+        pattern=lambda ref, n: re.compile(r'dialed\.gg/\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
+        parse=lambda m, c: (float(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='dialed_sound', emoji='🔊', title='Sound', metric='score',
+        total=50, url='https://dialed.gg/sound?d=1', needs_timestamp=True, disabled=True,
+        puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
+        pattern=lambda ref, n: re.compile(r'dialed\.gg/sound\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
+        parse=lambda m, c: (float(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='dialed_color2', emoji='🎭', title='Pop Culture Colors', metric='score',
+        total=50, url='https://dialed.gg/color2?d=1', needs_timestamp=True,
+        puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
+        pattern=lambda ref, n: re.compile(r'dialed\.gg/color2\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
+        parse=lambda m, c: (float(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='enclose', emoji='🐴', title='Enclose', metric='score',
+        total=100, url='https://enclose.horse',
+        puzzle=lambda ref: (ref - datetime(2025, 12, 30)).days + 1,
+        pattern=lambda ref, n: re.compile(rf'enclose\.horse Day {n}\b.*?(\d+)%', re.IGNORECASE | re.DOTALL),
+        parse=lambda m, c: (int(m.group(1)), {}),
+    ),
+]
+
+
+def build_games(puzzle_numbers):
+    """Resolve GAME_SPECS into concrete Game descriptors for one reference date.
+
+    Games flagged disabled are dropped here, so they are skipped by both the
+    parser and the scoreboard. GAME_SPECS order (parse priority) is preserved;
+    the scoreboard re-sorts for display.
+    """
+    ref = puzzle_numbers['reference_date']
+    games = []
+    for spec in GAME_SPECS:
+        if spec.disabled:
+            continue
+        puzzle = spec.puzzle(ref)
+        total = puzzle_numbers.get(spec.total_key, spec.total) if spec.total_key else spec.total
+        games.append(Game(
+            key=spec.key, emoji=spec.emoji, title=spec.title, metric=spec.metric,
+            total=total, puzzle=puzzle, url=spec.url,
+            pattern=spec.pattern(ref, puzzle),
+            needs_timestamp=spec.needs_timestamp,
+            search_pattern=spec.search(ref, puzzle) if spec.search else None,
+            parse=spec.parse,
+        ))
+    return games
 
 
 def match_message(msg, games, timestamp_checker, wordle_bot_id=None, avatar_hashes=None):
@@ -554,119 +716,30 @@ def match_message(msg, games, timestamp_checker, wordle_bot_id=None, avatar_hash
 
     Returns a list of (game_key, score, metadata, user_id_override) tuples.
     user_id_override is None for everything except multi-player Wordle bot images,
-    where each entry is attributed to the user matched by avatar.
-    Returns [] if no match.
+    where each entry is attributed to the user matched by avatar. Returns [] if no
+    match. The first game whose pattern matches and yields a non-None score wins
+    (GAME_SPECS order is parse priority).
     """
     content = msg['content']
     timestamp = msg['timestamp']
 
     for game in games:
-        key = game.key
-
-        # For chronophoto, use search_pattern for initial check
-        if key == 'chronophoto':
-            if not game.search_pattern.search(content):
-                continue
-            match = game.pattern.search(content)
-            if match:
-                if game.needs_timestamp and not timestamp_checker(timestamp):
-                    continue
-                return [(key, int(match.group(1)), {}, None)]
+        # Optional cheap pre-filter before the full pattern (chronophoto).
+        if game.search_pattern is not None and not game.search_pattern.search(content):
             continue
-
         match = game.pattern.search(content)
         if not match:
             continue
-
         if game.needs_timestamp and not timestamp_checker(timestamp):
             continue
+        score, metadata = game.parse(match, content)
+        if score is None:
+            # Pattern matched but no usable score (e.g. pips with no time); let
+            # other games try this message.
+            continue
+        return [(game.key, score, metadata, None)]
 
-        metadata = {}
-
-        if key == 'connections':
-            return [(key, get_connections_results(content), metadata, None)]
-        elif key == 'bandle':
-            score_str = match.group(1)
-            total = int(match.group(2))
-            metadata['bandle_total'] = total
-            score = total + 1 if score_str == 'x' else int(score_str)
-            return [(key, score, metadata, None)]
-        elif key == 'sports':
-            return [(key, get_connections_results(content), metadata, None)]
-        elif key == 'pips':
-            pips_match = re.search(r'(\d+):(\d+)', content, re.IGNORECASE)
-            if pips_match:
-                minutes = int(pips_match.group(1))
-                seconds = int(pips_match.group(2))
-                return [(key, minutes * 60 + seconds, metadata, None)]
-        elif key == 'maptap_challenge':
-            score_match = re.search(r'Score: (\d+)', content, re.IGNORECASE)
-            if score_match:
-                weighted_score = int(score_match.group(1))
-                lines = content.split('\n')
-                raw_score = weighted_score
-                for line in lines:
-                    if 'score' in line.lower() or 'maptap' in line.lower():
-                        continue
-                    nums = re.findall(r'\d+', line)
-                    if len(nums) >= 3:
-                        raw_score = sum(int(n) for n in nums)
-                        break
-                return [(key, (weighted_score, raw_score), metadata, None)]
-        elif key == 'maptap':
-            score_match = re.search(r'Final Score: (\d+)', content, re.IGNORECASE)
-            if score_match:
-                weighted_score = int(score_match.group(1))
-                # Parse individual round scores from the emoji line
-                # The scores line has multiple numbers interspersed with emojis
-                lines = content.split('\n')
-                raw_score = weighted_score
-                for line in lines:
-                    if 'final score' in line.lower() or 'maptap' in line.lower():
-                        continue
-                    nums = re.findall(r'\d+', line)
-                    if len(nums) >= 3:
-                        raw_score = sum(int(n) for n in nums)
-                        break
-                return [(key, (weighted_score, raw_score), metadata, None)]
-        elif key in ('globle', 'worldle', 'flagle'):
-            return [(key, int(match.group(1)), metadata, None)]
-        elif key == 'quizl':
-            score = len(re.findall(r'🟩', content))
-            return [(key, score, metadata, None)]
-        elif key == 'wordle':
-            score_str = match.group(1)
-            score = DEFAULT_WORDLE_TOTAL + 1 if score_str.upper() == 'X' else int(score_str)
-            return [(key, score, metadata, None)]
-        elif key == 'travle':
-            plus_str = match.group(1)
-            away_str = match.group(2)
-            hints = int(match.group(3)) if match.group(3) else 0
-            squares = match.group(4) or ''
-            checkmarks = squares.count('✅')  # path countries guessed in-order
-            # Escalating hint penalty (+1/+2/+3 per successive hint, since hint 2
-            # reveals all outlines and hint 3 adds initials) folded into the
-            # +N/away count, so hint-assisted results rank below clean ones on the
-            # same currency as wrong guesses. Triangular: 0/1/3/6 for 0-3 hints.
-            penalty = hints * (hints + 1) // 2
-            # Encode as (tier, effective_n, hints, -checkmarks): 0=solved(+N),
-            # 1=failed but got at least one correct country (✅ or 🟩), 2=complete
-            # wiff (no greens). hints is a tiebreak (fewer ranks higher at equal
-            # effective_n); raw +N = effective_n - penalty. Negate checkmarks so
-            # ascending tuple order ranks more ✅ higher (in-order tiebreaker).
-            if plus_str is not None:
-                return [(key, (0, int(plus_str) + penalty, hints, -checkmarks), metadata, None)]
-            tier = 1 if (checkmarks or '🟩' in squares) else 2
-            return [(key, (tier, int(away_str) + penalty, hints, -checkmarks), metadata, None)]
-        elif key in ('dialed_color', 'dialed_sound', 'dialed_color2'):
-            # Score (e.g. 45.32) comes from the share URL's &s= param, also
-            # shown as "<score>/50" in the message text.
-            return [(key, float(match.group(1)), metadata, None)]
-        elif key == 'enclose':
-            # Percent score (e.g. 93%) on the result line; higher is better.
-            return [(key, int(match.group(1)), metadata, None)]
-
-    # Wordle bot image parsing
+    # Wordle bot image parsing -- a separate input path (bot attachments, not text).
     if (wordle_bot_id
             and msg['author']['id'] == wordle_bot_id
             and msg.get('attachments')
