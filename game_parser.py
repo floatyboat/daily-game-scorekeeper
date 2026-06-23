@@ -752,8 +752,12 @@ def match_message(msg, games, timestamp_checker, wordle_bot_id=None, avatar_hash
     return []
 
 
-def compute_points(results, puzzle_numbers, minimum_players=1):
+def compute_points(results, games, minimum_players=1):
     """Compute total points per user across all games.
+
+    Takes the already-built games list (from build_games) rather than rebuilding
+    it, so a single render shares one build instead of resolving GAME_SPECS
+    (regex compilation, puzzle-number math) twice.
 
     Scoring: in a game with N players, 1st place gets N points and each place
     below earns one fewer, so last place gets 1 (and the sole player in a
@@ -763,7 +767,6 @@ def compute_points(results, puzzle_numbers, minimum_players=1):
 
     Returns {user_id: int}.
     """
-    games = build_games(puzzle_numbers)
     points = defaultdict(int)
 
     for game in games:
@@ -986,6 +989,19 @@ def _format_game_players(game_scores, metric, total):
     return lines
 
 
+def _puzzle_label(puzzle, reference_date):
+    """Display label shown after a game's title, e.g. '#1234'.
+
+    Games with a real integer puzzle number show it directly. Date-keyed games
+    (puzzle is a non-int, used only for pattern matching) have no puzzle number,
+    so we show a date-derived one: the month followed by the zero-padded day, so
+    1/20 -> #120, 11/4 -> #1104, 1/3 -> #103.
+    """
+    if type(puzzle) == int:
+        return f'#{puzzle}'
+    return f'#{reference_date.month}{reference_date.day:02d}'
+
+
 def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1):
     """Format the scoreboard message. Parameterized version of format_message()."""
     games = build_games(puzzle_numbers)
@@ -994,7 +1010,7 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
         message += "\n\nNo results found!"
     else:
         message += f" - {reference_date.strftime('%B %d, %Y')}\n\n"
-        points = compute_points(results, puzzle_numbers, minimum_players)
+        points = compute_points(results, games, minimum_players)
         points_section = format_points_summary(points)
         if points_section:
             message += points_section
@@ -1004,7 +1020,7 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
                 continue
 
             title_link = f"[{game.title}]({game.url})"
-            message += f'**{title_link} {game.emoji} {f"#{game.puzzle}" if type(game.puzzle) == int else f"#67"}**\n'
+            message += f'**{title_link} {game.emoji} {_puzzle_label(game.puzzle, reference_date)}**\n'
             message += _format_game_players(results[game.key], game.metric, game.total)
             message += "\n"
     return message
@@ -1030,7 +1046,7 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
         ]}]
 
     # --- Points container (gold accent) ---
-    points = compute_points(results, puzzle_numbers, minimum_players)
+    points = compute_points(results, games, minimum_players)
     points_section = format_points_summary(points)
     if points_section:
         components.append({"type": 17, "accent_color": HEADER_COLOR, "components": [
@@ -1052,7 +1068,7 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     for g_idx, game in enumerate(qualified):
         if g_idx > 0:
             scores_children.append({"type": 14, "spacing": 1})  # Separator
-        puzzle_label = f"#{game.puzzle}" if type(game.puzzle) == int else "#67"
+        puzzle_label = _puzzle_label(game.puzzle, reference_date)
         score_text = f"**[{game.title}]({game.url}) {game.emoji} {puzzle_label}**\n"
         score_text += _format_game_players(results[game.key], game.metric, game.total).rstrip('\n')
         scores_children.append({"type": 10, "content": score_text})
