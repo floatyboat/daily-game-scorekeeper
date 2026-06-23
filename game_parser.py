@@ -64,7 +64,7 @@ DEFAULT_QUIZL_TOTAL = 5
 DEFAULT_WORDLE_TOTAL = 6
 
 # Games turned fully off: skipped everywhere (parsing + scoreboard + Play button).
-DISABLED_GAMES = {'globle', 'flagle', 'worldle', 'maptap_challenge'}
+DISABLED_GAMES = {'globle', 'flagle', 'worldle', 'maptap_challenge', 'dialed_color', 'dialed_sound'}
 
 
 @dataclass
