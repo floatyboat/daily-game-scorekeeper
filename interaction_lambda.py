@@ -48,7 +48,7 @@ def fetch_today_results(channel_id):
 
     Returns (results, puzzle_numbers, today).
     """
-    today = reference_date(datetime.now(), TIMEZONE, HOURS_AFTER_MIDNIGHT)
+    today = reference_date(datetime.now(TIMEZONE), TIMEZONE, HOURS_AFTER_MIDNIGHT)
     messages = fetch_messages(_session, channel_id, limit=100)
     checker = make_timestamp_checker(today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
     avatar_pool = build_avatar_pool(_session, messages, checker, WORDLE_BOT_ID)

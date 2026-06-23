@@ -211,7 +211,7 @@ def lambda_handler(event, context):
     if not is_test and datetime.now(TIMEZONE).hour < HOURS_AFTER_MIDNIGHT:
         return {'statusCode': 200, 'body': json.dumps('Outside active window')}
 
-    today = reference_date(datetime.now(), TIMEZONE, HOURS_AFTER_MIDNIGHT)
+    today = reference_date(datetime.now(TIMEZONE), TIMEZONE, HOURS_AFTER_MIDNIGHT)
     puzzle_numbers = compute_puzzle_numbers(today)
     games = build_games(puzzle_numbers)
     checker = make_timestamp_checker(today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)

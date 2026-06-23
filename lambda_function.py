@@ -50,7 +50,7 @@ def lambda_handler(event, context):
     import time
     t0 = time.time()
 
-    yesterday = reference_date(datetime.now(), TIMEZONE, HOURS_AFTER_MIDNIGHT, days_back=1)
+    yesterday = reference_date(datetime.now(TIMEZONE), TIMEZONE, HOURS_AFTER_MIDNIGHT, days_back=1)
 
     messages = fetch_messages(_session, INPUT_CHANNEL_ID, limit=HUNDREDS_OF_MESSAGES * 100)
     print(f'[t+{time.time()-t0:.2f}s] fetched {len(messages)} messages')
