@@ -22,6 +22,7 @@ TRAVLE_LINK = 'https://travle.earth'
 DIALED_COLOR_LINK = 'https://dialed.gg/?d=1'
 DIALED_SOUND_LINK = 'https://dialed.gg/sound?d=1'
 DIALED_COLOR2_LINK = 'https://dialed.gg/color2?d=1'
+ENCLOSE_LINK = 'https://enclose.horse'
 
 # Accent color constants (Discord integer colors)
 HEADER_COLOR = 16766720       # gold
@@ -43,6 +44,7 @@ GAME_COLORS = {
     'dialed_color': 16738155,  # coral
     'dialed_sound': 9442302,   # violet
     'dialed_color2': 16711935,  # magenta
+    'enclose': 12686443,      # tan
 }
 
 # Start date constants
@@ -54,6 +56,7 @@ MAPTAP_START_DATE = datetime(2024, 6, 22)
 QUIZL_START_DATE = datetime(2022, 3, 16)
 WORDLE_START_DATE = datetime(2021, 6, 19)
 TRAVLE_START_DATE = datetime(2022, 12, 15)
+ENCLOSE_START_DATE = datetime(2025, 12, 30)
 
 # Default totals
 DEFAULT_BANDLE_TOTAL = 6
@@ -101,6 +104,7 @@ def compute_puzzle_numbers(reference_date):
         'chronophoto_number': f'{reference_date.month}/{reference_date.day}/{reference_date.year}',
         'wordle_puzzle_number': int((reference_date - WORDLE_START_DATE).days),
         'travle_puzzle_number': int((reference_date - TRAVLE_START_DATE).days + 1),
+        'enclose_puzzle_number': int((reference_date - ENCLOSE_START_DATE).days + 1),
         'bandle_total': DEFAULT_BANDLE_TOTAL,
         'quizl_total': DEFAULT_QUIZL_TOTAL,
     }
@@ -539,6 +543,8 @@ def build_games(puzzle_numbers):
              re.compile(r'dialed\.gg/sound\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE), needs_timestamp=True),
         Game('dialed_color2', '🎭', 'Pop Culture Colors', 'score', 50, f'{pn["dialed_number"]}', DIALED_COLOR2_LINK,
              re.compile(r'dialed\.gg/color2\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE), needs_timestamp=True),
+        Game('enclose', '🐴', 'Enclose', 'score', 100, pn['enclose_puzzle_number'], ENCLOSE_LINK,
+             re.compile(rf'enclose\.horse Day {pn["enclose_puzzle_number"]}\b.*?(\d+)%', re.IGNORECASE | re.DOTALL)),
     ]
     return [g for g in games if g.key not in DISABLED_GAMES]
 
@@ -656,6 +662,9 @@ def match_message(msg, games, timestamp_checker, wordle_bot_id=None, avatar_hash
             # Score (e.g. 45.32) comes from the share URL's &s= param, also
             # shown as "<score>/50" in the message text.
             return [(key, float(match.group(1)), metadata, None)]
+        elif key == 'enclose':
+            # Percent score (e.g. 93%) on the result line; higher is better.
+            return [(key, int(match.group(1)), metadata, None)]
 
     # Wordle bot image parsing
     if (wordle_bot_id
