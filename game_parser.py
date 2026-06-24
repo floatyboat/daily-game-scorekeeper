@@ -657,14 +657,14 @@ GAME_SPECS = [
     ),
     GameSpec(
         key='dialed_color', emoji='🎨', title='Color', metric='score',
-        total=50, url='https://dialed.gg/?d=1', needs_timestamp=True, disabled=True,
+        total=50, url='https://dialed.gg/?d=1', needs_timestamp=True,
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         pattern=lambda ref, n: re.compile(r'dialed\.gg/\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
         parse=lambda m, c: (float(m.group(1)), {}),
     ),
     GameSpec(
         key='dialed_sound', emoji='🔊', title='Sound', metric='score',
-        total=50, url='https://dialed.gg/sound?d=1', needs_timestamp=True, disabled=True,
+        total=50, url='https://dialed.gg/sound?d=1', needs_timestamp=True,
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         pattern=lambda ref, n: re.compile(r'dialed\.gg/sound\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
         parse=lambda m, c: (float(m.group(1)), {}),
