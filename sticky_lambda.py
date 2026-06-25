@@ -12,6 +12,7 @@ from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
     make_session, fetch_messages, reference_date, is_scoreboard_message,
     build_avatar_pool,
+    PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
 )
 
 DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
@@ -25,10 +26,6 @@ TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
 HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
 
 _session = make_session(DISCORD_BOT_TOKEN)
-
-
-PLAY_BUTTON_CUSTOM_ID = 'sticky_play'
-SCORES_BUTTON_CUSTOM_ID = 'sticky_scores'
 
 
 def build_sticky_components(yesterday_url=None):
