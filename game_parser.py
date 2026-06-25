@@ -759,11 +759,12 @@ def compute_points(results, games, minimum_players=1):
     it, so a single render shares one build instead of resolving GAME_SPECS
     (regex compilation, puzzle-number math) twice.
 
-    Scoring: in a game with N players, 1st place gets N points and each place
-    below earns one fewer, so last place gets 1 (and the sole player in a
-    1-player game gets 1). Poop scores (failed games) earn 0 points. Ties share
-    the higher rank's points, matching the standard ranking used by the
-    scoreboard display.
+    Scoring: you earn 1 point plus 1 for every player you beat (i.e. ranked
+    strictly below you). Last place gets 1, and the sole player in a 1-player
+    game gets 1. With no ties this is identical to N-rank+1 (1st gets N, each
+    place below earns one fewer); ties differ -- tied players only get credit
+    for those they actually beat, not each other. Poop scores (failed games)
+    earn 0 points.
 
     Returns {user_id: int}.
     """
@@ -786,14 +787,10 @@ def compute_points(results, games, minimum_players=1):
 
         n = len(players)
 
-        # Walk with tie-aware ranking
-        rank = 0
-        prev_score = None
+        # Walk the sorted players, grouping ties
         i = 0
         while i < len(players):
             current_score = players[i][1]
-            if current_score != prev_score:
-                rank = i + 1
 
             # Check for poop override (no points)
             is_poop = False
@@ -820,11 +817,12 @@ def compute_points(results, games, minimum_players=1):
                 j += 1
 
             if not is_poop:
-                player_points = n - rank + 1
+                # 1 point + 1 for each player strictly below (players[j:]); tied
+                # players (players[i:j]) don't count as beaten.
+                player_points = 1 + (n - j)
                 for k in range(i, j):
                     points[players[k][0]] += player_points
 
-            prev_score = current_score
             i = j
 
     return dict(points)
