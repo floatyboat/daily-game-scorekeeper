@@ -15,6 +15,13 @@ FLAG_EPHEMERAL               = 1 << 6    # 64
 FLAG_SUPPRESS_NOTIFICATIONS  = 1 << 12   # 4096
 FLAG_IS_COMPONENTS_V2        = 1 << 15   # 32768
 
+# Custom IDs for the sticky's interactive buttons. Defined here, in the module
+# both lambdas already import, so the producer (sticky_lambda) and the consumer
+# (interaction_lambda) share one source of truth instead of duplicating the
+# literal strings and silently drifting apart.
+PLAY_BUTTON_CUSTOM_ID = 'sticky_play'
+SCORES_BUTTON_CUSTOM_ID = 'sticky_scores'
+
 
 def make_session(token, pool_connections=4, pool_maxsize=32):
     s = requests.Session()
