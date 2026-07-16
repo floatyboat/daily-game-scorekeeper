@@ -231,8 +231,6 @@ def lambda_handler(event, context):
                                 wordle_bot_id=WORDLE_BOT_ID, avatar_hashes=avatar_pool)
         if not entries:
             continue
-        if suppress_embeds(channel_id, msg):
-            suppressed += 1
         for game_key, score, metadata, uid_override in entries:
             user_id = uid_override or msg.get('interaction_metadata', {}).get('user', {}).get('id') or msg['author']['id']
             results[game_key][user_id] = score
