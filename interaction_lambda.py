@@ -1,13 +1,17 @@
 import base64
 import json
 import os
+import random
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 
 from game_parser import build_games, compute_puzzle_numbers, format_scoreboard_components, make_timestamp_checker
-from scoreboard import make_session, fetch_messages, reference_date, parse_results, build_avatar_pool
+from scoreboard import (
+    make_session, fetch_messages, reference_date, parse_results, build_avatar_pool,
+    PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
+)
 
 DISCORD_PUBLIC_KEY = os.getenv('DISCORD_PUBLIC_KEY', '')
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
@@ -91,6 +95,36 @@ def interaction_user_id(body):
     return (member.get('user') or body.get('user') or {}).get('id')
 
 
+def unplayed_games(channel_id, user_id=None):
+    """Today's tracked games the presser hasn't logged yet, plus a count fn.
+
+    Shared by the Play and Random buttons so both work off the same live view
+    of the channel. When user_id is known, games that user has already logged
+    today are dropped, making the result personal to whoever pressed. With no
+    user_id (an unidentifiable presser) every game is returned. The returned
+    player_count(game) reports how many people have played it today.
+    """
+    try:
+        results, puzzle_numbers, _ = fetch_today_results(channel_id)
+    except Exception:
+        # Counts are a nice-to-have; never let a fetch/parse hiccup block the
+        # core action. Fall back to today's games with no counts.
+        results, puzzle_numbers = {}, compute_puzzle_numbers(datetime.utcnow())
+
+    games = build_games(puzzle_numbers)
+
+    def player_count(game):
+        return len(results.get(game.key, {}))
+
+    if user_id is not None:
+        games = [g for g in games if user_id not in results.get(g.key, {})]
+
+    return games, player_count
+
+
+ALL_PLAYED_MESSAGE = "\U0001F389 You've played every tracked game today!"
+
+
 def build_play_response(channel_id, user_id=None):
     """Build an ephemeral message with link buttons for tracked games.
 
@@ -101,20 +135,7 @@ def build_play_response(channel_id, user_id=None):
     one person gets a "(count)" suffix, so the most active games surface first.
     With no user_id (an unidentifiable presser) every game is listed.
     """
-    try:
-        results, puzzle_numbers, _ = fetch_today_results(channel_id)
-    except Exception:
-        # Counts are a nice-to-have; never let a fetch/parse hiccup block the
-        # core Play action. Fall back to today's games with no counts.
-        results, puzzle_numbers = {}, compute_puzzle_numbers(datetime.utcnow())
-
-    games = build_games(puzzle_numbers)
-
-    def player_count(game):
-        return len(results.get(game.key, {}))
-
-    if user_id is not None:
-        games = [g for g in games if user_id not in results.get(g.key, {})]
+    games, player_count = unplayed_games(channel_id, user_id)
 
     games.sort(key=lambda g: (-player_count(g), g.title.lower()))
 
@@ -128,8 +149,18 @@ def build_play_response(channel_id, user_id=None):
     for i in range(0, len(buttons), 5):
         action_rows.append({"type": 1, "components": buttons[i:i + 5]})
 
+    # A "surprise me" shortcut: one random unplayed game as its own grey link
+    # button on its own row above the list. Resolved here, at click time, so the
+    # link points straight at a game this user hasn't logged — one tap, no
+    # follow-up.
+    if games:
+        pick = random.choice(games)
+        action_rows.insert(0, {"type": 1, "components": [
+            {"type": 2, "style": 5, "label": "\U0001F52E Random", "url": pick.url},
+        ]})
+
     # Filtering can empty the list once a user has logged everything today.
-    content = "Pick a game to play!" if action_rows else "\U0001F389 You've played every tracked game today!"
+    content = "Pick a game to play!" if action_rows else ALL_PLAYED_MESSAGE
 
     return {
         "type": 4,
@@ -177,13 +208,13 @@ def lambda_handler(event, context):
     # MESSAGE_COMPONENT (type 3) — sticky buttons
     if body.get('type') == 3:
         custom_id = body.get('data', {}).get('custom_id')
-        if custom_id == 'sticky_play':
+        if custom_id == PLAY_BUTTON_CUSTOM_ID:
             return {
                 'statusCode': 200,
                 'headers': {'Content-Type': 'application/json'},
                 'body': json.dumps(build_play_response(body['channel_id'], interaction_user_id(body))),
             }
-        if custom_id == 'sticky_scores':
+        if custom_id == SCORES_BUTTON_CUSTOM_ID:
             return {
                 'statusCode': 200,
                 'headers': {'Content-Type': 'application/json'},
