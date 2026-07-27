@@ -158,23 +158,32 @@ def gather_streaks(guild_id, ref_date, results, game_keys, include_players=True)
 
 
 def fetch_messages(session, channel_id, limit=100):
-    per_page = min(limit, 100)
-    url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages?limit={per_page}'
-    r = session.get(url)
-    r.raise_for_status()
-    messages = r.json()
-    if not isinstance(messages, list):
-        return []
+    """Up to `limit` messages from a channel, newest first.
+
+    One loop covering every page including the first. The first page used to be
+    fetched ahead of the loop, so an *empty* channel fell straight into the
+    pagination step and died on messages[-1] with an IndexError. That is the
+    state every freshly created channel is in, and for the sticky it deadlocks:
+    the sticky is the thing that would have put the first message there.
+
+    A short page means the channel is exhausted -- Discord returns fewer
+    messages than asked only when there is no more history -- so stop instead
+    of spending a round trip per run rediscovering the end of a small channel.
+    """
+    messages = []
     while len(messages) < limit:
-        last_id = messages[-1]['id']
-        remaining = min(limit - len(messages), 100)
-        page_url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages?limit={remaining}&before={last_id}'
-        r = session.get(page_url)
+        page_size = min(limit - len(messages), 100)
+        url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages?limit={page_size}'
+        if messages:
+            url += f'&before={messages[-1]["id"]}'
+        r = session.get(url)
         r.raise_for_status()
         page = r.json()
         if not isinstance(page, list) or not page:
             break
         messages += page
+        if len(page) < page_size:
+            break
     return messages
 
 
