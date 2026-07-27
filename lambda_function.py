@@ -110,9 +110,9 @@ def process_guild(cfg, is_test, test_channel_id):
     now_local = datetime.now(tz)
     yesterday = reference_date(now_local, tz, cfg['hours_after_midnight'], days_back=1)
     day = store.day_str(yesterday)
-    post_hour = cfg['post_hour'] if cfg['post_hour'] is not None else cfg['hours_after_midnight']
 
     if not is_test:
+        post_hour = store.post_hour(cfg)
         if now_local.hour < post_hour:
             return f'waiting for {post_hour:02d}:00 local'
         if cfg['last_posted_day'] and cfg['last_posted_day'] >= day:

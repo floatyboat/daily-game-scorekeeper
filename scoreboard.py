@@ -16,12 +16,32 @@ FLAG_EPHEMERAL               = 1 << 6    # 64
 FLAG_SUPPRESS_NOTIFICATIONS  = 1 << 12   # 4096
 FLAG_IS_COMPONENTS_V2        = 1 << 15   # 32768
 
-# Custom IDs for the sticky's interactive buttons. Defined here, in the module
-# both lambdas already import, so the producer (sticky_lambda) and the consumer
-# (interaction_lambda) share one source of truth instead of duplicating the
-# literal strings and silently drifting apart.
+# Custom IDs for the sticky's interactive buttons, and the sticky's heading.
+# Defined here, in the module both lambdas already import, so the producer
+# (sticky_lambda) and the consumers (interaction_lambda) share one source of
+# truth instead of duplicating the literal strings and silently drifting apart.
 PLAY_BUTTON_CUSTOM_ID = 'sticky_play'
 SCORES_BUTTON_CUSTOM_ID = 'sticky_scores'
+STICKY_HEADING = "\U0001F47E **Now Playing**"
+
+# Channel types the bot can be pointed at, and the permission bits that gate the
+# admin commands. Shared by register_commands.py (which declares them to Discord)
+# and interaction_lambda.py (which re-verifies them server-side).
+TEXT_CHANNEL_TYPES = (0, 5)   # guild text, announcement
+PERM_ADMINISTRATOR = 0x8
+PERM_MANAGE_GUILD = 0x20
+
+# Discord payload caps the rendered surfaces have to fit inside. Today's 17
+# games clear both: /play tops out at 4 button rows plus the Random row, and the
+# /games menu uses 17 of 25 options.
+#
+# FUTURE: when GAME_SPECS outgrows either cap, split across two messages (the
+# interaction reply plus a follow-up) rather than truncating -- a silently
+# dropped game looks identical to one an admin turned off. These live here as
+# constants so that split has something to divide by.
+MAX_ACTION_ROWS = 5          # top-level components in one message
+MAX_BUTTONS_PER_ROW = 5
+MAX_SELECT_OPTIONS = 25      # options in one string select
 
 
 def make_session(token, pool_connections=4, pool_maxsize=32):
@@ -207,6 +227,33 @@ def is_scoreboard_message(msg):
     """
     flags = msg.get('flags') or 0
     return bool(flags & FLAG_IS_COMPONENTS_V2)
+
+
+def is_sticky_message(msg, bot_id=None):
+    """True for one of the bot's own sticky posts.
+
+    Matched by the sticky's intrinsic Play button (custom_id), with the
+    "Now Playing" heading as a fallback for a sticky somehow posted without its
+    buttons. This is deliberately precise: a looser "any non-scoreboard bot
+    message" test also matches the daily scoreboard and any unrelated bot post
+    (e.g. leftovers from older code versions).
+
+    Every caller deletes what it matches -- sticky_lambda collapsing duplicates
+    back to one, /setup sticky off clearing the channel -- so both go through
+    this single definition rather than each carrying its own idea of what a
+    sticky looks like.
+    """
+    author = msg.get('author') or {}
+    if bot_id:
+        if author.get('id') != str(bot_id):
+            return False
+    elif not author.get('bot'):
+        return False
+    for row in (msg.get('components') or []):
+        for c in row.get('components', []):
+            if c.get('custom_id') == PLAY_BUTTON_CUSTOM_ID:
+                return True
+    return (msg.get('content') or '').startswith(STICKY_HEADING)
 
 
 def _extract_user_avatars(messages):

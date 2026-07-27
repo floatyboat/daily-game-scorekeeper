@@ -14,28 +14,29 @@ from game_parser import (
 )
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
-    build_avatar_pool, safe_guild_id, gather_streaks,
+    build_avatar_pool, safe_guild_id, gather_streaks, is_sticky_message,
     PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
+    TEXT_CHANNEL_TYPES, PERM_ADMINISTRATOR, PERM_MANAGE_GUILD, MAX_BUTTONS_PER_ROW,
 )
 import store
 
 # Global bot identity only -- per-server settings live in the guild's config
-# item (store.CONFIG_DEFAULTS) and are managed by the /setup command below.
+# item (store.CONFIG_FIELDS) and are managed by the /setup command below.
 DISCORD_PUBLIC_KEY = os.getenv('DISCORD_PUBLIC_KEY', '')
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
 
 _session = make_session(DISCORD_BOT_TOKEN)
 
-# member.permissions bits re-checked in the handler; command registration also
-# gates on Manage Server, but registration-side gating is a UI default admins
-# can re-map, so the handler stays the authority.
-PERM_ADMINISTRATOR = 0x8
-PERM_MANAGE_GUILD = 0x20
-
 GAMES_SELECT_ID = 'setup_games'
 CHANNEL_SELECT_PREFIX = 'setup_channel:'
+# The two channel settings, as their config field and the phrase that explains
+# them -- kept together so a third channel is one entry, not two edits.
 CHANNEL_FIELDS = {'input': 'input_channel_id', 'output': 'output_channel_id'}
-TEXT_CHANNEL_TYPES = (0, 5)   # guild text, announcement
+CHANNEL_BLURBS = {
+    'input': 'where scores are read and the sticky lives',
+    'output': 'where the daily scoreboard posts',
+}
 
 
 def get_body(event):
@@ -56,16 +57,25 @@ def verify_signature(body, event):
     verify_key.verify(f'{timestamp}{body}'.encode(), bytes.fromhex(signature))
 
 
-def guild_cfg(guild_id):
+def guild_cfg(guild_id, strict=False):
     """Effective config for the interaction's guild; defaults when the guild
-    never ran /setup or the store is unreachable -- live views must render
-    either way, they just use stock settings."""
+    never ran /setup (a legitimate state -- the summary then says so).
+
+    Live views (Play, Scores, the sticky buttons) also fall back to defaults
+    when the store itself is unreachable: they must render either way, they
+    just use stock settings. The admin surfaces pass strict=True instead --
+    showing an admin a plausible-looking default config when the read failed
+    reads as "my settings vanished", so let admin_dispatch turn it into a
+    try-again message.
+    """
     try:
         if guild_id:
             cfg = store.get_config(guild_id)
             if cfg:
                 return cfg
     except Exception as e:
+        if strict:
+            raise
         print(f'config read failed, using defaults -- {type(e).__name__}: {e}')
     return store.default_config(guild_id)
 
@@ -208,8 +218,8 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None):
         buttons.append({"type": 2, "style": 5, "label": label, "url": g.url})
 
     action_rows = []
-    for i in range(0, len(buttons), 5):
-        action_rows.append({"type": 1, "components": buttons[i:i + 5]})
+    for i in range(0, len(buttons), MAX_BUTTONS_PER_ROW):
+        action_rows.append({"type": 1, "components": buttons[i:i + MAX_BUTTONS_PER_ROW]})
 
     # A "surprise me" shortcut: one random unplayed game as its own grey link
     # button on its own row above the list. Resolved here, at click time, so the
@@ -251,6 +261,9 @@ def _update(content, components=None):
 
 
 def is_admin(body):
+    """member.permissions re-checked here; command registration also gates on
+    Manage Server, but registration-side gating is a UI default admins can
+    re-map, so the handler stays the authority."""
     try:
         perms = int((body.get('member') or {}).get('permissions') or 0)
     except (TypeError, ValueError):
@@ -295,12 +308,6 @@ def channel_select_row(kind):
     }]}
 
 
-CHANNEL_BLURBS = {
-    'input': 'where scores are read and the sticky lives',
-    'output': 'where the daily scoreboard posts',
-}
-
-
 def channel_picker_response(kind):
     return _ephemeral(
         f'Pick the **{kind}** channel — {CHANNEL_BLURBS[kind]}.\n'
@@ -309,14 +316,19 @@ def channel_picker_response(kind):
     )
 
 
-def set_channel(guild_id, kind, channel_id):
-    """Validate and store a channel choice. Returns user-facing text."""
+def set_channel(guild_id, kind, channel_id, cfg=None):
+    """Validate and store a channel choice. Returns (user-facing text, error)."""
     ch, err = resolve_channel(channel_id, guild_id)
     if err:
         return None, err
-    store.update_config(guild_id, {CHANNEL_FIELDS[kind]: str(channel_id)})
+    field = CHANNEL_FIELDS[kind]
+    cfg = cfg or guild_cfg(guild_id, strict=True)
+    store.update_config(guild_id, {field: str(channel_id)})
     text = f'✅ {kind.capitalize()} channel set to <#{channel_id}> — {CHANNEL_BLURBS[kind]}.'
-    cfg = guild_cfg(guild_id)
+    # Apply the write to the config we already hold rather than re-reading it:
+    # get_item is eventually consistent, so a read this soon after the write can
+    # still miss it and tell the admin to set the channel they just set.
+    cfg = {**cfg, field: str(channel_id)}
     missing = [k for k, f in CHANNEL_FIELDS.items() if not cfg[f]]
     if missing:
         text += f'\n-# Still needed to go live: `/setup {missing[0]}`.'
@@ -324,6 +336,8 @@ def set_channel(guild_id, kind, channel_id):
 
 
 def games_select_row(game_overrides):
+    # One option per GameSpec, 17 of scoreboard.MAX_SELECT_OPTIONS today; see
+    # the split-across-two-messages note on that constant for when it runs out.
     options = [{
         'label': spec.title,
         'value': spec.key,
@@ -366,13 +380,11 @@ def apply_games_selection(guild_id, selected_keys):
 def delete_stickies(channel_id):
     """Best-effort removal of the bot's sticky when an admin turns it off --
     otherwise the last sticky would sit there dead until someone deletes it.
-    Matched by the sticky's own Play button, same rule as sticky_lambda."""
+    Uses scoreboard.is_sticky_message, the same definition sticky_lambda posts
+    and collapses against, so this delete path can't match anything wider."""
     removed = 0
     for m in fetch_messages(_session, channel_id, limit=50):
-        if not (m.get('author') or {}).get('bot'):
-            continue
-        btns = [c for row in (m.get('components') or []) for c in row.get('components', [])]
-        if any(c.get('custom_id') == PLAY_BUTTON_CUSTOM_ID for c in btns):
+        if is_sticky_message(m, DISCORD_BOT_ID):
             _session.delete(f'{DISCORD_API_BASE}/channels/{channel_id}/messages/{m["id"]}')
             removed += 1
     return removed
@@ -385,7 +397,7 @@ def config_summary(cfg):
     def onoff(v):
         return 'on' if v else 'off'
 
-    post_hour = cfg['post_hour'] if cfg['post_hour'] is not None else cfg['hours_after_midnight']
+    post_hour = store.post_hour(cfg)
     lines = [
         '### ⚙️ Scoreboard setup',
         f"Input channel ({CHANNEL_BLURBS['input']}): {ch(cfg['input_channel_id'])}",
@@ -407,15 +419,31 @@ def config_summary(cfg):
     return '\n'.join(lines)
 
 
+def collect_updates(group, args):
+    """Slash-command options for one /setup subcommand -> config updates.
+
+    Driven entirely by store.CONFIG_FIELDS, the same table register_commands.py
+    registers the options from, so an option name cannot exist on one side only
+    -- the old hand-written mapping silently ignored anything that drifted.
+    Absent options are left out, so a subcommand only writes what was passed.
+    """
+    updates = {}
+    for field in store.setup_options(group):
+        value = args.get(field.option_name)
+        if value is not None:
+            updates[field.name] = field.coerce(value) if field.coerce else value
+    return updates
+
+
 def handle_setup(body, guild_id):
     sub, args = _sub_options(body)
-    cfg = guild_cfg(guild_id)
+    cfg = guild_cfg(guild_id, strict=True)
 
     if sub in CHANNEL_FIELDS:
         cid = args.get('channel') or (str(args.get('channel_id') or '').strip() or None)
         if cid is None:
             return channel_picker_response(sub)
-        text, err = set_channel(guild_id, sub, cid)
+        text, err = set_channel(guild_id, sub, cid, cfg)
         return _ephemeral(err or text)
 
     if sub == 'daily':
@@ -443,24 +471,18 @@ def handle_setup(body, guild_id):
         return _ephemeral(f'⏸️ Sticky disabled{note}.')
 
     if sub == 'time':
-        updates = {}
-        tz_name = args.get('timezone')
+        updates = collect_updates('time', args)
+        if not updates:
+            return _ephemeral(config_summary(cfg))
+        tz_name = updates.get('timezone')
         if tz_name:
             try:
                 ZoneInfo(tz_name)
             except Exception:
                 return _ephemeral(f'Unknown timezone `{tz_name}` — use an IANA name '
                                   'like `America/New_York` or `Europe/London`.')
-            updates['timezone'] = tz_name
-        for opt, field in (('day_start_hour', 'hours_after_midnight'),
-                           ('post_hour', 'post_hour'),
-                           ('window_hours', 'time_window_hours')):
-            if args.get(opt) is not None:
-                updates[field] = int(args[opt])
-        if not updates:
-            return _ephemeral(config_summary(cfg))
         merged = {**cfg, **updates}
-        post_hour = merged['post_hour'] if merged['post_hour'] is not None else merged['hours_after_midnight']
+        post_hour = store.post_hour(merged)
         if post_hour < merged['hours_after_midnight']:
             return _ephemeral("`post_hour` can't be earlier than `day_start_hour` — "
                               "the scoring window must close before the board posts.")
@@ -470,13 +492,7 @@ def handle_setup(body, guild_id):
                           f"{post_hour:02d}:00, window {merged['time_window_hours']}h.")
 
     if sub == 'limits':
-        updates = {}
-        if args.get('minimum_players') is not None:
-            updates['minimum_players'] = int(args['minimum_players'])
-        if args.get('message_volume') is not None:
-            updates['hundreds_of_messages'] = int(args['message_volume'])
-        if args.get('wordle_bot') is not None:
-            updates['wordle_bot_id'] = str(args['wordle_bot'])
+        updates = collect_updates('limits', args)
         if not updates:
             return _ephemeral(config_summary(cfg))
         store.update_config(guild_id, updates)
@@ -491,7 +507,7 @@ def handle_setup(body, guild_id):
 
 
 def handle_games(body, guild_id):
-    cfg = guild_cfg(guild_id)
+    cfg = guild_cfg(guild_id, strict=True)
     return _ephemeral(
         'Select every game this server should track — unselected games are hidden '
         'from parsing, the scoreboard, and the Play list.',

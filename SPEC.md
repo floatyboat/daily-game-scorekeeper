@@ -111,7 +111,12 @@ Access patterns → reads:
 - Historical `DAY#`/aggregate data for a disabled game is retained, just not displayed
   or accrued while disabled.
 - Managed by `/games`: one admin-only multi-select menu of all games, pre-selected to
-  the guild's current effective state (17 games today; Discord's option cap is 25).
+  the guild's current effective state.
+- Two Discord payload caps bound how far `GAME_SPECS` can grow before the surfaces
+  need splitting across two messages (constants in `scoreboard.py`, noted at the
+  `GAME_SPECS` declaration): the `/games` menu is one option per spec, capped at 25;
+  `/play` is one button per *enabled* game at 5 per row plus the Random row, capped
+  at 20. 17 specs today.
 
 ## Write path (daily lambda — the only writer)
 
@@ -172,6 +177,10 @@ mode: recompute all aggregates from `DAY#` items whenever logic changes.
 - With `daily_enabled` off nothing posts and the sticky drops its Yesterday link
   (whatever board is still in the channel is stale by definition).
 - **`/games`**: the multi-select menu above.
+- Each setting is declared once, as a `ConfigField` in `store.CONFIG_FIELDS`: defaults,
+  stored-value coercion, the slash-command option `register_commands.py` registers, and
+  the update `handle_setup` writes back all derive from that one entry, so an option
+  name cannot drift between the registrar and the handler.
 - Global config stays env (bot token, public key, bot/app ID, TABLE_NAME,
   TEST_CHANNEL_ID). **Per-server config lives only in the table — there is no env
   fallback.** `infra_setup.py --migrate` copied the original server's legacy CONFIG

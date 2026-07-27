@@ -565,6 +565,13 @@ def _parse_travle(m, content):
 # maptap, whose '(.*)MapTap(.*)' pattern would otherwise swallow challenge
 # messages (match_message returns on the first hit). The scoreboard re-sorts by
 # player count then title at render time, so order does not affect display.
+#
+# Adding a game is one entry here and nothing else -- except that two rendered
+# surfaces have Discord payload caps this list now feeds (scoreboard.py holds
+# the constants): the /games menu is one option per spec and tops out at 25,
+# and /play is one button per ENABLED game at 5 per row plus the Random row,
+# so it tops out at 20. 17 specs today. Past either, the fix is to split the
+# response across two messages -- see the FUTURE note in scoreboard.py.
 
 GAME_SPECS = [
     GameSpec(
