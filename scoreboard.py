@@ -103,6 +103,9 @@ def gather_streaks(guild_id, ref_date, results, game_keys, include_players=True)
       players_total {game_key: all-time distinct-player count}
       players       {game_key: {user_id: streak to show}} (players with
                     results on ref_date only; empty when include_players=False)
+      players_overall {user_id: overall streak to show} -- days running that
+                    player posted a result in ANY game; drives the points
+                    summary, same population/emptiness rule as `players`
     """
     if not guild_id:
         return None
@@ -113,6 +116,7 @@ def gather_streaks(guild_id, ref_date, results, game_keys, include_players=True)
                       if sk.startswith(store.GAME_AGG_PREFIX)}
 
         bundle = {'games': {}, 'broken': {}, 'players_total': {}, 'players': {},
+                  'players_overall': {},
                   'server': store.display_streak(
                       aggs.get(store.SERVER_AGG_SK), day,
                       any(results.get(k) for k in game_keys))}
@@ -127,15 +131,25 @@ def gather_streaks(guild_id, ref_date, results, game_keys, include_players=True)
         if include_players:
             pairs = sorted({(uid, key) for key in game_keys
                             for uid in (results.get(key) or {})})
+            uids = sorted({uid for uid, _ in pairs})
+            # Per-game and overall player aggregates ride in one batch; the
+            # overall one is filed under game key None.
+            keys = [{'PK': store.player_pk(guild_id, uid), 'SK': store.game_agg_sk(key)}
+                    for uid, key in pairs]
+            keys += [{'PK': store.player_pk(guild_id, uid), 'SK': store.SERVER_AGG_SK}
+                     for uid in uids]
             fetched = {}
-            for item in store.batch_get(
-                    [{'PK': store.player_pk(guild_id, uid), 'SK': store.game_agg_sk(key)}
-                     for uid, key in pairs]):
+            for item in store.batch_get(keys):
                 uid = item['PK'].split('#PLAYER#', 1)[1]
-                fetched[(uid, store.game_key_from_sk(item['SK']))] = item
+                sk = item['SK']
+                game = None if sk == store.SERVER_AGG_SK else store.game_key_from_sk(sk)
+                fetched[(uid, game)] = item
             for uid, key in pairs:
                 bundle['players'].setdefault(key, {})[uid] = store.display_streak(
                     fetched.get((uid, key)), day, True)
+            for uid in uids:
+                bundle['players_overall'][uid] = store.display_streak(
+                    fetched.get((uid, None)), day, True)
         return bundle
     except Exception as e:
         print(f'store: streak read failed, rendering without streaks -- '

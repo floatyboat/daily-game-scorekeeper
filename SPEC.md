@@ -60,6 +60,12 @@ GUILD#<guild_id>            AGG#GAME#<key>     per-game server aggregate: curren
                                                (= days with ≥1 result), players (string set,
                                                all-time), players_30d (number, refreshed at
                                                finalize)
+GUILD#<gid>#PLAYER#<uid>    AGG#SERVER         per-player overall streak (≥1 result in ANY
+                                               game that day): current_streak, best_streak,
+                                               last_played_day, total_plays. Shown in the
+                                               scoreboard's points summary; NOT derivable
+                                               from the per-game items below (a player who
+                                               alternates games has no per-game streak).
 GUILD#<gid>#PLAYER#<uid>    AGG#GAME#<key>     per-player-per-game: current_streak,
                                                best_streak, last_played_day, total_plays,
                                                best/sum score fields where numeric
@@ -87,7 +93,8 @@ Access patterns → reads:
   `HOURS_AFTER_MIDNIGHT`-aware. Streaks inherit the exact scoring window the
   scoreboard already uses. No new date logic.
 - Server streak per game = consecutive game-days with ≥1 tracked result for that game.
-  Player streak = same per user. Overall server streak = ≥1 result in any game.
+  Player streak = same per user. Overall streak (server-wide and per player) =
+  ≥1 result in any game.
 - Streaks update **once per day at finalize** (the daily scoreboard run — the
   authoritative daily tick). Played on day D: `last_played_day == D-1` → increment,
   else reset to 1. Not played on D: archive into `best_streak` if higher, reset to 0.
@@ -125,7 +132,8 @@ After parsing yesterday's results:
 1. Write the `DAY#` item — plain overwrite, idempotent. Points are computed via the
    existing `compute_points` and **frozen into the item**, so historical rollups
    survive future scoring-rule changes.
-2. Update `AGG#SERVER`, each `AGG#GAME#*`, and each player `AGG#GAME#*` via
+2. Update `AGG#SERVER`, each `AGG#GAME#*`, and each player's `AGG#SERVER` +
+   `AGG#GAME#*` via
    conditional writes guarded per item on a `finalized_through` attribute (last day
    folded into that item) — a double-fire physically cannot double-increment, and a
    run that crashes halfway resumes cleanly because the retry updates exactly the
@@ -152,10 +160,16 @@ mode: recompute all aggregates from `DAY#` items whenever logic changes.
   presents one consistent order. Play labels get a streak suffix:
   `🔗 Connections (3) 🔥14`.
 - **Scoreboard + Scores button** (`format_scoreboard_components`, shared path): grows
-  an optional streaks argument — "🔥N" suffix on each game's title line, personal
-  "🔥N" marker next to players at/above the display minimum, "💔 <Game> streak ended
-  at N" callout on the day it breaks. No server-streak line in the header — the
+  an optional streaks argument — "🔥N" suffix on each game's title line, "💔 <Game>
+  streak ended at N" callout on the day it breaks, and personal streak markers at/above
+  the display minimum: the player's **overall** streak in the points summary
+  (`👑 @alice: 12 pts (x14)`) and their per-game streak on each score line
+  (`👑 @alice (x9): 3/6 guesses`). No server-streak line in the header — the
   server streak's display surface is the sticky.
+- **Fire emoji vs `(xN)`**: streaks that appear once per board (a game's title line,
+  the sticky's server streak) render as `🔥N`; per-player streaks repeat on every
+  line, so they render as a plain `(xN)` — one `_streak_tag()` helper, so the two
+  player surfaces can't drift.
 - **Sticky**: content line ends with the server-wide streak (≥1 result in any game,
   live-adjusted) as bare `🔥N`. Sticky-identity logic (Play-button matching) is
   untouched.
@@ -237,6 +251,12 @@ still-daily rule just means the new code posts once at 13:00 UTC as before) →
 **4.** `dotenv run -- python3 register_commands.py` (needs DISCORD_APPLICATION_ID
 in .env, falls back to DISCORD_BOT_ID) → **5.** test events + `/setup show` in the
 server.
+
+Per-player overall streaks (the points-summary `(xN)`) are a later addition and need
+one `dotenv run -- python3 backfill.py --rebuild-only` to seed the new
+`PLAYER#<uid> / AGG#SERVER` items from the archived days. Skipping it isn't harmful —
+finalize creates each player's item on their next play — but every streak restarts at
+1 instead of its true historical value.
 
 ## Settled decisions
 

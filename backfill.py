@@ -105,7 +105,8 @@ def backfill_days(session, cfg, tz, messages, start_dt, through_dt):
 def print_summary(summary):
     server = summary['server']
     print(f"\nRebuilt from {summary['days']} archived days "
-          f"({summary['player_aggs']} player-game aggregates)")
+          f"({summary['player_aggs']} player-game aggregates, "
+          f"{summary['players']} player streaks)")
     print(f"  server streak: {server['current_streak']} (best {server['best_streak']}, "
           f"{server['total_plays']} active days)")
     ranked = sorted(summary['games'].items(),

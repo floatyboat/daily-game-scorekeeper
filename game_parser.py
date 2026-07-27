@@ -848,8 +848,23 @@ def compute_points(results, games, minimum_players=1):
     return dict(points)
 
 
-def format_points_summary(points):
+def _streak_tag(player_streaks, uid):
+    """' (xN)' for a player at or above the display minimum, else ''.
+
+    Every per-player streak renders as this plain multiplier. The fire emoji is
+    reserved for streaks that appear once per board (a game's title line, the
+    sticky's server streak) -- player streaks repeat on every line, so an emoji
+    there drowns the board.
+    """
+    n = (player_streaks or {}).get(uid, 0)
+    return f' (x{n})' if n >= STREAK_MIN else ''
+
+
+def format_points_summary(points, player_streaks=None):
     """Format the points summary section.
+
+    player_streaks ({user_id: overall streak}) tags players at or above the
+    display minimum with their days-running-in-any-game count.
 
     Returns empty string if no points earned.
     """
@@ -879,7 +894,8 @@ def format_points_summary(points):
         unit = 'pt' if current_val == 1 else 'pts'
         for k in range(i, j):
             uid = sorted_users[k][0]
-            message += f'{medal}<@{uid}>: {current_val} {unit}\n'
+            message += (f'{medal}<@{uid}>: {current_val} {unit}'
+                        f'{_streak_tag(player_streaks, uid)}\n')
 
         prev_val = current_val
         i = j
@@ -891,12 +907,11 @@ def _format_game_players(game_scores, metric, total, player_streaks=None):
     """Format ranked player lines for a single game.
 
     Returns a markdown string with medal emojis, player mentions, and scores.
-    player_streaks ({user_id: streak}) appends a fire marker to players whose
+    player_streaks ({user_id: streak}) appends an "(xN)" marker to players whose
     streak for this game has reached the display minimum.
     """
     def mention(uid):
-        n = (player_streaks or {}).get(uid, 0)
-        return f'<@{uid}> \U0001F525{n}' if n >= STREAK_MIN else f'<@{uid}>'
+        return f'<@{uid}>{_streak_tag(player_streaks, uid)}'
 
     medals = ['👑', '🥈', '🥉']
     lines = ''
@@ -1087,8 +1102,9 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     """Format the scoreboard as Discord Components V2 (list of top-level components).
 
     streaks is an optional gather_streaks() bundle; it adds "streak ended"
-    header callouts, per-game fire suffixes on title lines, and personal fire
-    markers. None renders exactly the streak-less board. game_overrides is the
+    header callouts, per-game fire suffixes on title lines, and personal "(xN)"
+    markers (overall in the points summary, per-game on the score lines).
+    None renders exactly the streak-less board. game_overrides is the
     guild's per-game enable map -- without it a guild-enabled game whose spec
     defaults to disabled would silently drop out of the render.
 
@@ -1113,7 +1129,7 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
 
     # --- Points container (gold accent) ---
     points = compute_points(results, games, minimum_players)
-    points_section = format_points_summary(points)
+    points_section = format_points_summary(points, (streaks or {}).get('players_overall'))
     if points_section:
         header_children.append({"type": 10, "content": points_section.rstrip('\n')})
         components.append({"type": 17, "accent_color": HEADER_COLOR, "components": header_children})

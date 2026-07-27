@@ -7,6 +7,7 @@ One table, generic PK/SK string keys, no GSIs. Item catalog (see SPEC.md):
     GUILD#<gid>               DAY#<YYYY-MM-DD>  the day's parsed results, JSON-frozen
     GUILD#<gid>               AGG#SERVER        overall server streak (any game played)
     GUILD#<gid>               AGG#GAME#<key>    per-game server streak + player sets
+    GUILD#<gid>#PLAYER#<uid>  AGG#SERVER        per-player overall streak (any game)
     GUILD#<gid>#PLAYER#<uid>  AGG#GAME#<key>    per-player-per-game streak + totals
 
 All configs share one partition (GUILDS) so the scheduled lambdas can load every
@@ -518,6 +519,15 @@ def finalize_day(guild_id, day, results, points_by_game, game_keys):
     for uid in {u for k in game_keys for u in (results.get(k) or {})}:
         ppk = player_pk(guild_id, uid)
         theirs = query_aggs(ppk)
+
+        # Overall per-player streak: any game played today keeps it alive. This
+        # is the number the scoreboard's points summary shows, so it has to be
+        # its own aggregate -- it is not derivable from the per-game ones (a
+        # player alternating games has no per-game streak but a long overall one).
+        agg, _ = _agg_from_item(theirs.get(SERVER_AGG_SK))
+        advance_streak(agg, day, prev_day, True)
+        _put_guarded(_agg_to_item(ppk, SERVER_AGG_SK, agg, day), day, stats)
+
         for game_key in game_keys:
             if uid not in (results.get(game_key) or {}):
                 continue
@@ -608,11 +618,14 @@ def rebuild_aggregates(guild_id, through_day):
     server = blank_agg()
     game_aggs, game_players = {}, {}
     player_aggs, player_points = {}, {}
+    player_server = {}
 
     for d in days:
         day, games = d['day'], d['games']
         prev = prev_day_str(day)
         advance_streak(server, day, prev, bool(games))
+        for uid in {u for scores in games.values() for u in scores}:
+            advance_streak(player_server.setdefault(uid, blank_agg()), day, prev, True)
         for game_key, scores in games.items():
             agg = game_aggs.setdefault(game_key, blank_agg())
             advance_streak(agg, day, prev, True)
@@ -627,6 +640,8 @@ def rebuild_aggregates(guild_id, through_day):
     for agg in game_aggs.values():
         close_out_streak(agg, through_day)
     for agg in player_aggs.values():
+        close_out_streak(agg, through_day)
+    for agg in player_server.values():
         close_out_streak(agg, through_day)
 
     window_start = day_str(datetime.strptime(through_day, DAY_FMT) - timedelta(days=29))
@@ -648,6 +663,9 @@ def rebuild_aggregates(guild_id, through_day):
             batch.put_item(Item=_agg_to_item(
                 player_pk(guild_id, uid), game_agg_sk(game_key), agg, through_day,
                 extra={'points_sum': player_points[(uid, game_key)]}))
+        for uid, agg in player_server.items():
+            batch.put_item(Item=_agg_to_item(
+                player_pk(guild_id, uid), SERVER_AGG_SK, agg, through_day))
 
     return {
         'days': len(days),
@@ -656,4 +674,5 @@ def rebuild_aggregates(guild_id, through_day):
                       'players_30d': len(players_30d.get(k, ()))}
                   for k in game_aggs},
         'player_aggs': len(player_aggs),
+        'players': len(player_server),
     }
