@@ -138,9 +138,9 @@ mode: recompute all aggregates from `DAY#` items whenever logic changes.
   `🔗 Connections (3) 🔥14`.
 - **Scoreboard + Scores button** (`format_scoreboard_components`, shared path): grows
   an optional streaks argument — "🔥N" suffix on each game's title line, personal
-  "🔥N" marker next to players on **≥3-day** streaks, "💔 <Game> streak ended at N"
-  callout on the day it breaks. No server-streak line in the header — the server
-  streak's display surface is the sticky.
+  "🔥N" marker next to players at/above the display minimum, "💔 <Game> streak ended
+  at N" callout on the day it breaks. No server-streak line in the header — the
+  server streak's display surface is the sticky.
 - **Sticky**: content line ends with the server-wide streak (≥1 result in any game,
   live-adjusted) as bare `🔥N`. Sticky-identity logic (Play-button matching) is
   untouched.
@@ -200,7 +200,9 @@ Each phase ships independently; Phase 1 has zero user-facing risk.
 - **Player-count metric**: store all-time distinct players (string set) and rolling
   30-day distinct (`players_30d`, refreshed daily at finalize — kept for rollups);
   **Play sorts by the all-time count** (after today's count and streak).
-- **Personal streak display threshold**: show 🔥 only at ≥3 days.
+- **Streak display minimum**: one threshold for every streak display (game/Play
+  suffixes, sticky flair, personal markers, break callouts), configurable via the
+  `MINIMUM_STREAK` env var, default 3. Shorter streaks still accrue and sort.
 - **Game ordering (app-wide)**: today's live count first, then streak, then all-time
   distinct players, then title — identical on the Play list and scoreboard sections.
 - **Per-server disabled games**: `CONFIG.disabled_games` overlay on top of the global

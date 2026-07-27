@@ -1,3 +1,4 @@
+import os
 import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -871,12 +872,12 @@ def _format_game_players(game_scores, metric, total, player_streaks=None):
     """Format ranked player lines for a single game.
 
     Returns a markdown string with medal emojis, player mentions, and scores.
-    player_streaks ({user_id: streak}) appends a fire marker to players on
-    PLAYER_STREAK_MIN+ day streaks for this game.
+    player_streaks ({user_id: streak}) appends a fire marker to players whose
+    streak for this game has reached the display minimum.
     """
     def mention(uid):
         n = (player_streaks or {}).get(uid, 0)
-        return f'<@{uid}> \U0001F525{n}' if n >= PLAYER_STREAK_MIN else f'<@{uid}>'
+        return f'<@{uid}> \U0001F525{n}' if n >= STREAK_MIN else f'<@{uid}>'
 
     medals = ['👑', '🥈', '🥉']
     lines = ''
@@ -1032,11 +1033,10 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
 
 MEDAL_COLOR = 15844367  # dark gold
 
-# Streak display thresholds. Personal fire markers appear at 3+ days (SPEC.md
-# settled decision); server/game streak lines and Play-list suffixes at 2+,
-# since a "1-day streak" just means "played" and would tag every section.
-STREAK_MIN = 2
-PLAYER_STREAK_MIN = 3
+# Minimum streak length to display, everywhere streaks appear: game title
+# suffixes, Play labels, sticky flair, personal markers, and break callouts.
+# Shorter streaks still accrue and drive sort order -- they just don't render.
+STREAK_MIN = int(os.getenv('MINIMUM_STREAK') or 3)
 
 
 def game_sort_key(game, results, streaks):
