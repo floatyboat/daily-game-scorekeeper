@@ -867,11 +867,17 @@ def format_points_summary(points):
     return message + '\n'
 
 
-def _format_game_players(game_scores, metric, total):
+def _format_game_players(game_scores, metric, total, player_streaks=None):
     """Format ranked player lines for a single game.
 
     Returns a markdown string with medal emojis, player mentions, and scores.
+    player_streaks ({user_id: streak}) appends a fire marker to players on
+    PLAYER_STREAK_MIN+ day streaks for this game.
     """
+    def mention(uid):
+        n = (player_streaks or {}).get(uid, 0)
+        return f'<@{uid}> \U0001F525{n}' if n >= PLAYER_STREAK_MIN else f'<@{uid}>'
+
     medals = ['👑', '🥈', '🥉']
     lines = ''
 
@@ -889,10 +895,10 @@ def _format_game_players(game_scores, metric, total):
             score_tuple = (weighted, unweighted)
             if score_tuple != prev_val:
                 rank = i + 1
-            tied = [f'<@{sorted_players[i][0]}>']
+            tied = [mention(sorted_players[i][0])]
             j = i + 1
             while j < len(sorted_players) and (sorted_players[j][1][0], sorted_players[j][1][1]) == score_tuple:
-                tied.append(f'<@{sorted_players[j][0]}>')
+                tied.append(mention(sorted_players[j][0]))
                 j += 1
             medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
             if weighted == 0:
@@ -923,10 +929,10 @@ def _format_game_players(game_scores, metric, total):
         if current_score != prev_score:
             rank = i + 1
 
-        tied_players = [f'<@{players[i][0]}>']
+        tied_players = [mention(players[i][0])]
         j = i + 1
         while j < len(players) and players[j][1] == current_score:
-            tied_players.append(f'<@{players[j][0]}>')
+            tied_players.append(mention(players[j][0]))
             j += 1
 
         medal = f"{medals[rank - 1]} " if rank <= len(medals) else f""
@@ -1012,7 +1018,7 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
         points_section = format_points_summary(points)
         if points_section:
             message += points_section
-        games.sort(key=lambda g: (-len(results.get(g.key, {})), g.title.lower()))
+        games.sort(key=lambda g: game_sort_key(g, results, None))
         for game in games:
             if game.key not in results or not results[game.key] or len(results[game.key]) < minimum_players:
                 continue
@@ -1026,8 +1032,44 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
 
 MEDAL_COLOR = 15844367  # dark gold
 
-def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1):
+# Streak display thresholds. Personal fire markers appear at 3+ days (SPEC.md
+# settled decision); server/game streak lines and Play-list suffixes at 2+,
+# since a "1-day streak" just means "played" and would tag every section.
+STREAK_MIN = 2
+PLAYER_STREAK_MIN = 3
+
+
+def game_sort_key(game, results, streaks):
+    """The app-wide game ordering, shared by the scoreboard sections and the
+    Play list: today's players desc -> active streak desc -> all-time distinct
+    players desc -> title. results supplies today's live counts; streaks is a
+    gather_streaks() bundle or None (which degrades to count -> title).
+    """
+    bundle = streaks or {}
+    return (-len(results.get(game.key) or {}),
+            -bundle.get('games', {}).get(game.key, 0),
+            -bundle.get('players_total', {}).get(game.key, 0),
+            game.title.lower())
+
+
+def _streak_header_lines(streaks, games_by_key):
+    """Header callouts: one line per game streak that ended on the displayed day."""
+    if not streaks:
+        return []
+    lines = []
+    for key, ended in sorted(streaks['broken'].items(), key=lambda kv: (-kv[1], kv[0])):
+        game = games_by_key.get(key)
+        if game and ended >= STREAK_MIN:
+            lines.append(f"\U0001F494 {game.title} streak ended at {ended}")
+    return lines
+
+
+def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None):
     """Format the scoreboard as Discord Components V2 (list of top-level components).
+
+    streaks is an optional gather_streaks() bundle; it adds "streak ended"
+    header callouts, per-game fire suffixes on title lines, and personal fire
+    markers. None renders exactly the streak-less board.
 
     Returns a list[dict] suitable for the 'components' field in a Discord message.
     """
@@ -1036,10 +1078,15 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
 
     # --- Header container ---
     header_text = f"### 🧮 {title} - {reference_date.strftime('%B %d, %Y')}"
+    header_children = [{"type": 10, "content": header_text}]
+    streak_lines = _streak_header_lines(streaks, {g.key: g for g in games})
+    if streak_lines:
+        header_children.append({"type": 10, "content": "\n".join(streak_lines)})
 
     if not results:
-        return [{"type": 17, "accent_color": HEADER_COLOR, "components": [
-            {"type": 10, "content": header_text},
+        # Break callouts still render: a no-results day is exactly when
+        # every alive streak snaps.
+        return [{"type": 17, "accent_color": HEADER_COLOR, "components": header_children + [
             {"type": 10, "content": "No results found!"},
         ]}]
 
@@ -1047,19 +1094,18 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     points = compute_points(results, games, minimum_players)
     points_section = format_points_summary(points)
     if points_section:
-        components.append({"type": 17, "accent_color": HEADER_COLOR, "components": [
-            {"type": 10, "content": header_text},
-            {"type": 10, "content": points_section.rstrip('\n')},
-        ]})
+        header_children.append({"type": 10, "content": points_section.rstrip('\n')})
+        components.append({"type": 17, "accent_color": HEADER_COLOR, "components": header_children})
     else:
-        components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": [
-            {"type": 10, "content": header_text},
-        ]})
+        components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": header_children})
 
-    # Sort games by player count descending, then title alphabetically
-    games.sort(key=lambda g: (-len(results.get(g.key, {})), g.title.lower()))
+    # Canonical app-wide ordering, same as the Play list
+    games.sort(key=lambda g: game_sort_key(g, results, streaks))
 
     qualified = [g for g in games if g.key in results and results[g.key] and len(results[g.key]) >= minimum_players]
+
+    game_streaks = streaks['games'] if streaks else {}
+    player_streaks = streaks['players'] if streaks else {}
 
     # --- Scores container ---
     scores_children = []
@@ -1067,8 +1113,13 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
         if g_idx > 0:
             scores_children.append({"type": 14, "spacing": 1})  # Separator
         puzzle_label = _puzzle_label(game.puzzle, reference_date)
-        score_text = f"**[{game.title}]({game.url}) {game.emoji} {puzzle_label}**\n"
-        score_text += _format_game_players(results[game.key], game.metric, game.total).rstrip('\n')
+        score_text = f"**[{game.title}]({game.url}) {game.emoji} {puzzle_label}**"
+        streak = game_streaks.get(game.key, 0)
+        if streak >= STREAK_MIN:
+            score_text += f" \U0001F525{streak}"
+        score_text += "\n" + _format_game_players(
+            results[game.key], game.metric, game.total,
+            player_streaks.get(game.key)).rstrip('\n')
         scores_children.append({"type": 10, "content": score_text})
 
     if scores_children:

@@ -131,13 +131,16 @@ mode: recompute all aggregates from `DAY#` items whenever logic changes.
 - **`store.py`** (new module, peer of `scoreboard.py`) owns all DynamoDB I/O. Each
   deploy workflow adds it to the zip line and path triggers. New env var `TABLE_NAME`.
   IAM: Query/GetItem/PutItem/UpdateItem/Scan on the table ARN for each lambda role.
-- **Play list ordering** (`build_play_response`): active server streak desc →
-  `players_30d` desc → today's live count desc → title. Streak suffix on the label:
+- **Game ordering** (`game_sort_key`, one shared helper): today's live count desc →
+  active server streak desc → all-time distinct players desc → title. Used
+  everywhere games are listed — Play buttons and scoreboard sections — so the app
+  presents one consistent order. Play labels get a streak suffix:
   `🔗 Connections (3) 🔥14`.
 - **Scoreboard + Scores button** (`format_scoreboard_components`, shared path): grows
-  an optional streaks argument — "🔥 N-day streak" line per game section, personal
+  an optional streaks argument — "🔥N" suffix on each game's title line, personal
   "🔥N" marker next to players on **≥3-day** streaks, "💔 <Game> streak ended at N"
-  callout on the day it breaks, overall server-streak line in the header.
+  callout on the day it breaks. No overall server-streak display (the AGG#SERVER
+  item is still maintained for stats/rollups).
 - **Sticky**: content line may gain flair ("🔥 3 streaks alive"). Sticky-identity
   logic (Play-button matching) is untouched.
 
@@ -193,11 +196,11 @@ Each phase ships independently; Phase 1 has zero user-facing risk.
 
 ## Settled decisions
 
-- **Player-count metric**: store all-time distinct players (string set, for stats);
-  **sort by rolling 30-day distinct** (`players_30d`, refreshed daily at finalize) so
-  the ordering keeps discriminating as history grows.
+- **Player-count metric**: store all-time distinct players (string set) and rolling
+  30-day distinct (`players_30d`, refreshed daily at finalize — kept for rollups);
+  **Play sorts by the all-time count** (after today's count and streak).
 - **Personal streak display threshold**: show 🔥 only at ≥3 days.
-- **Play-list sort priority**: streak first, then players_30d, then today's live
-  count, then title.
+- **Game ordering (app-wide)**: today's live count first, then streak, then all-time
+  distinct players, then title — identical on the Play list and scoreboard sections.
 - **Per-server disabled games**: `CONFIG.disabled_games` overlay on top of the global
   `GameSpec.disabled` flag, managed via `/games`, historical data retained.

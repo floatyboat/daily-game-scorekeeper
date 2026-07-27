@@ -6,12 +6,12 @@ from collections import defaultdict
 
 from game_parser import (
     compute_puzzle_numbers, build_games,
-    match_message, make_timestamp_checker,
+    match_message, make_timestamp_checker, STREAK_MIN,
 )
 from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
     make_session, fetch_messages, reference_date, is_scoreboard_message,
-    build_avatar_pool,
+    build_avatar_pool, safe_guild_id, gather_streaks,
     PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
 )
 
@@ -138,17 +138,23 @@ def _sticky_is_current(sticky, content, want_url):
 STICKY_HEADING = "\U0001F47E **Now Playing**"
 
 
-def build_sticky_content(results):
+def build_sticky_content(results, alive_streaks=0):
     player_count = count_unique_players(results)
     game_count = sum(1 for scores in results.values() if scores)
+    flair = ''
+    if alive_streaks:
+        s = '' if alive_streaks == 1 else 's'
+        flair = f' · \U0001F525 {alive_streaks} streak{s} alive'
     if player_count == 0:
-        return f"{STICKY_HEADING}\nNo scores yet today"
+        # Flair stays on the empty state on purpose: "no scores yet, but N
+        # streaks are on the line" is the strongest nudge of the day.
+        return f"{STICKY_HEADING}\nNo scores yet today{flair}"
     p = 'player' if player_count == 1 else 'players'
     g = 'game' if game_count == 1 else 'games'
-    return f"{STICKY_HEADING}\n{player_count} {p} · {game_count} {g} today"
+    return f"{STICKY_HEADING}\n{player_count} {p} · {game_count} {g} today{flair}"
 
 
-def update_sticky(channel_id, channel_messages, results):
+def update_sticky(channel_id, channel_messages, results, alive_streaks=0):
     """Maintain exactly one sticky at the bottom of channel_id.
 
     No-op only when a single sticky is already the most recent message AND its
@@ -165,7 +171,7 @@ def update_sticky(channel_id, channel_messages, results):
     duplicates back to one.
     """
     stickies = find_stickies(channel_messages)
-    content = build_sticky_content(results)
+    content = build_sticky_content(results, alive_streaks)
 
     yesterday_url = None
     scoreboard_id = find_latest_scoreboard_id(channel_messages)
@@ -235,7 +241,13 @@ def lambda_handler(event, context):
             results[game_key][user_id] = score
             puzzle_numbers.update(metadata)
 
-    action = update_sticky(channel_id, messages, results)
+    # Live streak flair: count games whose server streak is alive right now
+    # (kept alive today or still extendable). Fail-open -- no store, no flair.
+    streaks = gather_streaks(safe_guild_id(_session, channel_id), today, results,
+                             [g.key for g in games], include_players=False)
+    alive = sum(1 for n in (streaks or {}).get('games', {}).values() if n >= STREAK_MIN)
+
+    action = update_sticky(channel_id, messages, results, alive)
 
     return {'statusCode': 200, 'body': json.dumps(f'Sticky: {action} (embeds suppressed: {suppressed})')}
 

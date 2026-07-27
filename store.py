@@ -25,6 +25,7 @@ from datetime import datetime, timedelta
 
 import boto3
 from boto3.dynamodb.conditions import Key
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 TABLE_NAME = os.getenv('TABLE_NAME') or 'daily-game-tracker'
@@ -33,15 +34,28 @@ AWS_REGION = os.getenv('AWS_REGION') or 'us-east-1'
 DAY_FMT = '%Y-%m-%d'
 CONFIG_SK = 'CONFIG'
 SERVER_AGG_SK = 'AGG#SERVER'
+GAME_AGG_PREFIX = 'AGG#GAME#'
 
+_resource = None
 _table = None
 
 
+def _dynamodb():
+    # Lazy so importing this module never requires AWS credentials. Tight
+    # timeouts: interactive callers live inside Discord's 3-second deadline,
+    # and the daily lambda must never hang on a store outage.
+    global _resource
+    if _resource is None:
+        _resource = boto3.resource('dynamodb', region_name=AWS_REGION, config=Config(
+            connect_timeout=2, read_timeout=3,
+            retries={'max_attempts': 2, 'mode': 'standard'}))
+    return _resource
+
+
 def table():
-    # Lazy so importing this module never requires AWS credentials.
     global _table
     if _table is None:
-        _table = boto3.resource('dynamodb', region_name=AWS_REGION).Table(TABLE_NAME)
+        _table = _dynamodb().Table(TABLE_NAME)
     return _table
 
 
@@ -56,7 +70,11 @@ def player_pk(guild_id, user_id):
 
 
 def game_agg_sk(game_key):
-    return f'AGG#GAME#{game_key}'
+    return f'{GAME_AGG_PREFIX}{game_key}'
+
+
+def game_key_from_sk(sk):
+    return sk[len(GAME_AGG_PREFIX):]
 
 
 def day_sk(day):
@@ -105,6 +123,43 @@ def advance_streak(agg, day, prev_day, played):
         agg['broken_streak'] = agg['current_streak']
         agg['broken_day'] = day
         agg['current_streak'] = 0
+
+
+def display_streak(item, day, played):
+    """Streak to display for reference day `day`, given whether the subject
+    played on that day (per the parse feeding the view).
+
+    Returns the same number on both sides of the daily finalize:
+      - finalized view (`day` already folded in): last_played_day == day and
+        the stored current_streak already counts `day`.
+      - live view (folded through an earlier day): a play on `day` extends a
+        streak alive through the day before by one, or starts a new one at 1.
+      - not played: the streak shows only while it can still be extended
+        (alive through the day before `day`); anything staler renders 0 even
+        before the break is finalized (SPEC.md "active" rule).
+    """
+    if not item:
+        return 1 if played else 0
+    last = item.get('last_played_day')
+    current = int(item.get('current_streak') or 0)
+    if played:
+        if last == day:
+            return current
+        if last == prev_day_str(day):
+            return current + 1
+        return 1
+    return current if last == prev_day_str(day) else 0
+
+
+def broken_streak_on(item, day):
+    """Length of a streak recorded as ending on `day`, else 0.
+
+    Drives the scoreboard's "streak ended" callout, which appears only on the
+    day the break was finalized and disappears on its own the next day.
+    """
+    if item and item.get('broken_day') == day:
+        return int(item.get('broken_streak') or 0)
+    return 0
 
 
 def close_out_streak(agg, through_day):
@@ -171,6 +226,25 @@ def query_aggs(pk):
     """All AGG# items in one partition, as {SK: item}."""
     items = _query_all(KeyConditionExpression=Key('PK').eq(pk) & Key('SK').begins_with('AGG#'))
     return {it['SK']: it for it in items}
+
+
+def batch_get(keys):
+    """Items for explicit {'PK','SK'} key dicts (caller must dedupe).
+
+    Chunked to BatchGetItem's 100-key limit. Unprocessed keys are retried a
+    few times, then dropped: display callers treat a missing item as a blank
+    aggregate, so a throttled read degrades the view instead of erroring.
+    """
+    items = []
+    for i in range(0, len(keys), 100):
+        request = {TABLE_NAME: {'Keys': keys[i:i + 100]}}
+        for _ in range(4):
+            resp = _dynamodb().batch_get_item(RequestItems=request)
+            items += resp.get('Responses', {}).get(TABLE_NAME, [])
+            request = resp.get('UnprocessedKeys') or {}
+            if not request.get(TABLE_NAME, {}).get('Keys'):
+                break
+    return items
 
 
 def fetch_days(guild_id, start_day, end_day):

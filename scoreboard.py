@@ -3,6 +3,7 @@ import requests
 from datetime import timedelta
 from collections import defaultdict
 
+import store
 from game_parser import (
     compute_puzzle_numbers, build_games,
     make_timestamp_checker, match_message, _avatar_ahash,
@@ -49,6 +50,72 @@ def get_channel_guild_id(session, channel_id):
         r.raise_for_status()
         _guild_id_cache[channel_id] = r.json().get('guild_id')
     return _guild_id_cache[channel_id]
+
+
+def safe_guild_id(session, channel_id):
+    """get_channel_guild_id that returns None instead of raising.
+
+    Streak decoration is optional on every surface, so guild resolution must
+    never break a caller; None simply renders the streak-less view.
+    """
+    try:
+        return get_channel_guild_id(session, channel_id)
+    except Exception:
+        return None
+
+
+def gather_streaks(guild_id, ref_date, results, game_keys, include_players=True):
+    """Display-ready streak numbers for one board render, or None when the
+    store can't serve them (no guild, IAM grant not applied yet, outage) --
+    callers render streak-less, so store problems never break a view.
+
+    Works identically on both sides of the daily finalize because
+    store.display_streak() folds the "played on ref_date" flag in itself:
+    a live view (aggregates through yesterday) and a just-finalized view
+    (ref_date already folded) produce the same numbers, so every surface
+    (daily post, Scores, Play, sticky) shares this one path.
+
+    Bundle (plain ints/strings, JSON-safe):
+      games         {game_key: streak to show}
+      broken        {game_key: streak that ended on ref_date}
+      players_total {game_key: all-time distinct-player count}
+      players       {game_key: {user_id: streak to show}} (players with
+                    results on ref_date only; empty when include_players=False)
+    """
+    if not guild_id:
+        return None
+    try:
+        day = store.day_str(ref_date)
+        aggs = store.query_aggs(store.guild_pk(guild_id))
+        game_items = {store.game_key_from_sk(sk): item for sk, item in aggs.items()
+                      if sk.startswith(store.GAME_AGG_PREFIX)}
+
+        bundle = {'games': {}, 'broken': {}, 'players_total': {}, 'players': {}}
+        for key in game_keys:
+            item = game_items.get(key)
+            bundle['games'][key] = store.display_streak(item, day, bool(results.get(key)))
+            ended = store.broken_streak_on(item, day)
+            if ended:
+                bundle['broken'][key] = ended
+            bundle['players_total'][key] = len((item or {}).get('players') or ())
+
+        if include_players:
+            pairs = sorted({(uid, key) for key in game_keys
+                            for uid in (results.get(key) or {})})
+            fetched = {}
+            for item in store.batch_get(
+                    [{'PK': store.player_pk(guild_id, uid), 'SK': store.game_agg_sk(key)}
+                     for uid, key in pairs]):
+                uid = item['PK'].split('#PLAYER#', 1)[1]
+                fetched[(uid, store.game_key_from_sk(item['SK']))] = item
+            for uid, key in pairs:
+                bundle['players'].setdefault(key, {})[uid] = store.display_streak(
+                    fetched.get((uid, key)), day, True)
+        return bundle
+    except Exception as e:
+        print(f'store: streak read failed, rendering without streaks -- '
+              f'{type(e).__name__}: {e}')
+        return None
 
 
 def fetch_messages(session, channel_id, limit=100):

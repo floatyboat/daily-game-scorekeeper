@@ -7,7 +7,7 @@ from game_parser import format_scoreboard_components, make_timestamp_checker, bu
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date,
     parse_results, build_avatar_pool, is_scoreboard_message,
-    get_channel_guild_id,
+    get_channel_guild_id, safe_guild_id, gather_streaks,
 )
 import store
 
@@ -68,12 +68,14 @@ def env_config_defaults():
 
 
 def persist_results(results, puzzle_numbers, ref_date):
-    """Phase 1 groundwork (SPEC.md): freeze the day and fold streak aggregates.
+    """SPEC.md write path: freeze the day and fold streak aggregates.
 
-    Runs after the scoreboard posts and never raises -- persistence problems
-    must not break the user-facing post. Test invocations parse the same real
-    input channel and every store write is idempotent, so they persist too,
-    which keeps this path covered by the standard post-change test event.
+    Runs BEFORE the scoreboard renders (the board displays the exact streaks
+    this fold produces, including break callouts) and never raises --
+    persistence problems must not break the user-facing post, which simply
+    goes out streak-less. Test invocations parse the same real input channel
+    and every store write is idempotent, so they persist too, which keeps
+    this path covered by the standard post-change test event.
     """
     try:
         guild_id = get_channel_guild_id(_session, INPUT_CHANNEL_ID)
@@ -124,7 +126,15 @@ def lambda_handler(event, context):
     )
     print(f'[t+{time.time()-t0:.2f}s] parsed {sum(len(v) for v in results.values())} game results')
 
-    components = format_scoreboard_components(results, yesterday, puzzle_numbers, minimum_players=MINIMUM_PLAYERS)
+    store_status = persist_results(results, puzzle_numbers, yesterday)
+    print(f'[t+{time.time()-t0:.2f}s] {store_status}')
+
+    streaks = gather_streaks(safe_guild_id(_session, INPUT_CHANNEL_ID), yesterday,
+                             results, [g.key for g in build_games(puzzle_numbers)])
+
+    components = format_scoreboard_components(results, yesterday, puzzle_numbers,
+                                              minimum_players=MINIMUM_PLAYERS,
+                                              streaks=streaks)
 
     channel = TEST_CHANNEL_ID if 'test' in event else OUTPUT_CHANNEL_ID
     response = send_message(channel, components=components)
@@ -135,9 +145,6 @@ def lambda_handler(event, context):
     else:
         msg = 'Scoreboard posted'
         pin_message(channel, response['id'])
-
-    store_status = persist_results(results, puzzle_numbers, yesterday)
-    print(f'[t+{time.time()-t0:.2f}s] {store_status}')
 
     return {
         'statusCode': 200,
