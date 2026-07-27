@@ -139,10 +139,11 @@ mode: recompute all aggregates from `DAY#` items whenever logic changes.
 - **Scoreboard + Scores button** (`format_scoreboard_components`, shared path): grows
   an optional streaks argument — "🔥N" suffix on each game's title line, personal
   "🔥N" marker next to players on **≥3-day** streaks, "💔 <Game> streak ended at N"
-  callout on the day it breaks. No overall server-streak display (the AGG#SERVER
-  item is still maintained for stats/rollups).
-- **Sticky**: content line may gain flair ("🔥 3 streaks alive"). Sticky-identity
-  logic (Play-button matching) is untouched.
+  callout on the day it breaks. No server-streak line in the header — the server
+  streak's display surface is the sticky.
+- **Sticky**: content line ends with the server-wide streak (≥1 result in any game,
+  live-adjusted) as bare `🔥N`. Sticky-identity logic (Play-button matching) is
+  untouched.
 
 ## Multi-server onboarding
 

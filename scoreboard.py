@@ -76,6 +76,8 @@ def gather_streaks(guild_id, ref_date, results, game_keys, include_players=True)
     (daily post, Scores, Play, sticky) shares this one path.
 
     Bundle (plain ints/strings, JSON-safe):
+      server        server-wide streak to show (>=1 result in ANY game that
+                    day; displayed on the sticky, not the scoreboard)
       games         {game_key: streak to show}
       broken        {game_key: streak that ended on ref_date}
       players_total {game_key: all-time distinct-player count}
@@ -90,7 +92,10 @@ def gather_streaks(guild_id, ref_date, results, game_keys, include_players=True)
         game_items = {store.game_key_from_sk(sk): item for sk, item in aggs.items()
                       if sk.startswith(store.GAME_AGG_PREFIX)}
 
-        bundle = {'games': {}, 'broken': {}, 'players_total': {}, 'players': {}}
+        bundle = {'games': {}, 'broken': {}, 'players_total': {}, 'players': {},
+                  'server': store.display_streak(
+                      aggs.get(store.SERVER_AGG_SK), day,
+                      any(results.get(k) for k in game_keys))}
         for key in game_keys:
             item = game_items.get(key)
             bundle['games'][key] = store.display_streak(item, day, bool(results.get(key)))
