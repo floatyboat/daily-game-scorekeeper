@@ -117,13 +117,6 @@ def find_latest_scoreboard_id(messages):
     return None
 
 
-def count_unique_players(results):
-    players = set()
-    for game_scores in results.values():
-        players.update(game_scores.keys())
-    return len(players)
-
-
 def _sticky_is_current(sticky, content, want_url):
     if sticky.get('content', '') != content:
         return False
@@ -139,17 +132,18 @@ STICKY_HEADING = "\U0001F47E **Now Playing**"
 
 
 def build_sticky_content(results, server_streak=0):
-    player_count = count_unique_players(results)
-    # Total plays logged today (every player x game result), not distinct games.
-    game_count = sum(len(scores) for scores in results.values())
+    # Distinct games that have at least one score, then every play logged
+    # against them (each player x game result counts once).
+    game_count = sum(1 for scores in results.values() if scores)
+    play_count = sum(len(scores) for scores in results.values())
     flair = f' · \U0001F525{server_streak}' if server_streak >= STREAK_MIN else ''
-    if player_count == 0:
+    if play_count == 0:
         # Flair stays on the empty state on purpose: "no scores yet, the
         # server streak is on the line" is the strongest nudge of the day.
         return f"{STICKY_HEADING}\nNo scores yet today{flair}"
-    p = 'player' if player_count == 1 else 'players'
     g = 'game' if game_count == 1 else 'games'
-    return f"{STICKY_HEADING}\n{player_count} {p} · {game_count} {g} today{flair}"
+    p = 'play' if play_count == 1 else 'plays'
+    return f"{STICKY_HEADING}\n{game_count} {g} · {play_count} {p} today{flair}"
 
 
 def update_sticky(channel_id, channel_messages, results, server_streak=0):
