@@ -40,6 +40,12 @@ Wordle supports both pasted share text and image recognition from the official W
 - `HUNDREDS_OF_MESSAGES` - if your input channel gets more than 100 messages a day, set this variable for how many hundreds of messages it gets per day. (default: 1)
 - `MINIMUM_PLAYERS` - filter out games below a minimum player count. (default: 1)
 
+### Streak & Stats Store (Optional)
+The bot can persist daily results to DynamoDB to track server/player streaks and per-game player stats (see `SPEC.md` for the full design). Without the table the bot still works — persistence failures are logged and skipped.
+
+1. Run `python3 infra_setup.py` with AWS credentials to create the `daily-game-tracker` table (provisioned 5/5, inside the always-free tier), grant each Lambda's role access, and set `TABLE_NAME` on each function. Steps it lacks permission for are printed as commands to run with an admin identity.
+2. Seed history so streaks start at their true values: `dotenv run -- python3 backfill.py --all` (or `--days N`). Re-running is safe; `--rebuild-only` recomputes aggregates from the archived days without touching Discord.
+
 ### Wordle Image Recognition (Optional)
 The bot can parse Wordle result images posted by the official [Wordle Discord bot](https://support.nytimes.com/s/article/wordle-discord-bot). This requires [Pillow](https://pypi.org/project/Pillow/) to be available in the runtime.
 

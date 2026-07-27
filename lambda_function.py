@@ -3,11 +3,13 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from game_parser import format_scoreboard_components, make_timestamp_checker
+from game_parser import format_scoreboard_components, make_timestamp_checker, build_games, compute_points
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date,
     parse_results, build_avatar_pool, is_scoreboard_message,
+    get_channel_guild_id,
 )
+import store
 
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
@@ -44,6 +46,52 @@ def send_message(channel_id, message=None, components=None):
 def pin_message(channel_id, message_id):
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages/pins/{message_id}'
     _session.put(url)
+
+
+def env_config_defaults():
+    """Seed values for the guild CONFIG item, mirrored from this env.
+
+    Shared with backfill.py so the two config writers can't drift. Phase 3
+    makes the table authoritative for these; env only ever seeds.
+    """
+    return {
+        'input_channel_id': INPUT_CHANNEL_ID,
+        'output_channel_id': OUTPUT_CHANNEL_ID,
+        'timezone': TIMEZONE.key,
+        'hours_after_midnight': HOURS_AFTER_MIDNIGHT,
+        'time_window_hours': TIME_WINDOW_HOURS,
+        'minimum_players': MINIMUM_PLAYERS,
+        'hundreds_of_messages': HUNDREDS_OF_MESSAGES,
+        'wordle_bot_id': WORDLE_BOT_ID,
+        'enabled': True,
+    }
+
+
+def persist_results(results, puzzle_numbers, ref_date):
+    """Phase 1 groundwork (SPEC.md): freeze the day and fold streak aggregates.
+
+    Runs after the scoreboard posts and never raises -- persistence problems
+    must not break the user-facing post. Test invocations parse the same real
+    input channel and every store write is idempotent, so they persist too,
+    which keeps this path covered by the standard post-change test event.
+    """
+    try:
+        guild_id = get_channel_guild_id(_session, INPUT_CHANNEL_ID)
+        if not guild_id:
+            return 'store: skipped (input channel has no guild)'
+        day = store.day_str(ref_date)
+        games = build_games(puzzle_numbers)
+        # compute_points scores each game independently, so per-game calls sum
+        # to exactly what the posted points summary shows.
+        points_by_game = {g.key: compute_points(results, [g], MINIMUM_PLAYERS) for g in games}
+        store.ensure_config(guild_id, env_config_defaults())
+        archived = store.write_day(guild_id, day, results, points_by_game, puzzle_numbers)
+        stats = store.finalize_day(guild_id, day, results, points_by_game,
+                                   [g.key for g in games])
+        return (f'store: day={day} archived={archived} '
+                f'aggs updated={stats["updated"]} skipped={stats["skipped"]}')
+    except Exception as e:
+        return f'store: FAILED {type(e).__name__}: {e}'
 
 
 def lambda_handler(event, context):
@@ -87,6 +135,9 @@ def lambda_handler(event, context):
     else:
         msg = 'Scoreboard posted'
         pin_message(channel, response['id'])
+
+    store_status = persist_results(results, puzzle_numbers, yesterday)
+    print(f'[t+{time.time()-t0:.2f}s] {store_status}')
 
     return {
         'statusCode': 200,

@@ -35,6 +35,22 @@ def make_session(token, pool_connections=4, pool_maxsize=32):
     return s
 
 
+_guild_id_cache = {}
+
+
+def get_channel_guild_id(session, channel_id):
+    """guild_id owning a channel, or None for a DM.
+
+    REST channel-message payloads omit guild_id (it's gateway-only), so resolve
+    it with one GET /channels/{id} and cache for the process lifetime.
+    """
+    if channel_id not in _guild_id_cache:
+        r = session.get(f'{DISCORD_API_BASE}/channels/{channel_id}')
+        r.raise_for_status()
+        _guild_id_cache[channel_id] = r.json().get('guild_id')
+    return _guild_id_cache[channel_id]
+
+
 def fetch_messages(session, channel_id, limit=100):
     per_page = min(limit, 100)
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages?limit={per_page}'
