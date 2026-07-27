@@ -245,6 +245,120 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None):
     }
 
 
+# --- Deferred replies for the live views ---------------------------------------
+# /play and the sticky's two buttons all read a page of channel history and the
+# streak store before they can answer. Warm that is ~300ms, with room to spare
+# inside Discord's 3-second ACK deadline -- but these surfaces are used a couple
+# of dozen times a day, so the container is rarely still warm and roughly half of
+# all clicks pay a cold start. Cold, the same work has measured 3.7s end to end,
+# and Discord renders anything past 3s as "This interaction failed".
+#
+# So ACK first and do the work in a second, asynchronous invocation of this same
+# function, which answers by editing the placeholder. That takes the deadline off
+# the work entirely: the ACK is a bare type-5 with no I/O behind it, and the
+# follow-up has the interaction token's full 15 minutes.
+
+ACTION_PLAY, ACTION_SCORES = 'play', 'scores'
+
+# Envelope key for the self-invoke payload. Only ever read off a direct
+# invocation -- anything arriving through the public Function URL carries a
+# requestContext, so this cannot be driven from outside.
+DEFERRED_KEY = 'deferred_work'
+
+_lambda_client = None
+
+
+def _lambda():
+    """Lazy Lambda client for the self-invoke.
+
+    Timeouts are tight on purpose: this call sits inside the 3-second ACK
+    budget, so it has to either succeed quickly or fail early enough to leave
+    time for the inline fallback.
+    """
+    global _lambda_client
+    if _lambda_client is None:
+        import boto3
+        from botocore.config import Config
+        _lambda_client = boto3.client('lambda', region_name=store.AWS_REGION, config=Config(
+            connect_timeout=1, read_timeout=1, retries={'max_attempts': 1, 'mode': 'standard'}))
+    return _lambda_client
+
+
+def _invoke_self(work):
+    """Queue phase two. True when Lambda accepted it (202)."""
+    function_name = os.getenv('AWS_LAMBDA_FUNCTION_NAME')
+    if not function_name:
+        return False    # not on Lambda (local run): answer inline
+    try:
+        resp = _lambda().invoke(FunctionName=function_name, InvocationType='Event',
+                                Payload=json.dumps({DEFERRED_KEY: work}).encode())
+        return resp.get('StatusCode') == 202
+    except Exception as e:
+        print(f'defer: self-invoke failed, answering inline -- {type(e).__name__}: {e}')
+        return False
+
+
+def build_live_response(action, channel_id, user_id=None, guild_id=None, cfg=None):
+    """The reply for one live view, as a complete interaction response.
+
+    Single entry point for both phases: phase two PATCHes its ['data'] over the
+    placeholder, and the inline fallback returns it whole.
+    """
+    cfg = cfg or guild_cfg(guild_id)
+    if action == ACTION_SCORES:
+        return build_scoreboard_response(channel_id, guild_id, cfg)
+    return build_play_response(channel_id, user_id, guild_id, cfg)
+
+
+def defer(action, body):
+    """ACK now; hand the work to a second invocation.
+
+    Falls back to answering inline whenever the self-invoke can't be made -- no
+    lambda:InvokeFunction on the role, a throttle, or a local run. That is
+    precisely the old behaviour, so the surface keeps working; it is just back to
+    racing the 3-second clock, which is where it started.
+    """
+    work = {
+        'action': action,
+        'channel_id': body['channel_id'],
+        'user_id': interaction_user_id(body),
+        # A missing guild_id costs a Discord round trip to resolve, so leave that
+        # to phase two, which has no deadline worth protecting.
+        'guild_id': body.get('guild_id'),
+        'application_id': body.get('application_id'),
+        'token': body.get('token'),
+    }
+    if work['application_id'] and work['token'] and _invoke_self(work):
+        # DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE. EPHEMERAL is the only flag
+        # Discord accepts on a defer, so the Scores board sets IS_COMPONENTS_V2
+        # on the follow-up edit -- which is where Discord wants it anyway.
+        return {'type': 5, 'data': {'flags': 64}}
+    guild_id = interaction_guild_id(body)
+    return build_live_response(action, body['channel_id'], interaction_user_id(body),
+                               guild_id, guild_cfg(guild_id))
+
+
+def run_deferred(work):
+    """Phase two: build the real reply and edit it over the placeholder."""
+    channel_id = work['channel_id']
+    guild_id = work.get('guild_id') or safe_guild_id(_session, channel_id)
+    try:
+        data = build_live_response(work['action'], channel_id,
+                                   work.get('user_id'), guild_id)['data']
+    except Exception as e:
+        traceback.print_exc()
+        # The placeholder would otherwise sit on "thinking" until it expires, so
+        # always leave something readable behind.
+        data = {'content': f'Something went wrong ({type(e).__name__}) — try again shortly.'}
+    r = _session.patch(
+        f"{DISCORD_API_BASE}/webhooks/{work['application_id']}/{work['token']}"
+        f"/messages/@original", json=data)
+    if not r.ok:
+        print(f'defer: follow-up edit failed {r.status_code} {r.text[:200]}')
+    return {'statusCode': 200,
+            'body': json.dumps({'deferred': work['action'], 'edit': r.status_code})}
+
+
 # --- /setup and /games (admin configuration) -----------------------------------
 
 def _ephemeral(content, components=None):
@@ -567,6 +681,12 @@ def lambda_handler(event, context):
 
     if is_direct:
         body = event
+        # Phase two of a deferred reply, queued by the ACK invocation. Read only
+        # here, on the direct (IAM-authenticated) path -- a Function URL request
+        # always carries a requestContext, so this is unreachable from outside.
+        work = event.get(DEFERRED_KEY)
+        if work:
+            return run_deferred(work)
     else:
         raw_body = get_body(event)
         try:
@@ -583,9 +703,7 @@ def lambda_handler(event, context):
     if body.get('type') == 2:
         command_name = body.get('data', {}).get('name', '')
         if command_name == 'play':
-            guild_id = interaction_guild_id(body)
-            return _http(build_play_response(
-                body['channel_id'], interaction_user_id(body), guild_id, guild_cfg(guild_id)))
+            return _http(defer(ACTION_PLAY, body))
         if command_name == 'setup':
             return _http(admin_dispatch(handle_setup, body))
         if command_name == 'games':
@@ -595,13 +713,9 @@ def lambda_handler(event, context):
     if body.get('type') == 3:
         custom_id = body.get('data', {}).get('custom_id', '')
         if custom_id == PLAY_BUTTON_CUSTOM_ID:
-            guild_id = interaction_guild_id(body)
-            return _http(build_play_response(
-                body['channel_id'], interaction_user_id(body), guild_id, guild_cfg(guild_id)))
+            return _http(defer(ACTION_PLAY, body))
         if custom_id == SCORES_BUTTON_CUSTOM_ID:
-            guild_id = interaction_guild_id(body)
-            return _http(build_scoreboard_response(
-                body['channel_id'], guild_id, guild_cfg(guild_id)))
+            return _http(defer(ACTION_SCORES, body))
         if custom_id == GAMES_SELECT_ID or custom_id.startswith(CHANNEL_SELECT_PREFIX):
             return _http(admin_dispatch(handle_setup_component, body))
 

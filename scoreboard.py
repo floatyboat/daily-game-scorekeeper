@@ -44,8 +44,31 @@ MAX_BUTTONS_PER_ROW = 5
 MAX_SELECT_OPTIONS = 25      # options in one string select
 
 
+# (connect, read) seconds applied to every Discord call made through
+# make_session. requests has no default timeout, and Discord occasionally stalls
+# a connection rather than erroring on it, so an uncapped call waits for the
+# caller's own ceiling to fire instead: one sticky run has taken 27s against a
+# 30s Lambda timeout, and on an interaction the same stall spends a 3-second
+# budget that can't be recovered. Read is generous enough for a 100-message page
+# on a slow day and still well inside every caller's limit.
+DISCORD_TIMEOUT = (3.05, 10)
+
+
+class _TimeoutSession(requests.Session):
+    """Session that applies DISCORD_TIMEOUT to calls that don't set their own.
+
+    requests only supports a per-call timeout, and the alternative -- passing it
+    at every get/post/patch/delete across four modules -- is exactly the kind of
+    thing the next call site forgets, silently reverting to no cap at all.
+    """
+
+    def request(self, *args, **kwargs):
+        kwargs.setdefault('timeout', DISCORD_TIMEOUT)
+        return super().request(*args, **kwargs)
+
+
 def make_session(token, pool_connections=4, pool_maxsize=32):
-    s = requests.Session()
+    s = _TimeoutSession()
     s.headers.update({
         'Authorization': f'Bot {token}',
         'Content-Type': 'application/json',

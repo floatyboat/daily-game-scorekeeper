@@ -25,6 +25,11 @@ FUNCTIONS = ['daily-game-score', 'daily-game-sticky', 'daily-game-play']
 POLICY_NAME = 'daily-game-tracker-access'
 DAILY_RULE = 'time'
 
+# The interaction lambda ACKs Discord within 3 seconds and hands the slow half
+# of the work to a second, asynchronous invocation of itself, so its role needs
+# permission to invoke it (see interaction_lambda.defer).
+INTERACTION_FUNCTION = 'daily-game-play'
+
 # Per-server settings now live exclusively in the table (GUILDS partition);
 # these env vars configure nothing once the multi-server code is deployed.
 PER_SERVER_ENV = ['INPUT_CHANNEL_ID', 'OUTPUT_CHANNEL_ID', 'TIMEZONE',
@@ -61,20 +66,26 @@ def ensure_table(ddb):
     return ddb.describe_table(TableName=TABLE)['Table']['TableArn']
 
 
-def policy_document(table_arn):
-    return json.dumps({
-        'Version': '2012-10-17',
-        'Statement': [{
+def policy_document(table_arn, self_invoke_arn=None):
+    statements = [{
+        'Effect': 'Allow',
+        'Action': [
+            'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem',
+            'dynamodb:Query', 'dynamodb:Scan',
+            'dynamodb:BatchGetItem', 'dynamodb:BatchWriteItem',
+            'dynamodb:DescribeTable',
+        ],
+        'Resource': table_arn,
+    }]
+    if self_invoke_arn:
+        # Scoped to the one function: this is a function invoking itself, not a
+        # general grant to invoke anything in the account.
+        statements.append({
             'Effect': 'Allow',
-            'Action': [
-                'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem',
-                'dynamodb:Query', 'dynamodb:Scan',
-                'dynamodb:BatchGetItem', 'dynamodb:BatchWriteItem',
-                'dynamodb:DescribeTable',
-            ],
-            'Resource': table_arn,
-        }],
-    })
+            'Action': ['lambda:InvokeFunction'],
+            'Resource': self_invoke_arn,
+        })
+    return json.dumps({'Version': '2012-10-17', 'Statement': statements})
 
 
 def _update_function_config(lam, function_name, todo, describe, **kwargs):
@@ -110,16 +121,19 @@ def grant_function(lam, iam, function_name, table_arn, todo):
         return
 
     role_name = cfg['Role'].split('/')[-1]
+    self_invoke_arn = cfg['FunctionArn'] if function_name == INTERACTION_FUNCTION else None
+    document = policy_document(table_arn, self_invoke_arn)
     try:
         iam.put_role_policy(RoleName=role_name, PolicyName=POLICY_NAME,
-                            PolicyDocument=policy_document(table_arn))
-        print(f'  {function_name}: role {role_name} granted')
+                            PolicyDocument=document)
+        print(f'  {function_name}: role {role_name} granted'
+              + (' (+ self-invoke)' if self_invoke_arn else ''))
     except ClientError as e:
         if e.response['Error']['Code'] != 'AccessDenied':
             raise
         print(f'  {function_name}: no iam:PutRolePolicy from here -- queued for admin')
         todo.append(f"aws iam put-role-policy --role-name {role_name} "
-                    f"--policy-name {POLICY_NAME} --policy-document '{policy_document(table_arn)}'")
+                    f"--policy-name {POLICY_NAME} --policy-document '{document}'")
 
     env = cfg.get('Environment', {}).get('Variables', {})
     if env.get('TABLE_NAME') == TABLE:
