@@ -3,11 +3,20 @@
 One table, generic PK/SK string keys, no GSIs. Item catalog (see SPEC.md):
 
     PK                        SK                contents
-    GUILD#<gid>               CONFIG            per-server settings + last_finalized_day
+    GUILDS                    GUILD#<gid>       per-server config + run markers
     GUILD#<gid>               DAY#<YYYY-MM-DD>  the day's parsed results, JSON-frozen
     GUILD#<gid>               AGG#SERVER        overall server streak (any game played)
     GUILD#<gid>               AGG#GAME#<key>    per-game server streak + player sets
     GUILD#<gid>#PLAYER#<uid>  AGG#GAME#<key>    per-player-per-game streak + totals
+
+All configs share one partition (GUILDS) so the scheduled lambdas can load every
+guild with a single small Query each tick -- a Scan would read the whole table
+(every DAY/AGG item) once a minute, which the 5-RCU budget cannot absorb.
+Onboarding is automatic: /setup writes the item, the next tick picks it up.
+
+This module also owns the per-server config *schema* (CONFIG_FIELDS below): one
+declaration per setting, from which the defaults, the stored-value coercion, the
+/setup slash-command options, and the handler that writes them back all derive.
 
 DAY# items are plain overwrites (same parse -> same item) and are the source of
 truth: rebuild_aggregates() recomputes every aggregate from them from scratch.
@@ -21,6 +30,7 @@ the retry updates exactly the items the first attempt didn't reach.
 """
 import json
 import os
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import boto3
@@ -32,9 +42,120 @@ TABLE_NAME = os.getenv('TABLE_NAME') or 'daily-game-tracker'
 AWS_REGION = os.getenv('AWS_REGION') or 'us-east-1'
 
 DAY_FMT = '%Y-%m-%d'
-CONFIG_SK = 'CONFIG'
+GUILDS_PK = 'GUILDS'
 SERVER_AGG_SK = 'AGG#SERVER'
 GAME_AGG_PREFIX = 'AGG#GAME#'
+
+# --- Per-server configuration schema -------------------------------------------
+# The table is the ONLY source of per-server config -- env vars configure
+# nothing per-server.
+#
+# Discord option types, for the fields /setup exposes as slash-command options.
+OPT_SUB_COMMAND, OPT_STRING, OPT_INTEGER, OPT_BOOLEAN, OPT_USER, OPT_CHANNEL = 1, 3, 4, 5, 6, 7
+
+
+@dataclass(frozen=True)
+class ConfigField:
+    """One per-server setting, declared once and derived from everywhere.
+
+        name      config item attribute, and the key callers read off a cfg dict
+        default   value for a guild that never set it
+        coerce    stored/incoming value -> the type callers expect. DynamoDB
+                  hands numbers back as Decimal, and Discord hands option values
+                  back as whatever JSON had; this is the one place that is fixed.
+        group     the /setup subcommand exposing this field ('time'/'limits'),
+                  or None for settings with a surface of their own (the channel
+                  subcommands, the on/off toggles, /games, the run markers)
+        option    slash-command option name when it differs from `name`
+        opt_type  Discord option type
+        describe  option description shown in Discord's picker
+        minimum   option bounds Discord enforces before the interaction is sent
+        maximum
+
+    Same bargain as GameSpec in game_parser.py: adding a setting is one entry
+    here, not four coordinated edits across three files that silently no-op when
+    they drift. register_commands.py registers `group` fields straight off this
+    table and interaction_lambda.handle_setup reads them back the same way, so
+    an option name cannot exist on one side only.
+    """
+    name: str
+    default: object = None
+    coerce: object = None
+    group: str = None
+    option: str = None
+    opt_type: int = OPT_INTEGER
+    describe: str = ''
+    minimum: int = None
+    maximum: int = None
+
+    @property
+    def option_name(self):
+        return self.option or self.name
+
+
+def _overrides(value):
+    """game_overrides holds only explicit deviations from each GameSpec's coded
+    default, so a newly added game reaches every guild with its own default
+    rather than a frozen snapshot of an old /games submission."""
+    return {k: bool(v) for k, v in (value or {}).items()}
+
+
+CONFIG_FIELDS = [
+    # Channels: their own /setup subcommands (native picker + raw-ID fallback).
+    ConfigField('input_channel_id'),    # scores are read + sticky lives here
+    ConfigField('output_channel_id'),   # daily scoreboard posts here
+
+    # /setup time
+    ConfigField('timezone', default='UTC', group='time', opt_type=OPT_STRING,
+                describe='IANA name, e.g. America/New_York'),
+    ConfigField('hours_after_midnight', default=0, coerce=int, group='time',
+                option='day_start_hour', minimum=0, maximum=23,
+                describe='Hour the scoring day starts (default 0)'),
+    ConfigField('post_hour', coerce=int, group='time', minimum=0, maximum=23,
+                describe='Local hour the scoreboard posts (default: day start hour)'),
+    ConfigField('time_window_hours', default=24, coerce=int, group='time',
+                option='window_hours', minimum=1, maximum=24,
+                describe='Hours submissions stay open each day (default 24)'),
+
+    # /setup limits
+    ConfigField('minimum_players', default=1, coerce=int, group='limits', minimum=1,
+                describe='Hide games with fewer players than this (default 1)'),
+    ConfigField('hundreds_of_messages', default=1, coerce=int, group='limits',
+                option='message_volume', minimum=1, maximum=8,
+                describe='Hundreds of messages/day in the input channel (default 1)'),
+    ConfigField('wordle_bot_id', coerce=str, group='limits', option='wordle_bot',
+                opt_type=OPT_USER,
+                describe='The official Wordle bot (enables image results)'),
+
+    # Toggles (/setup daily, /setup sticky) and the game menu (/games).
+    ConfigField('daily_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
+    ConfigField('sticky_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
+    ConfigField('game_overrides', default={}, coerce=_overrides),
+
+    # Run markers, written by the daily lambda. last_posted_day is the post
+    # gate; last_finalized_day is diagnostic only -- nothing reads it, it just
+    # records how far aggregates have been folded (see set_last_finalized).
+    ConfigField('last_finalized_day'),
+    ConfigField('last_posted_day'),
+]
+
+CONFIG_DEFAULTS = {f.name: f.default for f in CONFIG_FIELDS}
+
+
+def setup_options(group):
+    """The /setup subcommand's fields, in declaration order."""
+    return [f for f in CONFIG_FIELDS if f.group == group]
+
+
+def post_hour(cfg):
+    """Guild-local hour the daily board posts and the sticky wakes.
+
+    Unset means "as soon as the scoring day has rolled over", i.e. the day-start
+    hour -- written down here once instead of in each of the four callers that
+    used to spell out the fallback.
+    """
+    return cfg['hours_after_midnight'] if cfg['post_hour'] is None else cfg['post_hour']
+
 
 _resource = None
 _table = None
@@ -62,6 +183,10 @@ def table():
 # --- Keys and day arithmetic ---------------------------------------------------
 
 def guild_pk(guild_id):
+    return f'GUILD#{guild_id}'
+
+
+def config_sk(guild_id):
     return f'GUILD#{guild_id}'
 
 
@@ -258,28 +383,61 @@ def fetch_days(guild_id, start_day, end_day):
     return [{'day': it['day'], **json.loads(it['data'])} for it in items]
 
 
+def _effective_config(item):
+    """Stored config item -> plain dict with defaults filled and every value run
+    through its field's coercion, so callers never see DynamoDB types (numbers
+    come back as Decimal) or missing keys. Each field's `coerce` also hands back
+    a fresh container, so the shared CONFIG_FIELDS defaults are never aliased
+    into a caller's config."""
+    cfg = {}
+    for f in CONFIG_FIELDS:
+        value = item.get(f.name)
+        if value is None:
+            value = f.default
+        cfg[f.name] = f.coerce(value) if (f.coerce and value is not None) else value
+    cfg['guild_id'] = str(item.get('guild_id') or '') or None
+    return cfg
+
+
+def default_config(guild_id=None):
+    """Effective config for a guild with no stored item (e.g. an interaction
+    from a server that never ran /setup) -- all defaults, nothing enabled to
+    post anywhere because both channels are None."""
+    return _effective_config({'guild_id': guild_id} if guild_id else {})
+
+
 def get_config(guild_id):
-    resp = table().get_item(Key={'PK': guild_pk(guild_id), 'SK': CONFIG_SK})
-    return resp.get('Item')
+    """Effective config for one guild, or None when it has never been set up."""
+    resp = table().get_item(Key={'PK': GUILDS_PK, 'SK': config_sk(guild_id)})
+    item = resp.get('Item')
+    return _effective_config(item) if item else None
+
+
+def all_configs():
+    """Effective configs for every set-up guild -- one small Query. This is
+    the fan-out source for both scheduled lambdas."""
+    items = _query_all(KeyConditionExpression=Key('PK').eq(GUILDS_PK))
+    return [_effective_config(it) for it in items]
 
 
 # --- Writes ---------------------------------------------------------------------
 
-def ensure_config(guild_id, defaults):
-    """Create the guild CONFIG item if absent; return the stored config.
-
-    Never overwrites an existing config -- Phase 3 makes the table the source
-    of truth for these values, so env vars only seed, they don't win.
-    """
-    item = {'PK': guild_pk(guild_id), 'SK': CONFIG_SK, 'guild_id': str(guild_id)}
-    item.update({k: v for k, v in defaults.items() if v is not None})
-    try:
-        table().put_item(Item=item, ConditionExpression='attribute_not_exists(PK)')
-        return item
-    except ClientError as e:
-        if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
-            raise
-        return get_config(guild_id)
+def update_config(guild_id, updates):
+    """Set config fields for a guild, creating the item on first use (/setup
+    in a fresh server is the onboarding write). Unknown keys are rejected so a
+    typo can't plant dead config."""
+    bad = set(updates) - set(CONFIG_DEFAULTS)
+    if bad:
+        raise ValueError(f'unknown config fields: {sorted(bad)}')
+    names = {f'#f{i}': k for i, k in enumerate(updates)}
+    values = {f':v{i}': v for i, v in enumerate(updates.values())}
+    sets = ', '.join(f'#f{i} = :v{i}' for i in range(len(updates)))
+    table().update_item(
+        Key={'PK': GUILDS_PK, 'SK': config_sk(guild_id)},
+        UpdateExpression=f'SET guild_id = :gid, {sets}',
+        ExpressionAttributeNames=names,
+        ExpressionAttributeValues={':gid': str(guild_id), **values},
+    )
 
 
 def write_day(guild_id, day, results, points_by_game, puzzle_numbers):
@@ -403,20 +561,37 @@ def refresh_players_30d(guild_id, day, game_keys):
                 raise
 
 
-def set_last_finalized(guild_id, day):
-    """Advance the run-level marker on CONFIG (monotonic; Phase 3's hourly
-    scheduler uses it to decide whether a guild still needs finalizing)."""
+def _advance_marker(guild_id, field, day):
+    """Monotonically advance a day marker on the guild's config item; a no-op
+    for a guild whose config was deleted mid-run."""
     try:
         table().update_item(
-            Key={'PK': guild_pk(guild_id), 'SK': CONFIG_SK},
-            UpdateExpression='SET last_finalized_day = :d',
-            ConditionExpression='attribute_exists(SK) AND '
-                                '(attribute_not_exists(last_finalized_day) OR last_finalized_day < :d)',
+            Key={'PK': GUILDS_PK, 'SK': config_sk(guild_id)},
+            UpdateExpression=f'SET {field} = :d',
+            ConditionExpression=f'attribute_exists(SK) AND '
+                                f'(attribute_not_exists({field}) OR {field} < :d)',
             ExpressionAttributeValues={':d': day},
         )
     except ClientError as e:
         if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
             raise
+
+
+def set_last_finalized(guild_id, day):
+    """Advance the finalize marker (last day folded into aggregates).
+
+    Diagnostic only: nothing gates on this. Folding is made safe by the
+    per-item `finalized_through` guard in _put_guarded(), and the daily post
+    gates on last_posted_day -- this is here to answer "how far along is this
+    guild?" without reading every aggregate.
+    """
+    _advance_marker(guild_id, 'last_finalized_day', day)
+
+
+def set_last_posted(guild_id, day):
+    """Advance the post marker (last day whose scoreboard went out for real).
+    The hourly daily lambda gates on this, so test posts never touch it."""
+    _advance_marker(guild_id, 'last_posted_day', day)
 
 
 def rebuild_aggregates(guild_id, through_day):

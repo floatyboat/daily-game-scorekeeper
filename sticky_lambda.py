@@ -1,5 +1,6 @@
 import json
 import os
+import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from collections import defaultdict
@@ -11,19 +12,15 @@ from game_parser import (
 from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
     make_session, fetch_messages, reference_date, is_scoreboard_message,
-    build_avatar_pool, safe_guild_id, gather_streaks,
-    PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
+    is_sticky_message, build_avatar_pool, safe_guild_id, gather_streaks,
+    PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID, STICKY_HEADING,
 )
+import store
 
+# Global bot identity only -- per-server settings come from each guild's
+# config item (see store.CONFIG_DEFAULTS), managed by /setup.
 DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
-TEST_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
-WORDLE_BOT_ID = os.getenv('WORDLE_BOT_ID')
-
-TIMEZONE = ZoneInfo(os.getenv('TIMEZONE') or 'UTC')
-TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
-HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
 
 _session = make_session(DISCORD_BOT_TOKEN)
 
@@ -73,30 +70,6 @@ def suppress_embeds(channel_id, message):
     return r.ok
 
 
-def _is_sticky(msg):
-    """True for one of the bot's own sticky posts.
-
-    Matched by the sticky's intrinsic Play button (custom_id), with the
-    "Now Playing" heading as a fallback for a sticky somehow posted without its
-    buttons. This is deliberately precise: a looser "any non-scoreboard bot
-    message" test also matches the daily scoreboard and any unrelated bot post
-    (e.g. leftovers from older code versions), and update_sticky deletes every
-    match — so a loose test would delete those too. We only ever collapse real
-    stickies.
-    """
-    author = msg.get('author', {})
-    if DISCORD_BOT_ID:
-        if author.get('id') != str(DISCORD_BOT_ID):
-            return False
-    elif not author.get('bot'):
-        return False
-    for row in (msg.get('components') or []):
-        for c in row.get('components', []):
-            if c.get('custom_id') == PLAY_BUTTON_CUSTOM_ID:
-                return True
-    return (msg.get('content') or '').startswith(STICKY_HEADING)
-
-
 def find_stickies(messages):
     """Every bot sticky in the channel, newest first (normally exactly one).
 
@@ -107,7 +80,7 @@ def find_stickies(messages):
     yet today" post indefinitely. /play replies are ephemeral and never appear
     in fetch_messages.
     """
-    return [m for m in messages if _is_sticky(m)]
+    return [m for m in messages if is_sticky_message(m, DISCORD_BOT_ID)]
 
 
 def find_latest_scoreboard_id(messages):
@@ -128,9 +101,6 @@ def _sticky_is_current(sticky, content, want_url):
     return existing_url == want_url
 
 
-STICKY_HEADING = "\U0001F47E **Now Playing**"
-
-
 def build_sticky_content(results, server_streak=0):
     # Distinct games that have at least one score, then every play logged
     # against them (each player x game result counts once).
@@ -146,7 +116,8 @@ def build_sticky_content(results, server_streak=0):
     return f"{STICKY_HEADING}\n{game_count} {g} · {play_count} {p} today{flair}"
 
 
-def update_sticky(channel_id, channel_messages, results, server_streak=0):
+def update_sticky(channel_id, channel_messages, results, server_streak=0,
+                  link_yesterday=True):
     """Maintain exactly one sticky at the bottom of channel_id.
 
     No-op only when a single sticky is already the most recent message AND its
@@ -154,6 +125,10 @@ def update_sticky(channel_id, channel_messages, results, server_streak=0):
     day-transition case where the sticky is still at the bottom but shows
     yesterday's stats, and URL comparison catches the case where the daily
     scoreboard just posted and the Yesterday link is now stale.
+
+    link_yesterday=False (guild has the daily scoreboard disabled) drops the
+    Yesterday button even when an old board is still in the channel — the
+    freshest link would only ever point at a stale day.
 
     Otherwise delete *every* existing sticky before posting a fresh one. The
     morning scoreboard de-positions the sticky and staleness forces a repost; a
@@ -166,11 +141,12 @@ def update_sticky(channel_id, channel_messages, results, server_streak=0):
     content = build_sticky_content(results, server_streak)
 
     yesterday_url = None
-    scoreboard_id = find_latest_scoreboard_id(channel_messages)
-    if scoreboard_id:
-        # Discord's client routes by channel_id/message_id; the guild slot
-        # accepts @me even for guild messages.
-        yesterday_url = f'https://discord.com/channels/@me/{channel_id}/{scoreboard_id}'
+    if link_yesterday:
+        scoreboard_id = find_latest_scoreboard_id(channel_messages)
+        if scoreboard_id:
+            # Discord's client routes by channel_id/message_id; the guild slot
+            # accepts @me even for guild messages.
+            yesterday_url = f'https://discord.com/channels/@me/{channel_id}/{scoreboard_id}'
     components = build_sticky_components(yesterday_url)
 
     if (len(stickies) == 1 and channel_messages
@@ -196,34 +172,35 @@ def update_sticky(channel_id, channel_messages, results, server_streak=0):
     return 'collapsed' if len(stickies) > 1 else 'reposted'
 
 
-def lambda_handler(event, context):
-    is_test = isinstance(event, dict) and 'test' in event
+def run_guild(cfg, force=False):
+    """One guild's sticky pass: parse today's plays and settle the sticky.
 
-    # Active window: [HOURS_AFTER_MIDNIGHT, midnight) in TIMEZONE. The daily
-    # scoreboard fires at HOURS_AFTER_MIDNIGHT and posts yesterday's summary;
-    # before that point we'd be tracking the previous day's already-finalized
-    # leaders, so stay dormant until it runs. Test events bypass this guard.
-    if not is_test and datetime.now(TIMEZONE).hour < HOURS_AFTER_MIDNIGHT:
-        return {'statusCode': 200, 'body': json.dumps('Outside active window')}
+    Active window: [post hour, midnight) guild-local. The daily scoreboard
+    posts at the guild's post hour and summarizes yesterday; before that point
+    we'd be tracking the previous day's already-finalized leaders, so stay
+    dormant until it has had its chance. force (test runs) bypasses the guard.
+    """
+    channel_id = cfg['input_channel_id']
+    tz = ZoneInfo(cfg['timezone'])
+    now_local = datetime.now(tz)
 
-    today = reference_date(datetime.now(TIMEZONE), TIMEZONE, HOURS_AFTER_MIDNIGHT)
+    if not force and now_local.hour < store.post_hour(cfg):
+        return 'outside active window'
+
+    today = reference_date(now_local, tz, cfg['hours_after_midnight'])
     puzzle_numbers = compute_puzzle_numbers(today)
-    games = build_games(puzzle_numbers)
-    checker = make_timestamp_checker(today, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
+    games = build_games(puzzle_numbers, cfg['game_overrides'])
+    checker = make_timestamp_checker(today, tz, cfg['hours_after_midnight'],
+                                     cfg['time_window_hours'])
 
-    # Operate end-to-end on a single channel: counts and the sticky live
-    # together. Test events redirect to TEST_CHANNEL_ID so local runs never
-    # touch real user messages.
-    channel_id = TEST_CHANNEL_ID if is_test else INPUT_CHANNEL_ID
     messages = fetch_messages(_session, channel_id, limit=200)
-
-    avatar_pool = build_avatar_pool(_session, messages, checker, WORDLE_BOT_ID)
+    avatar_pool = build_avatar_pool(_session, messages, checker, cfg['wordle_bot_id'])
 
     results = defaultdict(dict)
     suppressed = 0
     for msg in messages:
         entries = match_message(msg, games, checker,
-                                wordle_bot_id=WORDLE_BOT_ID, avatar_hashes=avatar_pool)
+                                wordle_bot_id=cfg['wordle_bot_id'], avatar_hashes=avatar_pool)
         if not entries:
             continue
         if suppress_embeds(channel_id, msg):
@@ -236,15 +213,57 @@ def lambda_handler(event, context):
     # Server-wide streak flair, bare fire+number at the end of the content
     # line -- kept alive today (live +1) or still extendable from yesterday.
     # Fail-open: no store, no flair.
-    streaks = gather_streaks(safe_guild_id(_session, channel_id), today, results,
+    streaks = gather_streaks(cfg['guild_id'], today, results,
                              [g.key for g in games], include_players=False)
     server_streak = (streaks or {}).get('server', 0)
 
-    action = update_sticky(channel_id, messages, results, server_streak)
+    action = update_sticky(channel_id, messages, results, server_streak,
+                           link_yesterday=cfg['daily_enabled'])
+    return f'{action} (embeds suppressed: {suppressed})'
 
-    return {'statusCode': 200, 'body': json.dumps(f'Sticky: {action} (embeds suppressed: {suppressed})')}
+
+def lambda_handler(event, context):
+    """Frequent tick: settle the sticky for every guild with one enabled.
+
+    The guild list comes from the table each invocation, so onboarding a
+    server (/setup) needs no deploy or schedule change. Test events operate on
+    the test channel with a default config so local runs never touch real user
+    messages: {'test': true} plus optional 'channel_id' and any config-field
+    overrides (e.g. 'daily_enabled': false to preview the linkless sticky).
+    """
+    event = event if isinstance(event, dict) else {}
+
+    if 'test' in event:
+        cfg = store.default_config()
+        cfg.update({k: v for k, v in event.items() if k in store.CONFIG_DEFAULTS})
+        cfg['input_channel_id'] = (event.get('channel_id')
+                                   or cfg['input_channel_id']
+                                   or os.getenv('TEST_CHANNEL_ID'))
+        if not cfg['input_channel_id']:
+            return {'statusCode': 400,
+                    'body': json.dumps('test mode needs channel_id in the event '
+                                       'or TEST_CHANNEL_ID in the env')}
+        # A default config has no guild_id; resolve it from the test channel so
+        # run_guild reads it off cfg exactly as it does for a stored config.
+        cfg['guild_id'] = safe_guild_id(_session, cfg['input_channel_id'])
+        result = run_guild(cfg, force=True)
+        return {'statusCode': 200, 'body': json.dumps(f'Sticky (test): {result}')}
+
+    summary = {}
+    for cfg in store.all_configs():
+        gid = cfg['guild_id']
+        if not cfg['sticky_enabled'] or not cfg['input_channel_id']:
+            continue
+        try:
+            summary[gid] = run_guild(cfg)
+        except Exception as e:
+            traceback.print_exc()
+            summary[gid] = f'FAILED {type(e).__name__}: {e}'
+
+    if not summary:
+        summary = 'no guilds with a sticky to run'
+    return {'statusCode': 200, 'body': json.dumps(summary)}
 
 
 if __name__ == '__main__':
     print(lambda_handler({'test': True}, None))
-

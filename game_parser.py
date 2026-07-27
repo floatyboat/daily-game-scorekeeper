@@ -452,7 +452,10 @@ class GameSpec:
                 it must match before the full pattern is attempted
       total_key puzzle_numbers slot whose value overrides `total` (bandle's total
                 comes off the message); parse must emit it in its metadata
-      disabled  drop the game from parsing AND the scoreboard entirely
+      disabled  the game's DEFAULT state: guilds start with it untracked. Admins
+                flip any game either way per guild via /games (game_overrides in
+                the guild config); this flag only decides what a guild gets
+                before anyone touches the menu.
     """
     key: str
     emoji: str
@@ -562,6 +565,13 @@ def _parse_travle(m, content):
 # maptap, whose '(.*)MapTap(.*)' pattern would otherwise swallow challenge
 # messages (match_message returns on the first hit). The scoreboard re-sorts by
 # player count then title at render time, so order does not affect display.
+#
+# Adding a game is one entry here and nothing else -- except that two rendered
+# surfaces have Discord payload caps this list now feeds (scoreboard.py holds
+# the constants): the /games menu is one option per spec and tops out at 25,
+# and /play is one button per ENABLED game at 5 per row plus the Random row,
+# so it tops out at 20. 17 specs today. Past either, the fix is to split the
+# response across two messages -- see the FUTURE note in scoreboard.py.
 
 GAME_SPECS = [
     GameSpec(
@@ -687,17 +697,26 @@ GAME_SPECS = [
 ]
 
 
-def build_games(puzzle_numbers):
+def spec_enabled(spec, game_overrides=None):
+    """Whether a game is tracked for a guild: the guild's explicit /games
+    choice when present, the spec's coded default otherwise."""
+    if game_overrides and spec.key in game_overrides:
+        return bool(game_overrides[spec.key])
+    return not spec.disabled
+
+
+def build_games(puzzle_numbers, game_overrides=None):
     """Resolve GAME_SPECS into concrete Game descriptors for one reference date.
 
-    Games flagged disabled are dropped here, so they are skipped by both the
+    game_overrides is the guild's per-game enable map (config.game_overrides);
+    games resolving disabled are dropped here, so they are skipped by both the
     parser and the scoreboard. GAME_SPECS order (parse priority) is preserved;
     the scoreboard re-sorts for display.
     """
     ref = puzzle_numbers['reference_date']
     games = []
     for spec in GAME_SPECS:
-        if spec.disabled:
+        if not spec_enabled(spec, game_overrides):
             continue
         puzzle = spec.puzzle(ref)
         total = puzzle_numbers.get(spec.total_key, spec.total) if spec.total_key else spec.total
@@ -1064,16 +1083,18 @@ def _streak_header_lines(streaks, games_by_key):
     return lines
 
 
-def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None):
+def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None):
     """Format the scoreboard as Discord Components V2 (list of top-level components).
 
     streaks is an optional gather_streaks() bundle; it adds "streak ended"
     header callouts, per-game fire suffixes on title lines, and personal fire
-    markers. None renders exactly the streak-less board.
+    markers. None renders exactly the streak-less board. game_overrides is the
+    guild's per-game enable map -- without it a guild-enabled game whose spec
+    defaults to disabled would silently drop out of the render.
 
     Returns a list[dict] suitable for the 'components' field in a Discord message.
     """
-    games = build_games(puzzle_numbers)
+    games = build_games(puzzle_numbers, game_overrides)
     components = []
 
     # --- Header container ---
