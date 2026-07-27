@@ -52,15 +52,15 @@ GUILDS                      GUILD#<guild_id>   per-server config: input_channel_
 GUILD#<guild_id>            DAY#<YYYY-MM-DD>   full parsed results for the day:
                                                {game: {user_id: {score, points}}}, puzzle
                                                numbers. The durable archive + rebuild source.
-GUILD#<guild_id>            AGG#SERVER         overall server streak (≥1 result in ANY game
-                                               that day): current_streak, best_streak,
+GUILD#<guild_id>            AGG#SERVER         overall server streak (points scored in ANY
+                                               game that day): current_streak, best_streak,
                                                last_played_day
 GUILD#<guild_id>            AGG#GAME#<key>     per-game server aggregate: current_streak,
                                                best_streak, last_played_day, total_plays
-                                               (= days with ≥1 result), players (string set,
-                                               all-time), players_30d (number, refreshed at
-                                               finalize)
-GUILD#<gid>#PLAYER#<uid>    AGG#SERVER         per-player overall streak (≥1 result in ANY
+                                               (= days someone scored), players (string set,
+                                               all-time, everyone who posted), players_30d
+                                               (number, refreshed at finalize)
+GUILD#<gid>#PLAYER#<uid>    AGG#SERVER         per-player overall streak (points scored in ANY
                                                game that day): current_streak, best_streak,
                                                last_played_day, total_plays. Shown in the
                                                scoreboard's points summary; NOT derivable
@@ -92,9 +92,16 @@ Access patterns → reads:
 - A "day" is the existing `reference_date` — already timezone- and
   `HOURS_AFTER_MIDNIGHT`-aware. Streaks inherit the exact scoring window the
   scoreboard already uses. No new date logic.
-- Server streak per game = consecutive game-days with ≥1 tracked result for that game.
-  Player streak = same per user. Overall streak (server-wide and per player) =
-  ≥1 result in any game.
+- **A play is a scoring result, not a posted one.** Poop scores earn 0 points
+  (`compute_points`), and 0 points keeps nothing alive. So: server streak per game =
+  consecutive game-days with ≥1 result that *scored* for that game — a day everyone
+  failed breaks it. Player streak = same per user: post a poop and your streak for
+  that game ends. Overall streak (server-wide and per player) = points scored in any
+  game. `game_parser.scoring_players()` is the one definition; the finalize fold uses
+  the points it already archives, so stored and displayed streaks can't disagree.
+  Games below `minimum_players` score nobody, so they extend nothing — the same games
+  the board omits. All-time player sets and the 30-day counts still count everyone who
+  posted: participation is a separate question from scoring.
 - Streaks update **once per day at finalize** (the daily scoreboard run — the
   authoritative daily tick). Played on day D: `last_played_day == D-1` → increment,
   else reset to 1. Not played on D: archive into `best_streak` if higher, reset to 0.
@@ -163,15 +170,16 @@ mode: recompute all aggregates from `DAY#` items whenever logic changes.
   an optional streaks argument — "🔥N" suffix on each game's title line, "💔 <Game>
   streak ended at N" callout on the day it breaks, and personal streak markers at/above
   the display minimum: the player's **overall** streak in the points summary
-  (`👑 @alice: 12 pts (x14)`) and their per-game streak on each score line
+  (`👑 @alice: 12 pts 🔥14`) and their per-game streak on each score line
   (`👑 @alice (x9): 3/6 guesses`). No server-streak line in the header — the
   server streak's display surface is the sticky.
-- **Fire emoji vs `(xN)`**: streaks that appear once per board (a game's title line,
-  the sticky's server streak) render as `🔥N`; per-player streaks repeat on every
-  line, so they render as a plain `(xN)` — one `_streak_tag()` helper, so the two
-  player surfaces can't drift.
-- **Sticky**: content line ends with the server-wide streak (≥1 result in any game,
-  live-adjusted) as bare `🔥N`. Sticky-identity logic (Play-button matching) is
+- **Fire emoji vs `(xN)`**: streaks that land at most once per board *per subject*
+  render as `🔥N` — a game's title line, the sticky's server streak, and each
+  player's overall streak in the points summary (`_overall_streak_tag()`). Per-game
+  player streaks repeat on every score line of every game, so an emoji there drowns
+  the board: they stay a plain `(xN)` (`_streak_tag()`).
+- **Sticky**: content line ends with the server-wide streak (points scored in any
+  game, live-adjusted) as bare `🔥N`. Sticky-identity logic (Play-button matching) is
   untouched.
 
 ## Multi-server onboarding
@@ -252,11 +260,16 @@ still-daily rule just means the new code posts once at 13:00 UTC as before) →
 in .env, falls back to DISCORD_BOT_ID) → **5.** test events + `/setup show` in the
 server.
 
-Per-player overall streaks (the points-summary `(xN)`) are a later addition and need
+Per-player overall streaks (the points-summary `🔥N`) are a later addition and need
 one `dotenv run -- python3 backfill.py --rebuild-only` to seed the new
 `PLAYER#<uid> / AGG#SERVER` items from the archived days. Skipping it isn't harmful —
 finalize creates each player's item on their next play — but every streak restarts at
 1 instead of its true historical value.
+
+The scoring rule ("a poop is not a play") is likewise retroactive only through that
+same `--rebuild-only` run: the archive froze each player's points, so a replay
+recomputes every streak under the new rule. Without it, stored streaks keep whatever
+the old "posted = played" fold gave them and only new days follow the new rule.
 
 ## Settled decisions
 

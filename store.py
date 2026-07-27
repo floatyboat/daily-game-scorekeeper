@@ -486,15 +486,24 @@ def finalize_day(guild_id, day, results, points_by_game, game_keys):
     game_keys is the enabled-game universe for the guild: games in it with no
     results get their streak-break bookkeeping; games outside it (disabled) are
     left untouched.
+
+    Streaks advance on SCORING, not on posting: a player earns points unless
+    their result was a poop, so points_by_game (already passed for the archive)
+    is the play signal. A game everybody failed keeps no streak alive -- neither
+    its own nor any of its players'. All-time player sets still count everyone
+    who posted; participation is a different question from scoring.
     """
     prev_day = prev_day_str(day)
     stats = {'updated': 0, 'skipped': 0}
     gpk = guild_pk(guild_id)
     existing = query_aggs(gpk)
+    scorers = {key: {uid for uid, pts in (points_by_game.get(key) or {}).items()
+                     if int(pts) > 0}
+               for key in game_keys}
 
-    # Overall server streak: any game played today keeps it alive.
+    # Overall server streak: someone scoring in any game keeps it alive.
     agg, _ = _agg_from_item(existing.get(SERVER_AGG_SK))
-    advance_streak(agg, day, prev_day, any(results.get(k) for k in game_keys))
+    advance_streak(agg, day, prev_day, any(scorers.values()))
     if agg['total_plays'] or existing.get(SERVER_AGG_SK):
         _put_guarded(_agg_to_item(gpk, SERVER_AGG_SK, agg, day), day, stats)
 
@@ -505,31 +514,33 @@ def finalize_day(guild_id, day, results, points_by_game, game_keys):
         agg, players = _agg_from_item(existing.get(sk))
         if not uids and not existing.get(sk):
             continue   # never played: nothing to record yet
-        advance_streak(agg, day, prev_day, bool(uids))
+        advance_streak(agg, day, prev_day, bool(scorers[game_key]))
         players |= uids
         extra = {}
         if existing.get(sk) and 'players_30d' in existing[sk]:
             extra['players_30d'] = int(existing[sk]['players_30d'])   # refreshed below
         _put_guarded(_agg_to_item(gpk, sk, agg, day, players=players, extra=extra), day, stats)
 
-    # Per-player-per-game streaks and points. Players who didn't play are left
-    # alone on purpose: best_streak is maintained on the way up and the display
-    # layer treats a stale last_played_day as a broken streak, so their next
-    # play resets correctly without us touching every known player daily.
-    for uid in {u for k in game_keys for u in (results.get(k) or {})}:
+    # Per-player-per-game streaks and points. Players who didn't score are left
+    # alone on purpose -- the same handling as players who didn't show up at
+    # all: best_streak is maintained on the way up and the display layer treats
+    # a stale last_played_day as a broken streak, so their next scoring day
+    # resets correctly without us touching every known player daily. (A pooped
+    # game adds 0 points, so skipping it also costs points_sum nothing.)
+    for uid in {u for s in scorers.values() for u in s}:
         ppk = player_pk(guild_id, uid)
         theirs = query_aggs(ppk)
 
-        # Overall per-player streak: any game played today keeps it alive. This
-        # is the number the scoreboard's points summary shows, so it has to be
-        # its own aggregate -- it is not derivable from the per-game ones (a
+        # Overall per-player streak: scoring in any game today keeps it alive.
+        # This is the number the scoreboard's points summary shows, so it has to
+        # be its own aggregate -- it is not derivable from the per-game ones (a
         # player alternating games has no per-game streak but a long overall one).
         agg, _ = _agg_from_item(theirs.get(SERVER_AGG_SK))
         advance_streak(agg, day, prev_day, True)
         _put_guarded(_agg_to_item(ppk, SERVER_AGG_SK, agg, day), day, stats)
 
         for game_key in game_keys:
-            if uid not in (results.get(game_key) or {}):
+            if uid not in scorers[game_key]:
                 continue
             sk = game_agg_sk(game_key)
             item = theirs.get(sk)
@@ -623,18 +634,26 @@ def rebuild_aggregates(guild_id, through_day):
     for d in days:
         day, games = d['day'], d['games']
         prev = prev_day_str(day)
-        advance_streak(server, day, prev, bool(games))
-        for uid in {u for scores in games.values() for u in scores}:
+        # Same rule as finalize_day: only a scoring result is a play. The
+        # archive froze each player's points, so a replay reaches the identical
+        # numbers without re-scoring (and without needing the old game specs).
+        scored = {game_key: {uid for uid, rec in scores.items()
+                             if int(rec.get('points') or 0) > 0}
+                  for game_key, scores in games.items()}
+        advance_streak(server, day, prev, any(scored.values()))
+        for uid in {u for uids in scored.values() for u in uids}:
             advance_streak(player_server.setdefault(uid, blank_agg()), day, prev, True)
         for game_key, scores in games.items():
             agg = game_aggs.setdefault(game_key, blank_agg())
-            advance_streak(agg, day, prev, True)
+            advance_streak(agg, day, prev, bool(scored[game_key]))
             game_players.setdefault(game_key, set()).update(scores)
             for uid, rec in scores.items():
-                pagg = player_aggs.setdefault((uid, game_key), blank_agg())
-                advance_streak(pagg, day, prev, True)
+                points = int(rec.get('points') or 0)
+                if points > 0:
+                    pagg = player_aggs.setdefault((uid, game_key), blank_agg())
+                    advance_streak(pagg, day, prev, True)
                 player_points[(uid, game_key)] = (player_points.get((uid, game_key), 0)
-                                                  + int(rec.get('points') or 0))
+                                                  + points)
 
     close_out_streak(server, through_day)
     for agg in game_aggs.values():

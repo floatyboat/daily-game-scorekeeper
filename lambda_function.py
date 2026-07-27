@@ -5,7 +5,8 @@ import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from game_parser import format_scoreboard_components, make_timestamp_checker, build_games, compute_points
+from game_parser import (format_scoreboard_components, make_timestamp_checker,
+                         build_games, points_per_game)
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date,
     parse_results, build_avatar_pool, is_scoreboard_message, gather_streaks,
@@ -54,10 +55,9 @@ def persist_results(cfg, results, puzzle_numbers, ref_date, games):
     """
     try:
         day = store.day_str(ref_date)
-        # compute_points scores each game independently, so per-game calls sum
-        # to exactly what the posted points summary shows.
-        points_by_game = {g.key: compute_points(results, [g], cfg['minimum_players'])
-                          for g in games}
+        # Doubles as the streak-eligibility signal: finalize_day counts a play
+        # only where points landed.
+        points_by_game = points_per_game(results, games, cfg['minimum_players'])
         archived = store.write_day(cfg['guild_id'], day, results, points_by_game, puzzle_numbers)
         stats = store.finalize_day(cfg['guild_id'], day, results, points_by_game,
                                    [g.key for g in games])
@@ -143,7 +143,7 @@ def process_guild(cfg, is_test, test_channel_id):
     games = build_games(puzzle_numbers, cfg['game_overrides'])
     note(persist_results(cfg, results, puzzle_numbers, yesterday, games))
 
-    streaks = gather_streaks(gid, yesterday, results, [g.key for g in games])
+    streaks = gather_streaks(gid, yesterday, results, games, cfg['minimum_players'])
     components = format_scoreboard_components(results, yesterday, puzzle_numbers,
                                               minimum_players=cfg['minimum_players'],
                                               streaks=streaks,

@@ -213,8 +213,8 @@ def run_guild(cfg, force=False):
     # Server-wide streak flair, bare fire+number at the end of the content
     # line -- kept alive today (live +1) or still extendable from yesterday.
     # Fail-open: no store, no flair.
-    streaks = gather_streaks(cfg['guild_id'], today, results,
-                             [g.key for g in games], include_players=False)
+    streaks = gather_streaks(cfg['guild_id'], today, results, games,
+                             cfg['minimum_players'], include_players=False)
     server_streak = (streaks or {}).get('server', 0)
 
     action = update_sticky(channel_id, messages, results, server_streak,

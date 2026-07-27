@@ -5,7 +5,7 @@ from collections import defaultdict
 
 import store
 from game_parser import (
-    compute_puzzle_numbers, build_games,
+    compute_puzzle_numbers, build_games, scoring_players,
     make_timestamp_checker, match_message, _avatar_ahash,
 )
 
@@ -84,10 +84,16 @@ def safe_guild_id(session, channel_id):
         return None
 
 
-def gather_streaks(guild_id, ref_date, results, game_keys, include_players=True):
+def gather_streaks(guild_id, ref_date, results, games, minimum_players=1,
+                   include_players=True):
     """Display-ready streak numbers for one board render, or None when the
     store can't serve them (no guild, IAM grant not applied yet, outage) --
     callers render streak-less, so store problems never break a view.
+
+    Takes the built `games` (not just their keys) because streak eligibility is
+    scoring, not merely posting: game_parser.scoring_players() needs each game's
+    metric to tell a scoring result from a poop. That is the same rule
+    store.finalize_day() folds, so the two never disagree.
 
     Works identically on both sides of the daily finalize because
     store.display_streak() folds the "played on ref_date" flag in itself:
@@ -96,21 +102,27 @@ def gather_streaks(guild_id, ref_date, results, game_keys, include_players=True)
     (daily post, Scores, Play, sticky) shares this one path.
 
     Bundle (plain ints/strings, JSON-safe):
-      server        server-wide streak to show (>=1 result in ANY game that
+      server        server-wide streak to show (points scored in ANY game that
                     day; displayed on the sticky, not the scoreboard)
       games         {game_key: streak to show}
       broken        {game_key: streak that ended on ref_date}
       players_total {game_key: all-time distinct-player count}
-      players       {game_key: {user_id: streak to show}} (players with
-                    results on ref_date only; empty when include_players=False)
+      players       {game_key: {user_id: streak to show}} (players who SCORED
+                    on ref_date only; empty when include_players=False). A
+                    player who posted a poop is absent, so their score line
+                    renders untagged -- their streak for that game is over.
       players_overall {user_id: overall streak to show} -- days running that
-                    player posted a result in ANY game; drives the points
-                    summary, same population/emptiness rule as `players`
+                    player scored in ANY game; drives the points summary, same
+                    population/emptiness rule as `players`
     """
     if not guild_id:
         return None
     try:
         day = store.day_str(ref_date)
+        game_keys = [g.key for g in games]
+        # Poop scores earn 0 points and keep nothing alive; everything below
+        # keys off who scored, never off who merely posted.
+        scorers = scoring_players(results, games, minimum_players)
         aggs = store.query_aggs(store.guild_pk(guild_id))
         game_items = {store.game_key_from_sk(sk): item for sk, item in aggs.items()
                       if sk.startswith(store.GAME_AGG_PREFIX)}
@@ -119,10 +131,10 @@ def gather_streaks(guild_id, ref_date, results, game_keys, include_players=True)
                   'players_overall': {},
                   'server': store.display_streak(
                       aggs.get(store.SERVER_AGG_SK), day,
-                      any(results.get(k) for k in game_keys))}
+                      any(scorers.values()))}
         for key in game_keys:
             item = game_items.get(key)
-            bundle['games'][key] = store.display_streak(item, day, bool(results.get(key)))
+            bundle['games'][key] = store.display_streak(item, day, bool(scorers.get(key)))
             ended = store.broken_streak_on(item, day)
             if ended:
                 bundle['broken'][key] = ended
@@ -130,7 +142,7 @@ def gather_streaks(guild_id, ref_date, results, game_keys, include_players=True)
 
         if include_players:
             pairs = sorted({(uid, key) for key in game_keys
-                            for uid in (results.get(key) or {})})
+                            for uid in scorers.get(key, ())})
             uids = sorted({uid for uid, _ in pairs})
             # Per-game and overall player aggregates ride in one batch; the
             # overall one is filed under game key None.

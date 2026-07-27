@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import store
-from game_parser import make_timestamp_checker, build_games, compute_points
+from game_parser import make_timestamp_checker, build_games, points_per_game
 from scoreboard import (
     DISCORD_API_BASE, make_session, parse_results, build_avatar_pool, reference_date,
 )
@@ -90,8 +90,7 @@ def backfill_days(session, cfg, tz, messages, start_dt, through_dt):
             )
             if any(results.values()):
                 games = build_games(puzzle_numbers, cfg['game_overrides'])
-                points = {g.key: compute_points(results, [g], cfg['minimum_players'])
-                          for g in games}
+                points = points_per_game(results, games, cfg['minimum_players'])
                 day = store.day_str(day_dt)
                 store.write_day(cfg['guild_id'], day, results, points, puzzle_numbers)
                 written += 1

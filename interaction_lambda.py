@@ -115,7 +115,8 @@ def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
     results, puzzle_numbers, today = fetch_today_results(channel_id, cfg)
 
     streaks = gather_streaks(guild_id, today, results,
-                             [g.key for g in build_games(puzzle_numbers, cfg['game_overrides'])])
+                             build_games(puzzle_numbers, cfg['game_overrides']),
+                             cfg['minimum_players'])
     components = format_scoreboard_components(
         results, today, puzzle_numbers,
         title="Today's Scores", minimum_players=cfg['minimum_players'], streaks=streaks,
@@ -178,8 +179,8 @@ def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
 
     streaks = None
     if today is not None:
-        streaks = gather_streaks(guild_id, today, results,
-                                 [g.key for g in games], include_players=False)
+        streaks = gather_streaks(guild_id, today, results, games,
+                                 cfg['minimum_players'], include_players=False)
 
     if user_id is not None:
         games = [g for g in games if user_id not in results.get(g.key, {})]

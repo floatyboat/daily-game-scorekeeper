@@ -848,23 +848,62 @@ def compute_points(results, games, minimum_players=1):
     return dict(points)
 
 
+def points_per_game(results, games, minimum_players=1):
+    """{game_key: {user_id: points}} for every game in `games`.
+
+    compute_points scores each game independently, so scoring them one at a
+    time sums to exactly the totals the posted points summary shows. One helper
+    so the archive, the streak fold and the live views all agree on who scored.
+    """
+    return {g.key: compute_points(results, [g], minimum_players) for g in games}
+
+
+def scoring_players(results, games, minimum_players=1):
+    """{game_key: {user_id, ...}} -- who a day's streaks count as having played.
+
+    A result by itself is not a play for streak purposes: a poop score earns 0
+    points, and 0 points keeps nothing alive -- not that player's streak for the
+    game, and not the game's own streak when nobody scored. Games below
+    minimum_players score nobody, so they don't extend streaks either -- the
+    same games the board leaves off.
+
+    The single definition of streak eligibility, shared by the finalize fold
+    (via the points it already stores) and every live view.
+    """
+    return {key: {uid for uid, pts in scores.items() if pts > 0}
+            for key, scores in points_per_game(results, games, minimum_players).items()}
+
+
 def _streak_tag(player_streaks, uid):
     """' (xN)' for a player at or above the display minimum, else ''.
 
-    Every per-player streak renders as this plain multiplier. The fire emoji is
-    reserved for streaks that appear once per board (a game's title line, the
-    sticky's server streak) -- player streaks repeat on every line, so an emoji
-    there drowns the board.
+    Per-game player streaks render as this plain multiplier -- they repeat on
+    every score line of every game, so an emoji there drowns the board. The
+    fire emoji is reserved for streaks that appear at most once per player per
+    board (a game's title line, the sticky's server streak, and the overall
+    streak in the points summary -- see _overall_streak_tag).
     """
     n = (player_streaks or {}).get(uid, 0)
     return f' (x{n})' if n >= STREAK_MIN else ''
+
+
+def _overall_streak_tag(player_streaks, uid):
+    """' \U0001F525N' for a player at or above the display minimum, else ''.
+
+    The overall (any-game) streak is the headline number for a player and lands
+    once, at the end of their points-summary line, so it earns the fire emoji
+    that per-game streaks don't.
+    """
+    n = (player_streaks or {}).get(uid, 0)
+    return f' \U0001F525{n}' if n >= STREAK_MIN else ''
 
 
 def format_points_summary(points, player_streaks=None):
     """Format the points summary section.
 
     player_streaks ({user_id: overall streak}) tags players at or above the
-    display minimum with their days-running-in-any-game count.
+    display minimum with their days-running-in-any-game count, rendered as a
+    trailing fire emoji.
 
     Returns empty string if no points earned.
     """
@@ -895,7 +934,7 @@ def format_points_summary(points, player_streaks=None):
         for k in range(i, j):
             uid = sorted_users[k][0]
             message += (f'{medal}<@{uid}>: {current_val} {unit}'
-                        f'{_streak_tag(player_streaks, uid)}\n')
+                        f'{_overall_streak_tag(player_streaks, uid)}\n')
 
         prev_val = current_val
         i = j
@@ -981,11 +1020,11 @@ def _format_game_players(game_scores, metric, total, player_streaks=None):
             if mistakes == -1:
                 score_str = "VERT 🧗"
             elif mistakes == total:
-                score_str = f"{mistakes}/{total} mistakes ({solved} solved)"
+                score_str = f"{mistakes}/{total} ({solved} solved)"
                 if solved == 0:
                     medal = '💩 '
             else:
-                score_str = f"{mistakes}/{total} mistakes"
+                score_str = f"{mistakes}/{total}"
         elif metric == 'score':
             if current_score == 0:
                 medal = '💩 '
@@ -1011,12 +1050,12 @@ def _format_game_players(game_scores, metric, total, player_streaks=None):
                 score_str = f"{raw_n} away{extra}"
         else:  # guesses
             if total == 0:
-                score_str = f"{str(current_score)} {metric}"
+                score_str = f"{str(current_score)}"
             else:
                 if current_score > total:
                     medal = '💩 '
                     current_score = 'X'
-                score_str = f"{str(current_score)}/{total} {metric}"
+                score_str = f"{str(current_score)}/{total}"
 
         players_str = " ".join(reversed(tied_players))
         lines += f'{medal}'
@@ -1102,8 +1141,9 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     """Format the scoreboard as Discord Components V2 (list of top-level components).
 
     streaks is an optional gather_streaks() bundle; it adds "streak ended"
-    header callouts, per-game fire suffixes on title lines, and personal "(xN)"
-    markers (overall in the points summary, per-game on the score lines).
+    header callouts, per-game fire suffixes on title lines, a personal fire
+    suffix for each player's overall streak in the points summary, and personal
+    "(xN)" markers on the per-game score lines.
     None renders exactly the streak-less board. game_overrides is the
     guild's per-game enable map -- without it a guild-enabled game whose spec
     defaults to disabled would silently drop out of the render.
