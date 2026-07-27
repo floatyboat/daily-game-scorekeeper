@@ -3,11 +3,16 @@
 One table, generic PK/SK string keys, no GSIs. Item catalog (see SPEC.md):
 
     PK                        SK                contents
-    GUILD#<gid>               CONFIG            per-server settings + last_finalized_day
+    GUILDS                    GUILD#<gid>       per-server config + run markers
     GUILD#<gid>               DAY#<YYYY-MM-DD>  the day's parsed results, JSON-frozen
     GUILD#<gid>               AGG#SERVER        overall server streak (any game played)
     GUILD#<gid>               AGG#GAME#<key>    per-game server streak + player sets
     GUILD#<gid>#PLAYER#<uid>  AGG#GAME#<key>    per-player-per-game streak + totals
+
+All configs share one partition (GUILDS) so the scheduled lambdas can load every
+guild with a single small Query each tick -- a Scan would read the whole table
+(every DAY/AGG item) once a minute, which the 5-RCU budget cannot absorb.
+Onboarding is automatic: /setup writes the item, the next tick picks it up.
 
 DAY# items are plain overwrites (same parse -> same item) and are the source of
 truth: rebuild_aggregates() recomputes every aggregate from them from scratch.
@@ -32,9 +37,33 @@ TABLE_NAME = os.getenv('TABLE_NAME') or 'daily-game-tracker'
 AWS_REGION = os.getenv('AWS_REGION') or 'us-east-1'
 
 DAY_FMT = '%Y-%m-%d'
-CONFIG_SK = 'CONFIG'
+GUILDS_PK = 'GUILDS'
 SERVER_AGG_SK = 'AGG#SERVER'
 GAME_AGG_PREFIX = 'AGG#GAME#'
+
+# Per-server settings, complete with defaults. The table is the ONLY source of
+# per-server config -- env vars configure nothing per-server. `post_hour` (local
+# hour the daily posts and the sticky wakes) defaults to hours_after_midnight
+# when unset. game_overrides holds only explicit deviations from each
+# GameSpec's coded default, so new games pick up their default automatically.
+CONFIG_DEFAULTS = {
+    'input_channel_id': None,      # scores are read + sticky lives here
+    'output_channel_id': None,     # daily scoreboard posts here
+    'timezone': 'UTC',
+    'hours_after_midnight': 0,
+    'time_window_hours': 24,
+    'post_hour': None,
+    'minimum_players': 1,
+    'hundreds_of_messages': 1,
+    'wordle_bot_id': None,
+    'daily_enabled': True,
+    'sticky_enabled': True,
+    'game_overrides': {},
+    'last_finalized_day': None,
+    'last_posted_day': None,
+}
+_CONFIG_INT_FIELDS = ('hours_after_midnight', 'time_window_hours', 'post_hour',
+                      'minimum_players', 'hundreds_of_messages')
 
 _resource = None
 _table = None
@@ -62,6 +91,10 @@ def table():
 # --- Keys and day arithmetic ---------------------------------------------------
 
 def guild_pk(guild_id):
+    return f'GUILD#{guild_id}'
+
+
+def config_sk(guild_id):
     return f'GUILD#{guild_id}'
 
 
@@ -258,28 +291,60 @@ def fetch_days(guild_id, start_day, end_day):
     return [{'day': it['day'], **json.loads(it['data'])} for it in items]
 
 
+def _effective_config(item):
+    """Stored config item -> plain dict with defaults filled and Decimals
+    coerced, so callers never see DynamoDB types or missing keys."""
+    cfg = dict(CONFIG_DEFAULTS)
+    for k in CONFIG_DEFAULTS:
+        if k in item and item[k] is not None:
+            cfg[k] = item[k]
+    for k in _CONFIG_INT_FIELDS:
+        if cfg[k] is not None:
+            cfg[k] = int(cfg[k])
+    cfg['game_overrides'] = {k: bool(v) for k, v in (cfg['game_overrides'] or {}).items()}
+    cfg['guild_id'] = str(item.get('guild_id') or '') or None
+    return cfg
+
+
+def default_config(guild_id=None):
+    """Effective config for a guild with no stored item (e.g. an interaction
+    from a server that never ran /setup) -- all defaults, nothing enabled to
+    post anywhere because both channels are None."""
+    return _effective_config({'guild_id': guild_id} if guild_id else {})
+
+
 def get_config(guild_id):
-    resp = table().get_item(Key={'PK': guild_pk(guild_id), 'SK': CONFIG_SK})
-    return resp.get('Item')
+    """Effective config for one guild, or None when it has never been set up."""
+    resp = table().get_item(Key={'PK': GUILDS_PK, 'SK': config_sk(guild_id)})
+    item = resp.get('Item')
+    return _effective_config(item) if item else None
+
+
+def all_configs():
+    """Effective configs for every set-up guild -- one small Query. This is
+    the fan-out source for both scheduled lambdas."""
+    items = _query_all(KeyConditionExpression=Key('PK').eq(GUILDS_PK))
+    return [_effective_config(it) for it in items]
 
 
 # --- Writes ---------------------------------------------------------------------
 
-def ensure_config(guild_id, defaults):
-    """Create the guild CONFIG item if absent; return the stored config.
-
-    Never overwrites an existing config -- Phase 3 makes the table the source
-    of truth for these values, so env vars only seed, they don't win.
-    """
-    item = {'PK': guild_pk(guild_id), 'SK': CONFIG_SK, 'guild_id': str(guild_id)}
-    item.update({k: v for k, v in defaults.items() if v is not None})
-    try:
-        table().put_item(Item=item, ConditionExpression='attribute_not_exists(PK)')
-        return item
-    except ClientError as e:
-        if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
-            raise
-        return get_config(guild_id)
+def update_config(guild_id, updates):
+    """Set config fields for a guild, creating the item on first use (/setup
+    in a fresh server is the onboarding write). Unknown keys are rejected so a
+    typo can't plant dead config."""
+    bad = set(updates) - set(CONFIG_DEFAULTS)
+    if bad:
+        raise ValueError(f'unknown config fields: {sorted(bad)}')
+    names = {f'#f{i}': k for i, k in enumerate(updates)}
+    values = {f':v{i}': v for i, v in enumerate(updates.values())}
+    sets = ', '.join(f'#f{i} = :v{i}' for i in range(len(updates)))
+    table().update_item(
+        Key={'PK': GUILDS_PK, 'SK': config_sk(guild_id)},
+        UpdateExpression=f'SET guild_id = :gid, {sets}',
+        ExpressionAttributeNames=names,
+        ExpressionAttributeValues={':gid': str(guild_id), **values},
+    )
 
 
 def write_day(guild_id, day, results, points_by_game, puzzle_numbers):
@@ -403,20 +468,31 @@ def refresh_players_30d(guild_id, day, game_keys):
                 raise
 
 
-def set_last_finalized(guild_id, day):
-    """Advance the run-level marker on CONFIG (monotonic; Phase 3's hourly
-    scheduler uses it to decide whether a guild still needs finalizing)."""
+def _advance_marker(guild_id, field, day):
+    """Monotonically advance a day marker on the guild's config item; a no-op
+    for a guild whose config was deleted mid-run."""
     try:
         table().update_item(
-            Key={'PK': guild_pk(guild_id), 'SK': CONFIG_SK},
-            UpdateExpression='SET last_finalized_day = :d',
-            ConditionExpression='attribute_exists(SK) AND '
-                                '(attribute_not_exists(last_finalized_day) OR last_finalized_day < :d)',
+            Key={'PK': GUILDS_PK, 'SK': config_sk(guild_id)},
+            UpdateExpression=f'SET {field} = :d',
+            ConditionExpression=f'attribute_exists(SK) AND '
+                                f'(attribute_not_exists({field}) OR {field} < :d)',
             ExpressionAttributeValues={':d': day},
         )
     except ClientError as e:
         if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
             raise
+
+
+def set_last_finalized(guild_id, day):
+    """Advance the finalize marker (last day folded into aggregates)."""
+    _advance_marker(guild_id, 'last_finalized_day', day)
+
+
+def set_last_posted(guild_id, day):
+    """Advance the post marker (last day whose scoreboard went out for real).
+    The hourly daily lambda gates on this, so test posts never touch it."""
+    _advance_marker(guild_id, 'last_posted_day', day)
 
 
 def rebuild_aggregates(guild_id, through_day):

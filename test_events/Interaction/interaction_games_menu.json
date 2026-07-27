@@ -1,0 +1,12 @@
+{
+  "type": 2,
+  "guild_id": "${TEST_GUILD_ID}",
+  "channel_id": "${TEST_CHANNEL_ID}",
+  "member": {
+    "permissions": "32",
+    "user": {"id": "1"}
+  },
+  "data": {
+    "name": "games"
+  }
+}

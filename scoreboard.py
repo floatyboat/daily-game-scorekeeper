@@ -159,9 +159,9 @@ def reference_date(now, tz, hours_after_midnight, days_back=0):
 
 
 def parse_results(messages, ref_date, tz, hours_after_midnight, time_window_hours,
-                  *, wordle_bot_id=None, avatar_hashes=None):
+                  *, wordle_bot_id=None, avatar_hashes=None, game_overrides=None):
     puzzle_numbers = compute_puzzle_numbers(ref_date)
-    games = build_games(puzzle_numbers)
+    games = build_games(puzzle_numbers, game_overrides)
     checker = make_timestamp_checker(ref_date, tz, hours_after_midnight, time_window_hours)
     results = defaultdict(dict)
     for msg in messages:

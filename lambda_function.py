@@ -1,27 +1,20 @@
 import json
 import os
+import time
+import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from game_parser import format_scoreboard_components, make_timestamp_checker, build_games, compute_points
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date,
-    parse_results, build_avatar_pool, is_scoreboard_message,
-    get_channel_guild_id, safe_guild_id, gather_streaks,
+    parse_results, build_avatar_pool, is_scoreboard_message, gather_streaks,
 )
 import store
 
+# Global bot identity only -- every per-server setting (channels, timezone,
+# schedule, games) lives in the guild's config item and is managed by /setup.
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-INPUT_CHANNEL_ID = os.getenv('INPUT_CHANNEL_ID')
-OUTPUT_CHANNEL_ID = os.getenv('OUTPUT_CHANNEL_ID')
-TEST_CHANNEL_ID = os.getenv('TEST_CHANNEL_ID')
-WORDLE_BOT_ID = os.getenv('WORDLE_BOT_ID')
-HUNDREDS_OF_MESSAGES = int(os.getenv('HUNDREDS_OF_MESSAGES') or 1)
-MINIMUM_PLAYERS = int(os.getenv('MINIMUM_PLAYERS') or 1)
-
-TIMEZONE = ZoneInfo(os.getenv('TIMEZONE') or 'UTC')
-TIME_WINDOW_HOURS = int(os.getenv('TIME_WINDOW_HOURS') or 24)
-HOURS_AFTER_MIDNIGHT = int(os.getenv('HOURS_AFTER_MIDNIGHT') or 0)
 
 _session = make_session(DISCORD_BOT_TOKEN)
 
@@ -43,52 +36,30 @@ def send_message(channel_id, message=None, components=None):
 
     return response.json()
 
+
 def pin_message(channel_id, message_id):
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages/pins/{message_id}'
     _session.put(url)
 
 
-def env_config_defaults():
-    """Seed values for the guild CONFIG item, mirrored from this env.
-
-    Shared with backfill.py so the two config writers can't drift. Phase 3
-    makes the table authoritative for these; env only ever seeds.
-    """
-    return {
-        'input_channel_id': INPUT_CHANNEL_ID,
-        'output_channel_id': OUTPUT_CHANNEL_ID,
-        'timezone': TIMEZONE.key,
-        'hours_after_midnight': HOURS_AFTER_MIDNIGHT,
-        'time_window_hours': TIME_WINDOW_HOURS,
-        'minimum_players': MINIMUM_PLAYERS,
-        'hundreds_of_messages': HUNDREDS_OF_MESSAGES,
-        'wordle_bot_id': WORDLE_BOT_ID,
-        'enabled': True,
-    }
-
-
-def persist_results(results, puzzle_numbers, ref_date):
+def persist_results(cfg, results, puzzle_numbers, ref_date, games):
     """SPEC.md write path: freeze the day and fold streak aggregates.
 
     Runs BEFORE the scoreboard renders (the board displays the exact streaks
     this fold produces, including break callouts) and never raises --
     persistence problems must not break the user-facing post, which simply
-    goes out streak-less. Test invocations parse the same real input channel
+    goes out streak-less. Test invocations parse the same real input channels
     and every store write is idempotent, so they persist too, which keeps
     this path covered by the standard post-change test event.
     """
     try:
-        guild_id = get_channel_guild_id(_session, INPUT_CHANNEL_ID)
-        if not guild_id:
-            return 'store: skipped (input channel has no guild)'
         day = store.day_str(ref_date)
-        games = build_games(puzzle_numbers)
         # compute_points scores each game independently, so per-game calls sum
         # to exactly what the posted points summary shows.
-        points_by_game = {g.key: compute_points(results, [g], MINIMUM_PLAYERS) for g in games}
-        store.ensure_config(guild_id, env_config_defaults())
-        archived = store.write_day(guild_id, day, results, points_by_game, puzzle_numbers)
-        stats = store.finalize_day(guild_id, day, results, points_by_game,
+        points_by_game = {g.key: compute_points(results, [g], cfg['minimum_players'])
+                          for g in games}
+        archived = store.write_day(cfg['guild_id'], day, results, points_by_game, puzzle_numbers)
+        stats = store.finalize_day(cfg['guild_id'], day, results, points_by_game,
                                    [g.key for g in games])
         return (f'store: day={day} archived={archived} '
                 f'aggs updated={stats["updated"]} skipped={stats["skipped"]}')
@@ -96,60 +67,134 @@ def persist_results(results, puzzle_numbers, ref_date):
         return f'store: FAILED {type(e).__name__}: {e}'
 
 
-def lambda_handler(event, context):
-    import time
+def scoreboard_posted_today(cfg, tz, now_local, input_messages):
+    """True when today's board is already in the output channel.
+
+    Belt and braces under the hourly schedule: last_posted_day is the primary
+    gate, this catches a marker lost to a partial failure (or a manual post)
+    by looking for a components-v2 scoreboard posted today, guild-local.
+    """
+    if cfg['output_channel_id'] == cfg['input_channel_id']:
+        candidates = input_messages
+    else:
+        candidates = fetch_messages(_session, cfg['output_channel_id'], limit=10)
+    for msg in candidates[:10]:
+        if not is_scoreboard_message(msg):
+            continue
+        if datetime.fromisoformat(msg['timestamp']).astimezone(tz).date() == now_local.date():
+            return True
+    return False
+
+
+def process_guild(cfg, is_test, test_channel_id):
+    """Post one guild's daily scoreboard if it is due. Returns a summary string.
+
+    Real runs gate on the guild's local post hour and last_posted_day, so the
+    hourly schedule fires this at each guild's own morning exactly once. Test
+    runs skip the gates, post to the test channel, never pin, and never
+    advance last_posted_day -- but they still persist (idempotently), keeping
+    the store path covered by the routine post-change test event.
+    """
+    gid = cfg['guild_id']
     t0 = time.time()
 
-    yesterday = reference_date(datetime.now(TIMEZONE), TIMEZONE, HOURS_AFTER_MIDNIGHT, days_back=1)
+    def note(msg):
+        print(f'[guild {gid} t+{time.time() - t0:.2f}s] {msg}')
 
-    messages = fetch_messages(_session, INPUT_CHANNEL_ID, limit=HUNDREDS_OF_MESSAGES * 100)
-    print(f'[t+{time.time()-t0:.2f}s] fetched {len(messages)} messages')
+    if not cfg['daily_enabled']:
+        return 'daily scoreboard disabled'
+    if not cfg['input_channel_id'] or not (cfg['output_channel_id'] or is_test):
+        return 'channels not configured (run /setup)'
 
+    tz = ZoneInfo(cfg['timezone'])
+    now_local = datetime.now(tz)
+    yesterday = reference_date(now_local, tz, cfg['hours_after_midnight'], days_back=1)
+    day = store.day_str(yesterday)
+    post_hour = cfg['post_hour'] if cfg['post_hour'] is not None else cfg['hours_after_midnight']
+
+    if not is_test:
+        if now_local.hour < post_hour:
+            return f'waiting for {post_hour:02d}:00 local'
+        if cfg['last_posted_day'] and cfg['last_posted_day'] >= day:
+            return f'already posted {day}'
+
+    messages = fetch_messages(_session, cfg['input_channel_id'],
+                              limit=cfg['hundreds_of_messages'] * 100)
+    note(f'fetched {len(messages)} messages')
     if not messages:
-        return {
-            'statusCode': 400,
-            'body': json.dumps('No messages found')
-        }
-    elif is_scoreboard_message(messages[0]):
-        return {
-            'statusCode': 200,
-            'body': json.dumps('Function triggered twice. No message sent.')
-        }
+        return 'no messages in input channel'
 
-    checker = make_timestamp_checker(yesterday, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS)
-    avatar_pool = build_avatar_pool(_session, messages, checker, WORDLE_BOT_ID)
-    print(f'[t+{time.time()-t0:.2f}s] avatar pool has {len(avatar_pool)} users')
+    if not is_test and scoreboard_posted_today(cfg, tz, now_local, messages):
+        store.set_last_posted(gid, day)   # heal the marker so later ticks skip cheaply
+        return f'scoreboard already in channel; marked {day} posted'
+
+    checker = make_timestamp_checker(yesterday, tz, cfg['hours_after_midnight'],
+                                     cfg['time_window_hours'])
+    avatar_pool = build_avatar_pool(_session, messages, checker, cfg['wordle_bot_id'])
+    note(f'avatar pool has {len(avatar_pool)} users')
 
     results, puzzle_numbers = parse_results(
-        messages, yesterday, TIMEZONE, HOURS_AFTER_MIDNIGHT, TIME_WINDOW_HOURS,
-        wordle_bot_id=WORDLE_BOT_ID, avatar_hashes=avatar_pool,
+        messages, yesterday, tz, cfg['hours_after_midnight'], cfg['time_window_hours'],
+        wordle_bot_id=cfg['wordle_bot_id'], avatar_hashes=avatar_pool,
+        game_overrides=cfg['game_overrides'],
     )
-    print(f'[t+{time.time()-t0:.2f}s] parsed {sum(len(v) for v in results.values())} game results')
+    note(f'parsed {sum(len(v) for v in results.values())} game results')
 
-    store_status = persist_results(results, puzzle_numbers, yesterday)
-    print(f'[t+{time.time()-t0:.2f}s] {store_status}')
+    games = build_games(puzzle_numbers, cfg['game_overrides'])
+    note(persist_results(cfg, results, puzzle_numbers, yesterday, games))
 
-    streaks = gather_streaks(safe_guild_id(_session, INPUT_CHANNEL_ID), yesterday,
-                             results, [g.key for g in build_games(puzzle_numbers)])
-
+    streaks = gather_streaks(gid, yesterday, results, [g.key for g in games])
     components = format_scoreboard_components(results, yesterday, puzzle_numbers,
-                                              minimum_players=MINIMUM_PLAYERS,
-                                              streaks=streaks)
+                                              minimum_players=cfg['minimum_players'],
+                                              streaks=streaks,
+                                              game_overrides=cfg['game_overrides'])
 
-    channel = TEST_CHANNEL_ID if 'test' in event else OUTPUT_CHANNEL_ID
+    channel = test_channel_id if is_test else cfg['output_channel_id']
     response = send_message(channel, components=components)
-    print(f'[t+{time.time()-t0:.2f}s] posted scoreboard')
+    note('posted scoreboard')
 
-    if 'test' in event:
-        msg = 'TEST: Scoreboard posted'
-    else:
-        msg = 'Scoreboard posted'
-        pin_message(channel, response['id'])
+    if is_test:
+        return f'TEST: posted {day} scoreboard to {channel}'
+    pin_message(channel, response['id'])
+    store.set_last_posted(gid, day)
+    return f'posted {day}'
 
-    return {
-        'statusCode': 200,
-        'body': json.dumps(msg)
-    }
+
+def lambda_handler(event, context):
+    """Hourly tick: post the daily scoreboard for every guild that is due.
+
+    The guild list comes from the table each invocation, so a server onboarded
+    via /setup is picked up with no deploy or schedule change. Event keys:
+      test             any value: post to the test channel, skip gates, no pin
+      test_channel_id  overrides the TEST_CHANNEL_ID env for this run
+      guild_id         only process this guild
+    """
+    event = event if isinstance(event, dict) else {}
+    is_test = 'test' in event
+    test_channel_id = event.get('test_channel_id') or os.getenv('TEST_CHANNEL_ID')
+    if is_test and not test_channel_id:
+        return {'statusCode': 400,
+                'body': json.dumps('test mode needs test_channel_id in the event '
+                                   'or TEST_CHANNEL_ID in the env')}
+
+    configs = store.all_configs()
+    if event.get('guild_id'):
+        configs = [c for c in configs if c['guild_id'] == str(event['guild_id'])]
+
+    summary = {}
+    for cfg in configs:
+        gid = cfg['guild_id']
+        try:
+            summary[gid] = process_guild(cfg, is_test, test_channel_id)
+        except Exception as e:
+            traceback.print_exc()
+            summary[gid] = f'FAILED {type(e).__name__}: {e}'
+        print(f'guild {gid}: {summary[gid]}')
+
+    if not summary:
+        summary = 'no guilds configured'
+    return {'statusCode': 200, 'body': json.dumps(summary)}
+
 
 if __name__ == '__main__':
-    print(lambda_handler('', ''))
+    print(lambda_handler({'test': True}, None))
