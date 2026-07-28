@@ -1,5 +1,20 @@
 .env
 .vscode
 __pycache__/
+*.pyc
 .claude
 CLAUDE.md
+
+# Generated reports contain real player names - never commit these.
+reports/
+*.report.html
+
+# Build/deploy artifacts (produced by .github/workflows and local dry runs)
+package/
+function.zip
+response.json
+test-event.json
+
+# Local virtualenvs
+.venv/
+venv/

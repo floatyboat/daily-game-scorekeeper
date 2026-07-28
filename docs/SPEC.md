@@ -11,13 +11,27 @@ anywhere, which is why streaks and all-time counts need a store.
 
 | Lambda | File | Trigger | Role |
 |---|---|---|---|
-| `daily-game-score` | `lambda_function.py` | EventBridge, daily | Posts + pins yesterday's scoreboard to the output channel |
-| `daily-game-sticky` | `sticky_lambda.py` | EventBridge, frequent | Maintains the one sticky ("Now Playing") at the channel bottom |
-| `daily-game-play` | `interaction_lambda.py` | Discord Function URL | `/play`, sticky Play/Scores buttons; live ephemeral views |
+| `daily-game-score` | `src/lambda_function.py` | EventBridge, daily | Posts + pins yesterday's scoreboard to the output channel |
+| `daily-game-sticky` | `src/sticky_lambda.py` | EventBridge, frequent | Maintains the one sticky ("Now Playing") at the channel bottom |
+| `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, sticky Play/Scores buttons; live ephemeral views |
 
 Global secrets are env vars per lambda; per-server config is table-only (Phase 3).
 Deploys are zip uploads from three GitHub Actions workflows (us-east-1). No IaC.
+Each workflow packs `src/` **flat** (`zip -j`) so the modules land at the archive
+root, which is what `<module>.lambda_handler` requires.
 `realtime_lambda` is dead and stays dead.
+
+**Dependencies are bundled, never inherited.** Every workflow installs `requests`,
+`Pillow` and `python-dateutil` into the zip (plus `PyNaCl` for the interaction
+lambda) and asserts they are present at the archive root before uploading, so a
+missing dependency fails the build instead of the next cold start. Two implicit
+sources were removed: `game_parser` no longer leans on the runtime's bundled
+boto3 vendoring `dateutil`, and `daily-game-score` no longer takes `requests`
+from a `Klayers-p311-requests` layer built for 3.11 while the function runs 3.13.
+That layer is still attached and is now inert (`/var/task` shadows `/opt`);
+detach it with `python3 tools/infra_setup.py --drop-requests-layer` **after** the
+bundling deploy is live — the step verifies the deployed zip actually contains
+`requests` and no-ops until then, so running it early is safe.
 
 ## Database: DynamoDB
 
@@ -252,16 +266,16 @@ version gated on `PROFILE.dm_opt_in` via `/stats dm on|off`. `/stats [@user]`
 4. **Rollups**: weekly/monthly summaries, `/stats`, DM opt-in.
 
 Phase 3 go-live order (config migration is already done and is invisible to the old
-code): **1.** push/deploy all three lambdas → **2.** `python3 infra_setup.py
+code): **1.** push/deploy all three lambdas → **2.** `python3 tools/infra_setup.py
 --hourly` (daily rule → `cron(0 * * * ? *)` + daily timeout 120s; before this the
 still-daily rule just means the new code posts once at 13:00 UTC as before) →
-**3.** `python3 infra_setup.py --prune-env` (strip the dead per-server vars) →
-**4.** `dotenv run -- python3 register_commands.py` (needs DISCORD_APPLICATION_ID
+**3.** `python3 tools/infra_setup.py --prune-env` (strip the dead per-server vars) →
+**4.** `dotenv run -- python3 tools/register_commands.py` (needs DISCORD_APPLICATION_ID
 in .env, falls back to DISCORD_BOT_ID) → **5.** test events + `/setup show` in the
 server.
 
 Per-player overall streaks (the points-summary `🔥N`) are a later addition and need
-one `dotenv run -- python3 backfill.py --rebuild-only` to seed the new
+one `dotenv run -- python3 tools/backfill.py --rebuild-only` to seed the new
 `PLAYER#<uid> / AGG#SERVER` items from the archived days. Skipping it isn't harmful —
 finalize creates each player's item on their next play — but every streak restarts at
 1 instead of its true historical value.

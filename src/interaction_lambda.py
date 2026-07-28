@@ -725,9 +725,14 @@ def lambda_handler(event, context):
 
 if __name__ == '__main__':
     import sys, re
+    from pathlib import Path
     # Fixtures use ${VAR} placeholders for installation-specific values
-    # (e.g. channel_id) so the handler can stay env-free.
-    fixture = sys.argv[1] if len(sys.argv) > 1 else 'test_events/Interaction/interaction_sticky_scores.json'
+    # (e.g. channel_id) so the handler can stay env-free. Resolved from this
+    # file so the fixture is found no matter the working directory.
+    default_fixture = (Path(__file__).resolve().parent.parent
+                       / 'tests' / 'events' / 'interaction'
+                       / 'interaction_sticky_scores.json')
+    fixture = sys.argv[1] if len(sys.argv) > 1 else str(default_fixture)
     with open(fixture) as f:
         raw = f.read()
     raw = re.sub(r'\$\{(\w+)\}', lambda m: os.environ[m.group(1)], raw)

@@ -4,10 +4,10 @@ on:
   push:
     branches: [ master ]
     paths:
-      - 'lambda_function.py'
-      - 'game_parser.py'
-      - 'scoreboard.py'
-      - 'store.py'
+      - 'src/lambda_function.py'
+      - 'src/game_parser.py'
+      - 'src/scoreboard.py'
+      - 'src/store.py'
       - '.github/workflows/deploy.yml'
 
 jobs:
@@ -33,12 +33,32 @@ jobs:
     
     - name: Package Lambda function
       run: |
-        echo "📦 Installing Pillow in Lambda-compatible container..."
+        # requests is bundled rather than taken from the Klayers-p311-requests
+        # layer (a 3.11 build on a 3.13 runtime); /var/task wins over /opt, so
+        # this shadows the layer and the layer can be detached afterwards.
+        # python-dateutil is bundled because game_parser imports it directly and
+        # must not depend on the runtime's bundled boto3 vendoring a copy.
+        echo "📦 Installing dependencies in Lambda-compatible container..."
         docker run --rm -v "$PWD":/var/task public.ecr.aws/sam/build-python3.13:latest \
-          bash -c "pip install Pillow -t /var/task/package/"
+          bash -c "pip install requests Pillow python-dateutil -t /var/task/package/"
         cd package && zip -r ../function.zip . && cd ..
-        zip function.zip ${{ env.FILE_NAME }} game_parser.py scoreboard.py store.py
+        # -j flattens src/ away: the handler is "<module>.lambda_handler", so
+        # these modules must sit at the zip root, not under src/.
+        zip -j function.zip src/${{ env.FILE_NAME }} src/game_parser.py src/scoreboard.py src/store.py
         echo "✅ Package created: $(ls -lh function.zip | awk '{print $5}')"
+
+        echo "🔎 Verifying handler modules and vendored deps are at the zip root..."
+        python3 - "$FILE_NAME" <<'PY'
+        import sys, zipfile
+        roots = {n.split("/")[0] for n in zipfile.ZipFile("function.zip").namelist()}
+        modules = {sys.argv[1], "game_parser.py", "scoreboard.py", "store.py"}
+        deps = {"requests", "dateutil", "PIL"}
+        missing = sorted((modules | deps) - roots)
+        if missing:
+            print(f"::error::missing from zip root: {', '.join(missing)}")
+            sys.exit(1)
+        print(f"zip root OK: {len(modules)} modules + {len(deps)} vendored deps")
+        PY
     
     - name: Deploy to Lambda
       run: |

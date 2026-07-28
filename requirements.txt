@@ -1,0 +1,37 @@
+# Everything needed to run src/ and tools/ locally:
+#
+#     pip install -r requirements.txt
+#
+# The deploy workflows install a per-function subset directly into the Lambda zip,
+# so this file is the local/dev superset rather than a deploy input. If you add a
+# dependency here, update the matching workflow by hand:
+#
+#     daily-game-score   deploy.yml              requests Pillow python-dateutil
+#     daily-game-sticky  deploy-sticky.yml       requests Pillow python-dateutil
+#     daily-game-play    deploy-interaction.yml  PyNaCl requests Pillow python-dateutil
+#
+# Each workflow asserts these landed at the zip root before it uploads, so a
+# missing dependency fails the build instead of the next cold start.
+
+# --- imported by src/ (ships to Lambda) ---
+
+# scoreboard.py, game_parser.py - avatar and result-grid image rendering
+Pillow
+
+# scoreboard.py, game_parser.py - Discord REST calls
+requests
+
+# interaction_lambda.py - Discord request signature verification
+PyNaCl
+
+# store.py, interaction_lambda.py - DynamoDB access
+boto3
+
+# game_parser.py - ISO timestamp parsing. Bundled explicitly by every workflow;
+# do not rely on the runtime's bundled boto3 vendoring a copy of it.
+python-dateutil
+
+# --- local tooling only (never deployed) ---
+
+# tools/backfill.py, tools/register_commands.py - loads .env via `dotenv run`
+python-dotenv

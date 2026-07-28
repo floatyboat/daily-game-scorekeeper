@@ -1,21 +1,31 @@
 """One-time AWS setup + migration steps for the scoreboard. Safe to re-run.
 
-    python3 infra_setup.py               # table, IAM grants, TABLE_NAME env
-    python3 infra_setup.py --migrate     # copy legacy GUILD#<id>/CONFIG items
-                                         # to the GUILDS partition (pre-deploy safe)
-    python3 infra_setup.py --hourly      # 'time' rule daily -> hourly + daily
-                                         # lambda timeout bump (run AFTER deploy)
-    python3 infra_setup.py --prune-env   # strip per-server env vars from the
-                                         # lambdas (run AFTER deploy)
+Run from the repository root:
+
+    python3 tools/infra_setup.py             # table, IAM grants, TABLE_NAME env
+    python3 tools/infra_setup.py --migrate   # copy legacy GUILD#<id>/CONFIG items
+                                             # to the GUILDS partition (pre-deploy safe)
+    python3 tools/infra_setup.py --hourly    # 'time' rule daily -> hourly + daily
+                                             # lambda timeout bump (run AFTER deploy)
+    python3 tools/infra_setup.py --prune-env # strip per-server env vars from the
+                                             # lambdas (run AFTER deploy)
+    python3 tools/infra_setup.py --drop-requests-layer
+                                             # detach the Klayers requests layer
+                                             # from daily-game-score now that the
+                                             # zip bundles requests (AFTER deploy;
+                                             # refuses until the code is live)
 
 Each step no-ops when already applied. Anything this identity lacks permission
 for is printed as a command to run with an admin identity.
 """
 import argparse
+import io
 import json
 import time
+import zipfile
 
 import boto3
+import requests
 from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
 
@@ -29,6 +39,13 @@ DAILY_RULE = 'time'
 # of the work to a second, asynchronous invocation of itself, so its role needs
 # permission to invoke it (see interaction_lambda.defer).
 INTERACTION_FUNCTION = 'daily-game-play'
+
+# daily-game-score historically got `requests` from a Klayers layer built for
+# python3.11 while the function runs 3.13. The deploy zip now bundles requests
+# itself, so that layer is dead weight -- but it stays load-bearing until the
+# bundled code is actually live, hence the deployed-code check before detaching.
+LAYER_FUNCTION = 'daily-game-score'
+LAYER_NAME_HINT = 'requests'
 
 # Per-server settings now live exclusively in the table (GUILDS partition);
 # these env vars configure nothing once the multi-server code is deployed.
@@ -227,6 +244,50 @@ def prune_env(lam, todo):
                                 Environment={'Variables': env})
 
 
+def _deployed_zip_has(lam, function_name, top_level):
+    """True when the *currently deployed* zip has <top_level> at its root.
+
+    Downloads the code via the presigned URL and reads the archive index. This
+    is what makes dropping the layer safe to run at any time: before the
+    bundling deploy lands the answer is False and the step no-ops.
+    """
+    url = lam.get_function(FunctionName=function_name)['Code']['Location']
+    resp = requests.get(url, timeout=120)
+    resp.raise_for_status()
+    names = zipfile.ZipFile(io.BytesIO(resp.content)).namelist()
+    return top_level in {n.split('/')[0] for n in names}
+
+
+def drop_requests_layer(lam, todo):
+    """Detach the requests layer from daily-game-score once the deploy zip
+    bundles requests itself. AFTER deploy -- detaching while the old code is
+    live would leave that function with no requests at all."""
+    try:
+        cfg = lam.get_function_configuration(FunctionName=LAYER_FUNCTION)
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'ResourceNotFoundException':
+            raise
+        print(f'  {LAYER_FUNCTION}: not found, skipped')
+        return
+
+    attached = [l['Arn'] for l in cfg.get('Layers', [])]
+    keep = [arn for arn in attached
+            if LAYER_NAME_HINT not in arn.split(':')[6].lower()]
+    if len(keep) == len(attached):
+        print(f'  {LAYER_FUNCTION}: no requests layer attached')
+        return
+
+    if not _deployed_zip_has(lam, LAYER_FUNCTION, LAYER_NAME_HINT):
+        print(f'  {LAYER_FUNCTION}: deployed zip does not bundle {LAYER_NAME_HINT} '
+              f'yet -- push the deploy first, then re-run (layer left attached)')
+        return
+
+    dropped = [a for a in attached if a not in keep]
+    _update_function_config(lam, LAYER_FUNCTION, todo,
+                            f"detached {', '.join(a.split(':')[6] for a in dropped)}",
+                            Layers=keep)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--migrate', action='store_true',
@@ -235,6 +296,9 @@ def main():
                     help='switch the daily rule to hourly (run after deploy)')
     ap.add_argument('--prune-env', action='store_true',
                     help='strip per-server env vars from the lambdas (run after deploy)')
+    ap.add_argument('--drop-requests-layer', action='store_true',
+                    help='detach the Klayers requests layer from daily-game-score '
+                         'now that the zip bundles requests (run after deploy)')
     args = ap.parse_args()
 
     todo = []
@@ -245,8 +309,11 @@ def main():
                         boto3.client('lambda', region_name=REGION), todo)
     if args.prune_env:
         prune_env(boto3.client('lambda', region_name=REGION), todo)
+    if args.drop_requests_layer:
+        drop_requests_layer(boto3.client('lambda', region_name=REGION), todo)
 
-    if not (args.migrate or args.hourly or args.prune_env):
+    if not (args.migrate or args.hourly or args.prune_env
+            or args.drop_requests_layer):
         ddb = boto3.client('dynamodb', region_name=REGION)
         lam = boto3.client('lambda', region_name=REGION)
         iam = boto3.client('iam')

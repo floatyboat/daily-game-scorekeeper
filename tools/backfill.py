@@ -1,11 +1,12 @@
 """Backfill the DAY# archive from Discord channel history, then rebuild aggregates.
 
 Local-only tooling (never deployed). Seeds streaks and player stats with their
-true historical values instead of starting from zero (SPEC.md Phase 1):
+true historical values instead of starting from zero (docs/SPEC.md Phase 1).
+Run from the repository root:
 
-    dotenv run -- python3 backfill.py --days 120     # limited window (default)
-    dotenv run -- python3 backfill.py --all          # entire channel history
-    dotenv run -- python3 backfill.py --rebuild-only # aggregates from existing DAY items
+    dotenv run -- python3 tools/backfill.py --days 120     # limited window (default)
+    dotenv run -- python3 tools/backfill.py --all          # entire channel history
+    dotenv run -- python3 tools/backfill.py --rebuild-only # aggregates from existing DAY items
 
 Settings come from the guild's config item in the table (the same source the
 lambdas use); pass --guild when more than one server is configured. Idempotent:
@@ -15,13 +16,19 @@ concurrently with the daily finalize (shortly after the guild's post hour).
 """
 import argparse
 import os
+import sys
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# The lambda modules live in src/ and ship flat in the deploy zip; put that
+# directory on the path so this tool runs against the same code as production.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 
 import store
 from game_parser import make_timestamp_checker, build_games, points_per_game

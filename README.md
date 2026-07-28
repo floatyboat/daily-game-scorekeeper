@@ -16,6 +16,31 @@ Reads a channel in a discord server for daily puzzle games and posts a scoreboar
 12. [Worldle](https://worldlegame.io)
 
 Wordle supports both pasted share text and image recognition from the official Wordle Discord bot.
+
+## Repository Layout
+
+```
+src/      the six modules that ship to Lambda
+tools/    local-only CLIs (never deployed)
+tests/    event fixtures for local runs
+docs/     SPEC.md, the full design doc
+img/      README assets
+```
+
+`src/` is packaged **flat** into each deploy zip (`zip -j`), because the Lambda
+handlers are configured as `<module>.lambda_handler` and so the modules must sit
+at the archive root. `tools/` scripts put `src/` on `sys.path` at startup, so they
+run against exactly the code that deploys.
+
+Run every command from the repository root:
+
+```bash
+pip install -r requirements.txt
+
+dotenv run -- python3 src/lambda_function.py       # local test-mode scoreboard
+dotenv run -- python3 src/interaction_lambda.py    # replay an interaction fixture
+```
+
 ## Setup
 
 Configuration is **per server**, stored in DynamoDB and managed with slash commands —
@@ -34,7 +59,7 @@ is the whole onboarding.
    the daily scoreboard rule fires **hourly** (each server posts when its own local
    post hour comes around), the sticky rule every minute. Point your Discord app's
    Interactions Endpoint URL at the interaction lambda's Function URL, then register
-   the commands: `dotenv run -- python3 register_commands.py`
+   the commands: `dotenv run -- python3 tools/register_commands.py`
 3. In your server (needs **Manage Server**):
     - `/setup input` — channel scores are read in (and where the sticky lives).
       Pick from the menu, or pass `channel` / `channel_id:<id>` for channels the
@@ -53,10 +78,10 @@ is the whole onboarding.
       default-off (e.g. timestamp-only games) can be enabled here per server
 
 ### Streak & Stats Store (Optional)
-The bot can persist daily results to DynamoDB to track server/player streaks and per-game player stats (see `SPEC.md` for the full design). Without the table the bot still works — persistence failures are logged and skipped.
+The bot can persist daily results to DynamoDB to track server/player streaks and per-game player stats (see `docs/SPEC.md` for the full design). Without the table the bot still works — persistence failures are logged and skipped.
 
-1. Run `python3 infra_setup.py` with AWS credentials to create the `daily-game-tracker` table (provisioned 5/5, inside the always-free tier), grant each Lambda's role access, and set `TABLE_NAME` on each function. Steps it lacks permission for are printed as commands to run with an admin identity.
-2. Seed history so streaks start at their true values: `dotenv run -- python3 backfill.py --all` (or `--days N`). Re-running is safe; `--rebuild-only` recomputes aggregates from the archived days without touching Discord.
+1. Run `python3 tools/infra_setup.py` with AWS credentials to create the `daily-game-tracker` table (provisioned 5/5, inside the always-free tier), grant each Lambda's role access, and set `TABLE_NAME` on each function. Steps it lacks permission for are printed as commands to run with an admin identity.
+2. Seed history so streaks start at their true values: `dotenv run -- python3 tools/backfill.py --all` (or `--days N`). Re-running is safe; `--rebuild-only` recomputes aggregates from the archived days without touching Discord.
 
 ### Wordle Image Recognition (Optional)
 The bot can parse Wordle result images posted by the official [Wordle Discord bot](https://support.nytimes.com/s/article/wordle-discord-bot). This requires [Pillow](https://pypi.org/project/Pillow/) to be available in the runtime.

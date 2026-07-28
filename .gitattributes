@@ -1,0 +1,14 @@
+# The lambdas run on Linux; keep LF everywhere so a Windows/WSL checkout
+# does not show every file as modified.
+* text=auto eol=lf
+
+*.py   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.yml  text eol=lf
+*.txt  text eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary

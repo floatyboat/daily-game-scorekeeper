@@ -1,6 +1,6 @@
 """Register the bot's slash commands with Discord (bulk overwrite, safe to re-run).
 
-    dotenv run -- python3 register_commands.py
+    dotenv run -- python3 tools/register_commands.py
 
 Re-run whenever a command or option changes. The `time` and `limits` options are
 generated from store.CONFIG_FIELDS, the same table interaction_lambda reads them
@@ -10,11 +10,17 @@ re-verifies the permission bit regardless of how a server re-maps the command.
 """
 
 import os
+import sys
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# The lambda modules live in src/ and ship flat in the deploy zip; put that
+# directory on the path so this tool runs against the same code as production.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 
 # Local imports after load_dotenv(): store reads TABLE_NAME at import time.
 from scoreboard import PERM_MANAGE_GUILD, TEXT_CHANNEL_TYPES
