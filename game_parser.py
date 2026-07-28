@@ -312,6 +312,12 @@ def _hamming(a, b):
 def _match_avatar(img, grid, candidate_hashes, max_distance=18, margin=4):
     """Crop the avatar at grid position, compare against candidate hashes.
 
+    candidate_hashes maps user_id -> one hash or several, because a member can
+    be rendered with either their server-profile avatar or their global one and
+    the pool carries whichever it could find. Each user is scored by their
+    closest picture, so `margin` below always compares two *different people*
+    rather than two pictures of the same one.
+
     Returns matched user_id or None. Requires the best match to beat the
     second-best by at least `margin` bits to guard against default-avatar
     look-alikes.
@@ -329,7 +335,15 @@ def _match_avatar(img, grid, candidate_hashes, max_distance=18, margin=4):
     crop = img.crop((left, upper, right, lower))
     crop_hash = _avatar_ahash(crop)
 
-    scored = [(uid, _hamming(crop_hash, h)) for uid, h in candidate_hashes.items()]
+    scored = []
+    for uid, hashes in candidate_hashes.items():
+        if isinstance(hashes, int):   # single-hash pool (older callers)
+            hashes = (hashes,)
+        if not hashes:
+            continue
+        scored.append((uid, min(_hamming(crop_hash, ah) for ah in hashes)))
+    if not scored:
+        return None
     scored.sort(key=lambda x: x[1])
     best_uid, best_d = scored[0]
     if best_d > max_distance:

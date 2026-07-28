@@ -130,7 +130,8 @@ def process_guild(cfg, is_test, test_channel_id):
 
     checker = make_timestamp_checker(yesterday, tz, cfg['hours_after_midnight'],
                                      cfg['time_window_hours'])
-    avatar_pool = build_avatar_pool(_session, messages, checker, cfg['wordle_bot_id'])
+    avatar_pool = build_avatar_pool(_session, messages, checker, cfg['wordle_bot_id'],
+                                    gid)
     note(f'avatar pool has {len(avatar_pool)} users')
 
     results, puzzle_numbers = parse_results(

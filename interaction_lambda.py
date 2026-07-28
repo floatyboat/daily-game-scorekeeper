@@ -95,7 +95,8 @@ def fetch_today_results(channel_id, cfg):
     messages = fetch_messages(_session, channel_id, limit=100)
     checker = make_timestamp_checker(today, tz, cfg['hours_after_midnight'],
                                      cfg['time_window_hours'])
-    avatar_pool = build_avatar_pool(_session, messages, checker, cfg['wordle_bot_id'])
+    avatar_pool = build_avatar_pool(_session, messages, checker, cfg['wordle_bot_id'],
+                                    cfg['guild_id'])
     results, puzzle_numbers = parse_results(
         messages, today, tz, cfg['hours_after_midnight'], cfg['time_window_hours'],
         wordle_bot_id=cfg['wordle_bot_id'], avatar_hashes=avatar_pool,

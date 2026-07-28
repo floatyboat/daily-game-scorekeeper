@@ -194,7 +194,8 @@ def run_guild(cfg, force=False):
                                      cfg['time_window_hours'])
 
     messages = fetch_messages(_session, channel_id, limit=200)
-    avatar_pool = build_avatar_pool(_session, messages, checker, cfg['wordle_bot_id'])
+    avatar_pool = build_avatar_pool(_session, messages, checker, cfg['wordle_bot_id'],
+                                    cfg['guild_id'])
 
     results = defaultdict(dict)
     suppressed = 0

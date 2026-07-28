@@ -1,4 +1,6 @@
 """Shared orchestration above game_parser: session, fetch, parse, dedup."""
+import time
+
 import requests
 from datetime import timedelta
 from collections import defaultdict
@@ -254,7 +256,18 @@ def parse_results(messages, ref_date, tz, hours_after_midnight, time_window_hour
     return results, puzzle_numbers
 
 
-def build_avatar_pool(session, messages, checker, wordle_bot_id):
+def build_avatar_pool(session, messages, checker, wordle_bot_id, guild_id=None):
+    """{user_id: (avatar hash, ...)} for attributing multi-player Wordle grids.
+
+    Built only when the window actually holds a multi-player image, since it
+    costs a CDN round trip per candidate user (plus a member lookup when
+    guild_id is known). Each user can carry more than one hash -- see
+    _user_avatar_hashes for why -- and _match_avatar scores them by their
+    closest one.
+
+    guild_id is optional so a caller that can't resolve it still gets the
+    global-avatar pool rather than nothing.
+    """
     if not wordle_bot_id:
         return {}
     if not _has_multiplayer_wordle(messages, checker, wordle_bot_id):
@@ -262,18 +275,22 @@ def build_avatar_pool(session, messages, checker, wordle_bot_id):
     uid_to_avatar = _extract_user_avatars(messages)
     if not uid_to_avatar:
         return {}
+    # Whole-guild server avatars in one read, before the per-user hashing.
+    server_avatars = _guild_server_avatars(session, guild_id)
+
     from concurrent.futures import ThreadPoolExecutor, as_completed
     pool = {}
     with ThreadPoolExecutor(max_workers=16) as ex:
         futures = {
-            ex.submit(_download_avatar_hash, session, uid, avatar): uid
+            ex.submit(_user_avatar_hashes, session, guild_id, uid, avatar,
+                      server_avatars.get(uid)): uid
             for uid, avatar in uid_to_avatar.items()
         }
         for fut in as_completed(futures):
             uid = futures[fut]
-            h = fut.result()
-            if h is not None:
-                pool[uid] = h
+            hashes = fut.result()
+            if hashes:
+                pool[uid] = hashes
     return pool
 
 
@@ -315,6 +332,13 @@ def is_sticky_message(msg, bot_id=None):
 
 
 def _extract_user_avatars(messages):
+    """{user_id: global avatar id or None} for everyone seen in the window.
+
+    Users with no global avatar are kept with a None value rather than dropped:
+    they may still have a server-profile avatar, which is the picture the
+    Wordle image actually renders. _user_avatar_hashes resolves that, and
+    anyone who ends up with no usable picture falls out of the pool there.
+    """
     out = {}
     for m in messages:
         candidates = [m.get('author')]
@@ -325,9 +349,12 @@ def _extract_user_avatars(messages):
             if not src:
                 continue
             uid = src.get('id')
-            avatar = src.get('avatar')
-            if uid and avatar and uid not in out:
-                out[uid] = avatar
+            if not uid:
+                continue
+            # First sighting wins, but a later one carrying an avatar upgrades
+            # an entry we first saw without one.
+            if out.get(uid) is None:
+                out[uid] = src.get('avatar')
     return out
 
 
@@ -343,22 +370,112 @@ def _has_multiplayer_wordle(messages, checker, wordle_bot_id):
     return False
 
 
-_avatar_hash_cache = {}  # (uid, avatar_id) -> hash; survives across calls within a warm process
+# Keyed by the full avatar URL, which embeds Discord's own content hash for the
+# picture. A member who changes their avatar therefore gets a new key and is
+# re-hashed on sight, while the old entry simply goes unused -- so this never
+# needs to expire and never serves a stale picture. Survives across calls
+# within a warm process.
+_avatar_hash_cache = {}   # avatar url -> hash
 
 
-def _download_avatar_hash(session, uid, discord_avatar):
-    key = (uid, discord_avatar)
-    if key in _avatar_hash_cache:
-        return _avatar_hash_cache[key]
+def _download_avatar_hash(session, url):
+    if url in _avatar_hash_cache:
+        return _avatar_hash_cache[url]
     from PIL import Image
     import io
     try:
-        url = f'https://cdn.discordapp.com/avatars/{uid}/{discord_avatar}.png?size=64'
         r = session.get(url, timeout=3)
         r.raise_for_status()
         img = Image.open(io.BytesIO(r.content)).convert('RGB')
         h = _avatar_ahash(img)
-        _avatar_hash_cache[key] = h
+        _avatar_hash_cache[url] = h
         return h
     except Exception:
         return None
+
+
+# One request per 1000 members, via the Server Members Intent. This replaced a
+# per-user fan-out at GET /guilds/{id}/members/{id}, whose 5-requests-per-second
+# bucket 429d most of a pool built flat-out -- and did it silently, since a
+# dropped lookup just falls back to the global avatar and looks exactly like
+# having no server avatar at all.
+GUILD_MEMBER_PAGE = 1000
+MAX_MEMBER_PAGES = 10    # 10k members; past that we degrade to global avatars
+
+# Server avatars are re-read rather than pinned to a member, so a player who
+# changes their picture is picked up on the next refresh at no extra cost. The
+# window bounds how long they can go unattributed while still absorbing the
+# ~900 sticky runs a day that all share one image.
+_SERVER_AVATAR_TTL = 900   # seconds
+_SERVER_AVATAR_RETRY = 60  # after a failed read, retry sooner than a good one
+_server_avatar_cache = {}  # guild_id -> (expires_at, {uid: server avatar id})
+
+
+def _fetch_server_avatars(session, guild_id):
+    """{uid: server avatar id} for every member of the guild that has one.
+
+    Members without one are simply absent, and so are all of them if the guild
+    is bigger than this will page through -- both leave the caller on the
+    global avatar, which is the pre-existing behaviour rather than a failure.
+    """
+    out = {}
+    after = None
+    for _ in range(MAX_MEMBER_PAGES):
+        url = f'{DISCORD_API_BASE}/guilds/{guild_id}/members?limit={GUILD_MEMBER_PAGE}'
+        if after:
+            url += f'&after={after}'
+        r = session.get(url)
+        r.raise_for_status()
+        page = r.json()
+        if not page:
+            break
+        for m in page:
+            if m.get('avatar') and m.get('user', {}).get('id'):
+                out[m['user']['id']] = m['avatar']
+        if len(page) < GUILD_MEMBER_PAGE:
+            break
+        after = page[-1]['user']['id']
+    return out
+
+
+def _guild_server_avatars(session, guild_id):
+    """_fetch_server_avatars behind a short per-process TTL.
+
+    A failed read keeps serving the previous answer (or none) and retries on a
+    shorter clock, so losing the intent or a transient 5xx costs attribution
+    for one window instead of hardening into "nobody has a server avatar".
+    """
+    if not guild_id:
+        return {}
+    cached = _server_avatar_cache.get(guild_id)
+    if cached and cached[0] > time.monotonic():
+        return cached[1]
+    try:
+        avatars, ttl = _fetch_server_avatars(session, guild_id), _SERVER_AVATAR_TTL
+    except Exception as e:
+        print(f'avatar pool: server-avatar read failed, using global avatars -- '
+              f'{type(e).__name__}: {e}')
+        avatars, ttl = (cached[1] if cached else {}), _SERVER_AVATAR_RETRY
+    _server_avatar_cache[guild_id] = (time.monotonic() + ttl, avatars)
+    return avatars
+
+
+def _user_avatar_hashes(session, guild_id, uid, global_avatar, server_avatar):
+    """Hashes of every picture the Wordle image might render this user with.
+
+    Discord shows a member's *server* avatar everywhere inside that guild, and
+    the Wordle bot's preview is no exception -- so for anyone who has set one,
+    the global avatar we harvest from the channel is simply the wrong picture
+    and their grid goes unattributed (observed at 37 bits against an 18-bit
+    ceiling, where the server avatar landed at 3). Both are hashed rather than
+    just the server one, because most members have never set a server avatar
+    and older images predate whatever they have set since.
+    """
+    urls = []
+    if guild_id and server_avatar:
+        urls.append(f'https://cdn.discordapp.com/guilds/{guild_id}/users/{uid}'
+                    f'/avatars/{server_avatar}.png?size=64')
+    if global_avatar:
+        urls.append(f'https://cdn.discordapp.com/avatars/{uid}/{global_avatar}.png?size=64')
+    return tuple(h for h in (_download_avatar_hash(session, u) for u in urls)
+                 if h is not None)

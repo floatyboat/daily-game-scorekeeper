@@ -82,7 +82,8 @@ def backfill_days(session, cfg, tz, messages, start_dt, through_dt):
         if day_msgs:
             checker = make_timestamp_checker(day_dt, tz, cfg['hours_after_midnight'],
                                              cfg['time_window_hours'])
-            pool = build_avatar_pool(session, day_msgs, checker, cfg['wordle_bot_id'])
+            pool = build_avatar_pool(session, day_msgs, checker, cfg['wordle_bot_id'],
+                                     cfg['guild_id'])
             results, puzzle_numbers = parse_results(
                 day_msgs, day_dt, tz, cfg['hours_after_midnight'], cfg['time_window_hours'],
                 wordle_bot_id=cfg['wordle_bot_id'], avatar_hashes=pool,
