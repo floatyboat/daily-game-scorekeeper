@@ -1,7 +1,7 @@
 """Backfill the DAY# archive from Discord channel history, then rebuild aggregates.
 
 Local-only tooling (never deployed). Seeds streaks and player stats with their
-true historical values instead of starting from zero (docs/SPEC.md Phase 1).
+true historical values instead of starting from zero (docs/SPEC.md write path).
 Run from the repository root:
 
     dotenv run -- python3 tools/backfill.py --days 120     # limited window (default)

@@ -1,65 +1,41 @@
-# Streaks, Stats & Multi-Server Spec
+# Daily Scoreboard Bot — Spec
 
-Adds persistence (DynamoDB) for streak tracking, per-game player stats, stat rollups,
-and multi-server support. Written 2026-07 against the current three-lambda architecture.
+The bot reads a Discord channel for daily puzzle results, posts a scoreboard for
+yesterday's games, maintains a live sticky in the input channel, and serves slash
+commands and buttons. It persists each day's parsed results to DynamoDB and derives
+streaks and per-game stats from them. One deployment serves any number of servers;
+all per-server configuration lives in the table.
 
-## Current architecture (context)
+## Architecture
 
-All three lambdas are stateless and recompute everything by re-parsing recent Discord
-message history (last 100–800 messages). Nothing older than the fetch window exists
-anywhere, which is why streaks and all-time counts need a store.
-
-| Lambda | File | Trigger | Role |
+| Lambda | Module | Trigger | Role |
 |---|---|---|---|
-| `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Posts + pins yesterday's scoreboard to the output channel |
-| `daily-game-sticky` | `src/sticky_lambda.py` | EventBridge rule `daily-game-sticky`, `cron(* * * * ? *)` | Maintains the one sticky ("Now Playing") at the channel bottom |
-| `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, sticky Play/Scores buttons; live ephemeral views |
+| `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Posts and pins yesterday's scoreboard; the only writer of day and aggregate items |
+| `daily-game-sticky` | `src/sticky_lambda.py` | EventBridge rule `daily-game-sticky`, `cron(* * * * ? *)` | Maintains the one sticky ("Now Playing") at the bottom of the input channel |
+| `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, `/setup`, `/suggest`, sticky Play/Scores buttons; live ephemeral views |
 
-Each rule is named after the function it drives, except `time` (legacy; it is the
-hourly daily-scoreboard rule, declared as such on the `daily-game-score` entry in
-`infra_setup.FUNCTIONS`). The per-minute rule was renamed from `real-time` on
-2026-07-28 — EventBridge rules cannot be renamed in place, so that was a
-create-new/delete-old swap, which also means re-adding the `events.amazonaws.com`
-invoke permission on the target lambda for the new rule ARN.
+Shared modules: `game_parser.py` (game specs, parsing, scoring, render), `scoreboard.py`
+(Discord fetch/format helpers), `store.py` (all DynamoDB I/O and the config schema).
 
-Global secrets are env vars per lambda; per-server config is table-only (Phase 3).
-Deploys are zip uploads from three GitHub Actions workflows (us-east-1). No IaC.
-Each workflow packs `src/` **flat** (`zip -j`) so the modules land at the archive
+Deployment is zip upload from three GitHub Actions workflows into `us-east-1`; there is
+no IaC. Each workflow packs `src/` **flat** (`zip -j`) so the modules land at the archive
 root, which is what `<module>.lambda_handler` requires.
-`realtime_lambda` is dead and stays dead — the `daily-game-score-realtime`
-function and its log group were deleted on 2026-07-28. Its source had already
-been removed from this repo, so it existed only as deployed bytes; the code and
-config were archived off-repo before deletion.
 
-**Dependencies are bundled, never inherited.** Every workflow installs `requests`,
-`Pillow` and `python-dateutil` into the zip (plus `PyNaCl` for the interaction
-lambda) and asserts they are present at the archive root before uploading, so a
-missing dependency fails the build instead of the next cold start. Two implicit
-sources were removed: `game_parser` no longer leans on the runtime's bundled
-boto3 vendoring `dateutil`, and `daily-game-score` no longer takes `requests`
-from a `Klayers-p311-requests` layer built for 3.11 while the function runs 3.13.
-That layer has since been detached. No lambda declares a layer now, so
-`infra_setup.py` reports any it finds as drift and removes them under `--prune`.
+Dependencies are bundled, never inherited. Every workflow installs `requests`, `Pillow`
+and `python-dateutil` into the zip (plus `PyNaCl` for the interaction lambda) and asserts
+they are present at the archive root before uploading. No lambda declares a layer;
+`tools/infra_setup.py` reports any layer it finds as drift and removes it under `--prune`.
+
+`tools/infra_setup.py` is the declaration of the stack — table, one IAM role per lambda,
+the three functions, log retention, both schedules, the Function URL — and converges live
+state to it. `tools/backfill.py` replays channel history into day items and recomputes
+aggregates. `tools/register_commands.py` registers the slash commands.
 
 ## Database: DynamoDB
 
-- **Always on, no cold start.** HTTP API, not a connection: a cold Lambda adds ~100ms
-  of boto3 client init, then single-digit-ms reads. Discord's 3-second interaction
-  deadline is never at risk; there is no "database was asleep" failure mode.
-- **Free forever at this scale.** Always-free tier: 25 GB storage + 25 provisioned
-  RCU/WCU (legacy free tier applies to this AWS account). This project writes a few KB
-  per guild per day. Provision the table at 5 RCU / 5 WCU. Worst case on-demand
-  pricing would be pennies/month.
-- **Zero new dependencies.** boto3 ships in the Lambda runtime — deploy zips are
-  unchanged except for code. Auth is the Lambda IAM role; no secrets.
-
-SQL fallback: if we ever want SQL instead, Turso (SQLite over HTTP) is the pick, and
-this data model maps 1:1 onto tables. Nothing else in this spec would change.
-
-## Data model
-
-One table `daily-game-tracker`, generic string keys `PK`/`SK`, provisioned 5/5.
-**No GSIs.** Six item types cover every access pattern:
+One table `daily-game-tracker`, generic string keys `PK`/`SK`, provisioned 5 RCU / 5 WCU,
+**no GSIs**. Auth is the Lambda IAM role; boto3 ships in the runtime, so the store adds no
+deploy dependency. Six item types cover every access pattern:
 
 ```
 PK                          SK                 Contents
@@ -84,10 +60,7 @@ GUILD#<guild_id>            AGG#GAME#<key>     per-game server aggregate: curren
                                                (number, refreshed at finalize)
 GUILD#<gid>#PLAYER#<uid>    AGG#SERVER         per-player overall streak (points scored in ANY
                                                game that day): current_streak, best_streak,
-                                               last_played_day, total_plays. Shown in the
-                                               scoreboard's points summary; NOT derivable
-                                               from the per-game items below (a player who
-                                               alternates games has no per-game streak).
+                                               last_played_day, total_plays
 GUILD#<gid>#PLAYER#<uid>    AGG#GAME#<key>     per-player-per-game: current_streak,
                                                best_streak, last_played_day, total_plays,
                                                best/sum score fields where numeric
@@ -96,229 +69,200 @@ GUILD#<gid>#PLAYER#<uid>    PROFILE            display-name snapshot, totals, dm
 
 Access patterns → reads:
 
-- **Play/Scores ordering**: one `Query PK=GUILD#<gid>, SK begins_with AGG#` returns
-  every game's streaks, all-time player set, and 30-day count in a single ~5ms call.
-- **Rollups / rebuild**: a month is ≤31 `DAY#` items, one range Query; pivot in memory
+- **Play/Scores ordering**: one `Query PK=GUILD#<gid>, SK begins_with AGG#` returns every
+  game's streaks, all-time player set, and 30-day count in a single call.
+- **Rollups / rebuild**: a month is ≤31 `DAY#` items, one range Query; pivoted in memory
   for every player at once.
 - **Multi-guild fan-out**: all configs share the `GUILDS` partition, so the scheduled
-  lambdas load every guild with one small Query per tick. (A Scan was the original
-  sketch, but a Scan reads the whole table — every DAY/AGG item — which a per-minute
-  sticky tick would repeat forever; the shared partition costs ~0.5 RCU.) SQS fan-out
-  is the escape hatch if the guild count ever outgrows sequential processing.
-- **Distinct players**: string set on the game aggregate; `ADD` is idempotent; all-time
-  count is the set length. `players_30d` is computed once per day at finalize from the
-  trailing 30 `DAY#` items and stored, so interactive reads stay one small Query.
+  lambdas load every guild with one small Query per tick.
+- **Distinct players**: string set on the game aggregate; `ADD` is idempotent, and the
+  all-time count is the set length. `players_30d` is computed once per day at finalize from
+  the trailing 30 `DAY#` items and stored, so interactive reads stay one small Query.
+
+A per-player overall streak is not derivable from that player's per-game items: a player
+who alternates games has no per-game streak, so `PLAYER#<uid> / AGG#SERVER` is stored in
+its own right.
+
+## Configuration
+
+Global config is env vars per lambda: `TABLE_NAME`, `DISCORD_BOT_TOKEN`, `DISCORD_BOT_ID`,
+`MINIMUM_STREAK` on all three, plus `TEST_CHANNEL_ID` on the daily and sticky lambdas and
+`DISCORD_PUBLIC_KEY` + `DEV_CHANNEL_ID` on the interaction lambda.
+
+**Per-server config lives only in the table; there is no env fallback.** Each setting is
+declared once as a `ConfigField` in `store.CONFIG_FIELDS`, from which the default, the
+stored-value coercion, the slash-command option `register_commands.py` registers, and the
+update `handle_setup` writes back all derive, so an option name cannot drift between the
+registrar and the handler.
+
+| Field | `/setup` option | Default | Meaning |
+|---|---|---|---|
+| `input_channel_id` | `input` | unset | Channel scores are read from; the sticky lives here |
+| `output_channel_id` | `output` | unset | Channel the daily scoreboard posts to |
+| `timezone` | `time timezone` | `UTC` | IANA name |
+| `hours_after_midnight` | `time day_start_hour` | `0` | Hour the scoring day starts |
+| `post_hour` | `time post_hour` | day start hour | Guild-local hour the board posts and the sticky wakes |
+| `time_window_hours` | `time window_hours` | `24` | Hours submissions stay open each day |
+| `minimum_players` | `limits minimum_players` | `1` | Games with fewer players are hidden and score nobody |
+| `hundreds_of_messages` | `limits message_volume` | `1` | Input-channel volume (1–8), sets the fetch depth |
+| `wordle_bot_id` | `limits wordle_bot` | unset | Official Wordle bot; enables image results |
+| `daily_enabled` | `daily enabled` | `true` | Whether the daily board posts |
+| `sticky_enabled` | `sticky enabled` | `true` | Whether the sticky is maintained |
+| `game_overrides` | `games` | `{}` | Explicit per-guild flips of each game's default state |
+| `last_finalized_day` | — | — | Written at finalize; records how far aggregates are folded |
+| `last_posted_day` | — | — | Written after a real post; the post gate |
+
+A guild with no stored item resolves to these defaults with both channels unset, which
+posts nothing anywhere.
+
+## Games and per-server enabling
+
+- Each game is one `GameSpec` in `game_parser.GAME_SPECS`, carrying its key, title, emoji,
+  metric, URL, puzzle-number function, match pattern, score parser, and `disabled` flag.
+- `GameSpec.disabled` is the game's **default only** — every game can be flipped either way
+  per guild. `config.game_overrides` stores just the explicit deviations, so a newly added
+  game reaches every guild with its coded default rather than a frozen snapshot of an old
+  menu submission.
+- The effective list is resolved by `spec_enabled(spec, overrides)` / `build_games(pn,
+  overrides)` and used by **all** paths: daily parse, aggregate updates, sticky counts, Play
+  list, Scores, scoreboard render.
+- Historical day and aggregate data for a disabled game is retained, and neither displayed
+  nor accrued while disabled.
+- `/setup games` manages the set: one admin-only multi-select of all games, pre-selected to
+  the guild's current effective state.
+- Wordle results posted as **images** by the official Wordle Discord bot are parsed only
+  when `wordle_bot_id` is set, which is unset by default. Without it `match_message` never
+  considers an attachment and `build_avatar_pool` returns empty, so neither the image parse
+  nor the guild-member avatar fetch happens; Wordle is tracked from pasted share text
+  alone. With it set, grids are attributed to players by avatar hash, and multi-player
+  grids match against server avatars as well as global ones.
+- Two Discord payload caps bound how far `GAME_SPECS` can grow before these surfaces need
+  splitting across two messages (constants in `scoreboard.py`, noted at the `GAME_SPECS`
+  declaration): the `/setup games` menu is one option per spec, capped at 25; `/play` is one
+  button per *enabled* game at 5 per row plus the Random row, capped at 20.
 
 ## Streak semantics
 
-- A "day" is the existing `reference_date` — already timezone- and
-  `HOURS_AFTER_MIDNIGHT`-aware. Streaks inherit the exact scoring window the
-  scoreboard already uses. No new date logic.
+- A "day" is the existing `reference_date`, already timezone- and
+  `hours_after_midnight`-aware. Streaks inherit the exact scoring window the scoreboard
+  uses.
 - **A play is a scoring result, not a posted one.** Poop scores earn 0 points
-  (`compute_points`), and 0 points keeps nothing alive. So: server streak per game =
-  consecutive game-days with ≥1 result that *scored* for that game — a day everyone
-  failed breaks it. Player streak = same per user: post a poop and your streak for
-  that game ends. Overall streak (server-wide and per player) = points scored in any
-  game. `game_parser.scoring_players()` is the one definition; the finalize fold uses
-  the points it already archives, so stored and displayed streaks can't disagree.
-  Games below `minimum_players` score nobody, so they extend nothing — the same games
-  the board omits. All-time player sets and the 30-day counts still count everyone who
+  (`compute_points`), and 0 points keeps nothing alive. Server streak per game =
+  consecutive game-days with ≥1 result that *scored* for that game; a day everyone failed
+  breaks it. Player streak = the same per user. Overall streak, server-wide and per player,
+  = points scored in any game. `game_parser.scoring_players()` is the one definition, and
+  the finalize fold uses the points it archives, so stored and displayed streaks cannot
+  disagree. Games below `minimum_players` score nobody and so extend nothing — the same
+  games the board omits. All-time player sets and 30-day counts still count everyone who
   posted: participation is a separate question from scoring.
-- Streaks update **once per day at finalize** (the daily scoreboard run — the
-  authoritative daily tick). Played on day D: `last_played_day == D-1` → increment,
-  else reset to 1. Not played on D: archive into `best_streak` if higher, reset to 0.
-- **Active** (for display/sort) = `last_played_day >= yesterday`; otherwise renders
-  as 0. Live views (sticky, Play, Scores) display `current_streak + 1` for games
-  already played today per the live parse, so a 12-day streak reads "🔥 13" the moment
-  someone keeps it alive.
-- A game disabled for a while and re-enabled resumes with whatever
-  `last_played_day` implies — normally a broken (reset) streak. Accepted; no special
-  casing.
+- Streaks update **once per day at finalize** (the daily scoreboard run). Played on day D:
+  `last_played_day == D-1` → increment, else reset to 1. Not played on D: archive into
+  `best_streak` if higher, reset to 0.
+- **Active** (for display and sort) = `last_played_day >= yesterday`; otherwise renders as
+  0. Live views (sticky, Play, Scores) display `current_streak + 1` for games already
+  played today per the live parse, so a 12-day streak reads "🔥 13" the moment someone
+  keeps it alive.
+- A game disabled for a while and re-enabled resumes from whatever `last_played_day`
+  implies — normally a reset streak.
+- One display threshold governs every streak surface (game and Play suffixes, sticky flair,
+  personal markers, break callouts): the `MINIMUM_STREAK` env var, default 3. Shorter
+  streaks still accrue and still sort.
 
-## Per-server game disabling
-
-- `GameSpec.disabled` is the game's **default only** — every game can be flipped
-  either way per guild. `config.game_overrides` (map of game key -> bool) stores just
-  the explicit deviations, so a newly added game reaches every guild with its coded
-  default rather than a frozen snapshot of an old menu submission.
-- Effective list resolved by `spec_enabled(spec, overrides)` / `build_games(pn,
-  overrides)`, used by **all** paths: daily parse, aggregate updates, sticky counts,
-  Play list, Scores, scoreboard render.
-- Historical `DAY#`/aggregate data for a disabled game is retained, just not displayed
-  or accrued while disabled.
-- Managed by `/setup games`: one admin-only multi-select menu of all games,
-  pre-selected to the guild's current effective state.
-- Two Discord payload caps bound how far `GAME_SPECS` can grow before the surfaces
-  need splitting across two messages (constants in `scoreboard.py`, noted at the
-  `GAME_SPECS` declaration): the `/setup games` menu is one option per spec, capped at 25;
-  `/play` is one button per *enabled* game at 5 per row plus the Random row, capped
-  at 20. 17 specs today.
-
-## Write path (daily lambda — the only writer)
+## Write path (daily lambda, the only writer)
 
 After parsing yesterday's results:
 
-1. Write the `DAY#` item — plain overwrite, idempotent. Points are computed via the
-   existing `compute_points` and **frozen into the item**, so historical rollups
-   survive future scoring-rule changes.
-2. Update `AGG#SERVER`, each `AGG#GAME#*`, and each player's `AGG#SERVER` +
-   `AGG#GAME#*` via
-   conditional writes guarded per item on a `finalized_through` attribute (last day
-   folded into that item) — a double-fire physically cannot double-increment, and a
-   run that crashes halfway resumes cleanly because the retry updates exactly the
-   items the first attempt didn't reach. `CONFIG.last_finalized_day` advances at the
-   end as the run-level marker Phase 3's hourly scheduler reads. The existing
-   newest-message-is-a-scoreboard check stays as belt and braces.
+1. Write the `DAY#` item — plain overwrite, idempotent. Points are computed via
+   `compute_points` and **frozen into the item**, so historical rollups survive future
+   scoring-rule changes.
+2. Update `AGG#SERVER`, each `AGG#GAME#*`, and each player's `AGG#SERVER` and `AGG#GAME#*`
+   via conditional writes guarded per item on `finalized_through` (the last day folded into
+   that item). A double-fire cannot double-increment, and a run that crashes halfway resumes
+   cleanly, because the retry updates exactly the items the first attempt didn't reach.
+   `last_finalized_day` advances at the end as the run-level marker.
 3. Refresh `players_30d` on each game aggregate from the trailing 30 `DAY#` items.
-4. ~50–100 writes/day per guild, paced trivially under 5 WCU.
+4. ≈50–100 writes per day per guild, paced under 5 WCU.
 
-**Backfill (one-off script, run locally with dotenv):** `fetch_messages` already
-paginates arbitrarily far back — replay channel history day by day through the
-existing parser, writing `DAY#` items, then compute all aggregates from those. Streaks
-launch at their true historical values, not zero. The same code provides a `rebuild`
-mode: recompute all aggregates from `DAY#` items whenever logic changes.
+`tools/backfill.py` replays channel history day by day through the same parser, writing
+`DAY#` items and then computing all aggregates from them, so streaks launch at their true
+historical values. Its `--rebuild-only` mode recomputes every aggregate from the archived
+days without touching Discord, which is also how a scoring-rule change is applied
+retroactively.
 
-## Read paths / display
+## Read paths and display
 
-- **`store.py`** (new module, peer of `scoreboard.py`) owns all DynamoDB I/O. Each
-  deploy workflow adds it to the zip line and path triggers. New env var `TABLE_NAME`.
-  IAM: Query/GetItem/PutItem/UpdateItem/Scan on the table ARN for each lambda role.
-- **Game ordering** (`game_sort_key`, one shared helper): today's live count desc →
-  active server streak desc → all-time distinct players desc → title. Used
-  everywhere games are listed — Play buttons and scoreboard sections — so the app
-  presents one consistent order. Play labels get a streak suffix:
-  `🔗 Connections (3) 🔥14`.
-- **Scoreboard + Scores button** (`format_scoreboard_components`, shared path): grows
-  an optional streaks argument — "🔥N" suffix on each game's title line, "💔 <Game>
-  streak ended at N" callout on the day it breaks, and personal streak markers at/above
-  the display minimum: the player's **overall** streak in the points summary
+- **`store.py`** owns all DynamoDB I/O and the config schema. IAM per lambda role:
+  Query/GetItem/PutItem/UpdateItem/Scan on the table ARN.
+- **Game ordering** (`game_sort_key`, one shared helper): today's live count desc → active
+  server streak desc → all-time distinct players desc → title. Used everywhere games are
+  listed — Play buttons and scoreboard sections — so the app presents one consistent order.
+  Play labels carry a streak suffix: `🔗 Connections (3) 🔥14`.
+- **Scoreboard and Scores button** (`format_scoreboard_components`, one shared path) take an
+  optional streaks argument: a `🔥N` suffix on each game's title line, a `💔 <Game> streak
+  ended at N` callout on the day it breaks, and personal streak markers at or above the
+  display minimum — the player's **overall** streak in the points summary
   (`👑 @alice: 12 pts 🔥14`) and their per-game streak on each score line
-  (`👑 @alice (x9): 3/6 guesses`). No server-streak line in the header — the
-  server streak's display surface is the sticky.
-- **Fire emoji vs `(xN)`**: streaks that land at most once per board *per subject*
-  render as `🔥N` — a game's title line, the sticky's server streak, and each
-  player's overall streak in the points summary (`_overall_streak_tag()`). Per-game
-  player streaks repeat on every score line of every game, so an emoji there drowns
-  the board: they stay a plain `(xN)` (`_streak_tag()`).
-- **Sticky**: content line ends with the server-wide streak (points scored in any
-  game, live-adjusted) as bare `🔥N`. Sticky-identity logic (Play-button matching) is
-  untouched.
+  (`👑 @alice (x9): 3/6 guesses`). The header carries no server-streak line; the server
+  streak's display surface is the sticky.
+- **Fire emoji vs `(xN)`**: streaks that land at most once per board *per subject* render as
+  `🔥N` — a game's title line, the sticky's server streak, and each player's overall streak
+  in the points summary (`_overall_streak_tag()`). Per-game player streaks repeat on every
+  score line of every game and stay a plain `(xN)` (`_streak_tag()`).
+- **Sticky**: the content line ends with the server-wide streak (points scored in any game,
+  live-adjusted) as a bare `🔥N`. The sticky is identified by its own Play button.
 
-## Multi-server onboarding
+## Commands
 
-- **`/setup`** (admin-only via `default_member_permissions` = Manage Server; the
-  handler re-verifies `member.permissions` since servers can re-map the default).
-  Subcommands: `show` · `input`/`output` (channel-type option, a `channel_id` string
-  escape hatch for channels the picker can't show, or no args at all — the reply is
-  then an ephemeral channel-select menu; every path validates the bot can actually
-  see the channel and errors with instructions when it can't) · `daily on|off` ·
-  `sticky on|off` (off also deletes the existing sticky) · `games` (the
-  multi-select menu above) · `time` (timezone / day_start_hour / post_hour /
-  window_hours) · `limits` (minimum_players / message_volume / wordle_bot).
-- `post_hour` is the guild-local hour the board posts and the sticky wakes;
-  `hours_after_midnight` stays the scoring-day cutoff (the two were conflated in env
-  land — prod posted at 9 while the day started at 3). Unset post_hour = day start.
-- With `daily_enabled` off nothing posts and the sticky drops its Yesterday link
-  (whatever board is still in the channel is stale by definition).
-- **`/suggest`** (everyone, no permission gate): a modal — Discord's only
-  multi-line input — taking a game name, an optional link, and a pasted result,
-  posted to the `DEV_CHANNEL_ID` channel as a candidate `GAME_SPECS` entry. The
-  paste goes in a code fence (share blocks are emoji art and `#`-lines that
-  markdown would rewrite), the link in angle brackets, and `allowed_mentions:
-  {parse: []}` on the post, so nothing a stranger typed can ping or unfurl in the
-  dev's server. `game_parser.match_suggestion()` short-circuits games already in
-  `GAME_SPECS` — exact name/key, or a spec's own host+path among the submitted
-  links — and answers whether it's tracked or merely off in this server. That
-  match stays narrow deliberately: `match_message` can't answer it (its patterns
-  are pinned to one day's puzzle number), and a substring scan would read the
-  games titled "Color" and "Sound" into any text mentioning them, so forwarding a
-  duplicate is the cheaper mistake. Modal submits (interaction type 5) answer
-  inline rather than deferring: the work is one POST, and opening the modal warmed
-  the container a few seconds earlier.
-- Each setting is declared once, as a `ConfigField` in `store.CONFIG_FIELDS`: defaults,
-  stored-value coercion, the slash-command option `register_commands.py` registers, and
-  the update `handle_setup` writes back all derive from that one entry, so an option
-  name cannot drift between the registrar and the handler.
-- Global config stays env (bot token, public key, bot/app ID, TABLE_NAME,
-  TEST_CHANNEL_ID, DEV_CHANNEL_ID). **Per-server config lives only in the table —
-  there is no env fallback.** The original server's legacy CONFIG item was copied
-  into the GUILDS partition during the phase 3 rollout.
-- **Scheduling across timezones**: the daily EventBridge rule becomes **hourly**.
-  Each tick loads all configs and posts for any guild whose local hour has reached
-  its `post_hour` and whose `last_posted_day` is stale, plus a
-  scoreboard-already-in-output-channel check as belt and braces (posting and
-  finalizing are decoupled: test runs finalize — idempotently — but never post for
-  real or advance `last_posted_day`). Sticky keeps its every-minute schedule, loops
-  guilds the same way, and skips guilds outside their [post_hour, midnight) window.
-  Onboarding is automatic: /setup writes the config item; the next tick picks the
-  guild up with no deploy or schedule change.
-- **Test mode stays event-driven**: `{'test': true}` on the daily posts every guild's
-  board to the test channel (`test_channel_id` in the event overrides the
-  TEST_CHANNEL_ID env; `guild_id` filters); on the sticky it runs the test channel
-  under a default config, with any config field overridable straight from the event
-  (e.g. `"daily_enabled": false` previews the linkless sticky).
-- **Invite link**: add `applications.commands` scope; document Send Messages, Read
-  Message History, Manage Messages (embed suppression), and pin permissions in README.
+- **`/setup`** — admin-only via `default_member_permissions` = Manage Server; the handler
+  re-verifies `member.permissions`, since servers can re-map the default. Subcommands:
+  `show` · `input`/`output` · `daily on|off` · `sticky on|off` (off also deletes the
+  existing sticky) · `games` · `time` · `limits`. The channel subcommands take a
+  channel-type option, a `channel_id` string escape hatch for channels the picker can't
+  show, or no arguments at all — the reply is then an ephemeral channel-select menu. Every
+  path validates that the bot can see the channel and errors with instructions when it
+  can't.
+- **`/play`** — ephemeral list of today's enabled games as link buttons, in `game_sort_key`
+  order, with live counts and streak suffixes, plus a Random row.
+- **`/suggest`** — open to everyone, no permission gate: a modal (Discord's only multi-line
+  input) taking a game name, an optional link, and a pasted result, posted to the
+  `DEV_CHANNEL_ID` channel as a candidate `GAME_SPECS` entry. The paste goes in a code
+  fence, the link in angle brackets, and `allowed_mentions: {parse: []}` on the post, so
+  nothing a stranger typed can ping or unfurl in the dev's server.
+  `game_parser.match_suggestion()` short-circuits games already in `GAME_SPECS` — exact
+  name or key, or a spec's own host and path among the submitted links — and answers
+  whether the game is tracked or merely off in this server. Modal submits (interaction
+  type 5) answer inline rather than deferring.
 
-## Rollups (eventual phase)
+## Scheduling
 
-Weekly/monthly mode on the same hourly tick (fires when guild-local time hits Sunday
-evening / the 1st): Query the window's `DAY#` items, pivot per player — plays per
-game, points totals from frozen per-day points, current/best streaks from aggregates,
-participation leaders, most-improved. Post to the output channel. Per-player DM
-version gated on `PROFILE.dm_opt_in` via `/stats dm on|off`. `/stats [@user]`
-(ephemeral, on-demand) falls out nearly free — one partition Query.
+- The daily rule is **hourly**. Each tick loads all configs and posts for any guild whose
+  local hour has reached its `post_hour` and whose `last_posted_day` is stale, with a
+  scoreboard-already-in-output-channel check as belt and braces. Posting and finalizing are
+  decoupled: test runs finalize, idempotently, but never post for real and never advance
+  `last_posted_day`.
+- The sticky rule fires every minute, loops guilds the same way, and skips guilds outside
+  their `[post_hour, midnight)` window.
+- With `daily_enabled` off nothing posts, and the sticky drops its Yesterday link.
+- Onboarding is automatic: `/setup` writes the config item and the next tick picks the guild
+  up, with no deploy or schedule change.
+- **Test mode is event-driven.** `{'test': true}` on the daily posts every guild's board to
+  the test channel (`test_channel_id` in the event overrides the `TEST_CHANNEL_ID` env;
+  `guild_id` filters); on the sticky it runs the test channel under a default config, with
+  any config field overridable straight from the event.
 
-## Free-tier math
+## Capacity and cost
 
-- Storage: `DAY#` item ≈ 1–3 KB/day/guild → ~1 MB/year/guild. 25 GB free ≈ unlimited.
-- Capacity: 5/5 provisioned covers the daily write burst (paced), frequent sticky
-  reads, and interaction clicks, with burst credits absorbing spikes. Total provisioned
-  across all tables must stay ≤ 25/25 to remain free.
+- Storage: a `DAY#` item is ≈1–3 KB per day per guild, ≈1 MB per year per guild, against
+  25 GB of always-free storage.
+- Capacity: 5/5 provisioned covers the daily write burst, the per-minute sticky reads, and
+  interaction clicks, with burst credits absorbing spikes. Total provisioned capacity across
+  all tables must stay ≤ 25/25 to remain in the free tier.
 
-## Phasing
+## Rollups (planned)
 
-1. **Store + writes** — SHIPPED: table, `store.py`, daily-lambda writes, backfill
-   script, IAM.
-2. **Display** — SHIPPED: streaks on scoreboard/Scores, reordered Play list, sticky
-   flair.
-3. **Multi-server** — SHIPPED: `/setup` (incl. `games`), config-from-table only
-   (no env fallback), hourly daily schedule with per-guild gating, original
-   server migrated, invite scopes/README.
-4. **Rollups**: weekly/monthly summaries, `/stats`, DM opt-in.
-
-The one-off flags that carried phases 1–3 across the line (`--migrate`,
-`--hourly`, `--prune-env`, `--drop-requests-layer`) have all been applied and
-are gone from `infra_setup.py`; git history has them if a detail is ever needed.
-Their outcomes are now simply part of the declared state the script converges
-to — hourly rule, 120s daily timeout, no layers, global-only env. Rebuilding
-from nothing is `dotenv run -- python3 tools/infra_setup.py`, then the checklist
-it prints (deploy each function, point Discord's Interactions Endpoint at the
-new Function URL, `dotenv run -- python3 tools/register_commands.py` — which
-needs DISCORD_APPLICATION_ID in `.env` and falls back to DISCORD_BOT_ID), then
-test events + `/setup show` in the server.
-
-Per-player overall streaks (the points-summary `🔥N`) are a later addition and need
-one `dotenv run -- python3 tools/backfill.py --rebuild-only` to seed the new
-`PLAYER#<uid> / AGG#SERVER` items from the archived days. Skipping it isn't harmful —
-finalize creates each player's item on their next play — but every streak restarts at
-1 instead of its true historical value.
-
-The scoring rule ("a poop is not a play") is likewise retroactive only through that
-same `--rebuild-only` run: the archive froze each player's points, so a replay
-recomputes every streak under the new rule. Without it, stored streaks keep whatever
-the old "posted = played" fold gave them and only new days follow the new rule.
-
-## Settled decisions
-
-- **Player-count metric**: store all-time distinct players (string set) and rolling
-  30-day distinct (`players_30d`, refreshed daily at finalize — kept for rollups);
-  **Play sorts by the all-time count** (after today's count and streak).
-- **Streak display minimum**: one threshold for every streak display (game/Play
-  suffixes, sticky flair, personal markers, break callouts), configurable via the
-  `MINIMUM_STREAK` env var, default 3. Shorter streaks still accrue and sort.
-- **Game ordering (app-wide)**: today's live count first, then streak, then all-time
-  distinct players, then title — identical on the Play list and scoreboard sections.
-- **Per-server disabled games**: `GameSpec.disabled` is only each game's default;
-  `config.game_overrides` stores explicit per-guild flips (diffs only), managed via
-  the `/setup games` multi-select, historical data retained.
+Weekly and monthly mode on the same hourly tick, firing when guild-local time reaches
+Sunday evening or the 1st: Query the window's `DAY#` items and pivot per player — plays per
+game, points totals from the frozen per-day points, current and best streaks from the
+aggregates, participation leaders, most-improved — then post to the output channel. A
+per-player DM version is gated on `PROFILE.dm_opt_in` via `/stats dm on|off`, and
+`/stats [@user]` (ephemeral, on demand) is one partition Query.

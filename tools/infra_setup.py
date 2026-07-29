@@ -56,7 +56,7 @@ BASIC_EXECUTION = 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionR
 
 # Provisioned rather than on-demand: 5/5 sits inside the account's always-free
 # tier and covers the daily write burst, the per-minute sticky reads, and
-# interaction clicks (docs/SPEC.md, "Free-tier math").
+# interaction clicks (docs/SPEC.md, "Capacity and cost").
 TABLE_THROUGHPUT = {'ReadCapacityUnits': 5, 'WriteCapacityUnits': 5}
 
 LAMBDA_TRUST = json.dumps({
