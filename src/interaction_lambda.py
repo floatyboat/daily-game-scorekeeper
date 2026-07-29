@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import random
+import re
 import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -10,13 +11,15 @@ from nacl.exceptions import BadSignatureError
 
 from game_parser import (
     build_games, compute_puzzle_numbers, format_scoreboard_components,
-    make_timestamp_checker, game_sort_key, GAME_SPECS, spec_enabled, STREAK_MIN,
+    make_timestamp_checker, game_sort_key, match_suggestion, GAME_SPECS,
+    spec_enabled, STREAK_MIN,
 )
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
     build_avatar_pool, safe_guild_id, gather_streaks, is_sticky_message,
     PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     TEXT_CHANNEL_TYPES, PERM_ADMINISTRATOR, PERM_MANAGE_GUILD, MAX_BUTTONS_PER_ROW,
+    MAX_MESSAGE_LENGTH,
 )
 import store
 
@@ -651,6 +654,156 @@ def handle_setup_component(body, guild_id):
     return _update('Unknown control — re-run `/setup`.')
 
 
+# --- /suggest (a game we don't track yet -> the dev channel) -------------------
+# The one env-configured *destination* in the app, and deliberately so: a
+# suggestion is for whoever maintains GAME_SPECS, not for the server that raised
+# it, so it sits with the global identity vars rather than in per-guild config.
+# Unset just means the bot says it has nowhere to send them.
+DEV_CHANNEL_ID = os.getenv('DEV_CHANNEL_ID')
+
+SUGGEST_MODAL_ID = 'suggest_modal'
+SUGGEST_NAME, SUGGEST_URL, SUGGEST_SCORE = 'name', 'url', 'score'
+# Discord allows 4000, but the paste has to fit one dev-channel message
+# alongside its attribution, and a daily game's share block is a few lines.
+SUGGEST_MAX_SCORE = 1000
+
+
+def _text_input(custom_id, label, placeholder, style=1, required=True, max_length=None):
+    """One modal row: a text input, alone, which is all Discord allows."""
+    field = {'type': 4, 'custom_id': custom_id, 'label': label, 'style': style,
+             'required': required, 'placeholder': placeholder}
+    if max_length is not None:
+        field['max_length'] = max_length
+    return {'type': 1, 'components': [field]}
+
+
+def suggest_modal():
+    """The /suggest form (response type 9, MODAL).
+
+    A modal rather than command options because what's being collected is a
+    pasted share block: slash-command options are single-line, and the line
+    breaks are most of what makes a result readable -- and writable as a
+    GameSpec pattern later.
+    """
+    return {'type': 9, 'data': {
+        'custom_id': SUGGEST_MODAL_ID,
+        'title': 'Suggest a game',
+        'components': [
+            _text_input(SUGGEST_NAME, 'Game name', 'Framed', max_length=45),
+            _text_input(SUGGEST_URL, 'Where do you play it?', 'https://framed.wtf',
+                        required=False, max_length=200),
+            _text_input(SUGGEST_SCORE, 'Paste a result, exactly as it shares',
+                        'Framed #1234 \U0001F7E5\U0001F7E5\U0001F7E9⬛⬛⬛',
+                        style=2, max_length=SUGGEST_MAX_SCORE),
+        ],
+    }}
+
+
+def modal_values(body):
+    """{custom_id: submitted value} for a modal submission."""
+    return {c['custom_id']: (c.get('value') or '').strip()
+            for row in (body.get('data') or {}).get('components') or []
+            for c in row.get('components') or []}
+
+
+def _fenced(text):
+    """A paste, quoted so Discord renders it verbatim -- a share result is emoji
+    art and '#'-prefixed lines, both of which markdown would rewrite. Backticks
+    are swapped out because they would close the fence early."""
+    return '```\n' + text.replace('`', "'") + '\n```'
+
+
+def _inline(text):
+    """One line of user text, rendered as the literal characters it is.
+
+    The paste has a fence to keep it honest; this is for the two fields that sit
+    in prose -- the suggested name and the server it came from, the second of
+    which a hostile server names itself. Unescaped, either could forge bold text
+    or a `[label](url)` masked link in the dev channel, and an embedded newline
+    could start a line of its own. Mentions are already inert (allowed_mentions),
+    so `<` and `>` are left alone rather than rendering as literal backslashes.
+    """
+    return re.sub(r'([*_~`|\\\[\]])', r'\\\1', ' '.join(str(text).split()))
+
+
+def suggestion_message(name, url, score, body):
+    """The dev-channel post for one suggestion: what it is, who sent it, and the
+    raw paste a new GameSpec pattern would have to match."""
+    user_id = interaction_user_id(body)
+    who = f'<@{user_id}>' if user_id else 'an unknown user'
+    where = (body.get('guild') or {}).get('name') or body.get('guild_id') or 'a DM'
+    lines = [f'### \U0001F579️ Game suggestion: {_inline(name)}']
+    if url:
+        # Angle brackets suppress the embed -- this is a link a stranger typed --
+        # so the link itself must not be able to carry a closing bracket and put
+        # an embed (or anything else) back on the line.
+        lines.append('<{}>'.format(re.sub(r'[<>\s]', '', url)))
+    lines.append(f'-# from {who} in {_inline(where)}')
+    lines.append(_fenced(score))
+    return '\n'.join(lines)[:MAX_MESSAGE_LENGTH]
+
+
+def already_tracked(spec, guild_id):
+    """Reply for a suggestion naming a game GAME_SPECS already covers, including
+    the case worth acting on: supported, but switched off in this server."""
+    if spec_enabled(spec, guild_cfg(guild_id)['game_overrides']):
+        return _ephemeral(f'{spec.emoji} **{spec.title}** is already tracked here — '
+                          'post your result in the scores channel and it lands on '
+                          "today's board.")
+    # A DM has no server to have turned it off, so it is seeing the coded default.
+    where = 'in this server' if guild_id else 'by default'
+    return _ephemeral(f'{spec.emoji} **{spec.title}** is already supported but turned '
+                      f'off {where} — an admin can switch it back on with `/games`.')
+
+
+def handle_suggest(body):
+    """Modal submit: forward one game suggestion to the dev channel.
+
+    Answered inline rather than deferred like the live views: the only work is a
+    single POST, and the container is warm by definition -- opening the modal was
+    an invocation of this same function seconds earlier.
+    """
+    values = modal_values(body)
+    name = values.get(SUGGEST_NAME, '')
+    url = values.get(SUGGEST_URL, '')
+    score = values.get(SUGGEST_SCORE, '')
+    if not name or not score:
+        return _ephemeral('I need the game name and a pasted result — '
+                          'run `/suggest` again.')
+
+    spec = match_suggestion(name, url, score)
+    if spec:
+        return already_tracked(spec, body.get('guild_id'))
+
+    # Logged before it is sent, so a suggestion outlives a failed post.
+    print(f'suggest: {name!r} url={url!r} guild={body.get("guild_id")} '
+          f'user={interaction_user_id(body)}')
+    if not DEV_CHANNEL_ID:
+        return _ephemeral("Thanks! Suggestions aren't set up on this bot right now, "
+                          'so there was nowhere to pass it along.')
+
+    r = _session.post(f'{DISCORD_API_BASE}/channels/{DEV_CHANNEL_ID}/messages',
+                      json={'content': suggestion_message(name, url, score, body),
+                            # Nothing a stranger typed gets to ping the dev server.
+                            'allowed_mentions': {'parse': []}})
+    if not r.ok:
+        print(f'suggest: post failed {r.status_code} {r.text[:200]}')
+        return _ephemeral("I couldn't pass that along just now — try again shortly.")
+    return _ephemeral(f'✅ Sent **{_inline(name)}** to the devs — thanks! Games show '
+                      'up in `/games` once one is added.')
+
+
+def guarded(fn, *args):
+    """Run an interaction handler, turning a crash into something readable.
+    Discord's own failure mode is an opaque 'interaction failed', which on a
+    modal also throws away everything the user typed."""
+    try:
+        return fn(*args)
+    except Exception as e:
+        traceback.print_exc()
+        return _ephemeral(f'Something went wrong ({type(e).__name__}) — try again shortly.')
+
+
 def admin_dispatch(fn, body):
     """Shared gate for every config surface: guild-only, Manage Server (or
     Administrator) re-verified server-side, store failures turned into a
@@ -660,11 +813,7 @@ def admin_dispatch(fn, body):
         return _ephemeral('Run this in a server — configuration is per-server.')
     if not is_admin(body):
         return _ephemeral('You need **Manage Server** to configure the scoreboard.')
-    try:
-        return fn(body, guild_id)
-    except Exception as e:
-        traceback.print_exc()
-        return _ephemeral(f'Something went wrong ({type(e).__name__}) — try again shortly.')
+    return guarded(fn, body, guild_id)
 
 
 def _http(payload):
@@ -709,6 +858,10 @@ def lambda_handler(event, context):
             return _http(admin_dispatch(handle_setup, body))
         if command_name == 'games':
             return _http(admin_dispatch(handle_games, body))
+        if command_name == 'suggest':
+            # Opening a modal is the whole response -- the paste comes back as a
+            # separate MODAL_SUBMIT interaction below.
+            return _http(suggest_modal())
 
     # MESSAGE_COMPONENT (type 3) — sticky buttons + setup selects
     if body.get('type') == 3:
@@ -720,11 +873,16 @@ def lambda_handler(event, context):
         if custom_id == GAMES_SELECT_ID or custom_id.startswith(CHANNEL_SELECT_PREFIX):
             return _http(admin_dispatch(handle_setup_component, body))
 
+    # MODAL_SUBMIT (type 5) — the /suggest form coming back filled in
+    if body.get('type') == 5:
+        if body.get('data', {}).get('custom_id') == SUGGEST_MODAL_ID:
+            return _http(guarded(handle_suggest, body))
+
     return {'statusCode': 400, 'body': 'Unknown interaction type'}
 
 
 if __name__ == '__main__':
-    import sys, re
+    import sys
     from pathlib import Path
     # Fixtures use ${VAR} placeholders for installation-specific values
     # (e.g. channel_id) so the handler can stay env-free. Resolved from this

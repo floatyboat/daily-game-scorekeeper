@@ -11,15 +11,25 @@ anywhere, which is why streaks and all-time counts need a store.
 
 | Lambda | File | Trigger | Role |
 |---|---|---|---|
-| `daily-game-score` | `src/lambda_function.py` | EventBridge, daily | Posts + pins yesterday's scoreboard to the output channel |
-| `daily-game-sticky` | `src/sticky_lambda.py` | EventBridge, frequent | Maintains the one sticky ("Now Playing") at the channel bottom |
+| `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Posts + pins yesterday's scoreboard to the output channel |
+| `daily-game-sticky` | `src/sticky_lambda.py` | EventBridge rule `daily-game-sticky`, `cron(* * * * ? *)` | Maintains the one sticky ("Now Playing") at the channel bottom |
 | `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, sticky Play/Scores buttons; live ephemeral views |
+
+Each rule is named after the function it drives, except `time` (legacy; it is the
+hourly daily-scoreboard rule, and `infra_setup.DAILY_RULE` still hardcodes that
+name). The per-minute rule was renamed from `real-time` on 2026-07-28 — EventBridge
+rules cannot be renamed in place, so that was a create-new/delete-old swap, which
+also means re-adding the `events.amazonaws.com` invoke permission on the target
+lambda for the new rule ARN.
 
 Global secrets are env vars per lambda; per-server config is table-only (Phase 3).
 Deploys are zip uploads from three GitHub Actions workflows (us-east-1). No IaC.
 Each workflow packs `src/` **flat** (`zip -j`) so the modules land at the archive
 root, which is what `<module>.lambda_handler` requires.
-`realtime_lambda` is dead and stays dead.
+`realtime_lambda` is dead and stays dead — the `daily-game-score-realtime`
+function and its log group were deleted on 2026-07-28. Its source had already
+been removed from this repo, so it existed only as deployed bytes; the code and
+config were archived off-repo before deletion.
 
 **Dependencies are bundled, never inherited.** Every workflow installs `requests`,
 `Pillow` and `python-dateutil` into the zip (plus `PyNaCl` for the interaction
@@ -213,13 +223,28 @@ mode: recompute all aggregates from `DAY#` items whenever logic changes.
 - With `daily_enabled` off nothing posts and the sticky drops its Yesterday link
   (whatever board is still in the channel is stale by definition).
 - **`/games`**: the multi-select menu above.
+- **`/suggest`** (everyone, no permission gate): a modal — Discord's only
+  multi-line input — taking a game name, an optional link, and a pasted result,
+  posted to the `DEV_CHANNEL_ID` channel as a candidate `GAME_SPECS` entry. The
+  paste goes in a code fence (share blocks are emoji art and `#`-lines that
+  markdown would rewrite), the link in angle brackets, and `allowed_mentions:
+  {parse: []}` on the post, so nothing a stranger typed can ping or unfurl in the
+  dev's server. `game_parser.match_suggestion()` short-circuits games already in
+  `GAME_SPECS` — exact name/key, or a spec's own host+path among the submitted
+  links — and answers whether it's tracked or merely off in this server. That
+  match stays narrow deliberately: `match_message` can't answer it (its patterns
+  are pinned to one day's puzzle number), and a substring scan would read the
+  games titled "Color" and "Sound" into any text mentioning them, so forwarding a
+  duplicate is the cheaper mistake. Modal submits (interaction type 5) answer
+  inline rather than deferring: the work is one POST, and opening the modal warmed
+  the container a few seconds earlier.
 - Each setting is declared once, as a `ConfigField` in `store.CONFIG_FIELDS`: defaults,
   stored-value coercion, the slash-command option `register_commands.py` registers, and
   the update `handle_setup` writes back all derive from that one entry, so an option
   name cannot drift between the registrar and the handler.
 - Global config stays env (bot token, public key, bot/app ID, TABLE_NAME,
-  TEST_CHANNEL_ID). **Per-server config lives only in the table — there is no env
-  fallback.** `infra_setup.py --migrate` copied the original server's legacy CONFIG
+  TEST_CHANNEL_ID, DEV_CHANNEL_ID). **Per-server config lives only in the table —
+  there is no env fallback.** `infra_setup.py --migrate` copied the original server's legacy CONFIG
   item into the GUILDS partition.
 - **Scheduling across timezones**: the daily EventBridge rule becomes **hourly**.
   Each tick loads all configs and posts for any guild whose local hour has reached

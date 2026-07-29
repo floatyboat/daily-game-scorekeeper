@@ -719,6 +719,45 @@ def spec_enabled(spec, game_overrides=None):
     return not spec.disabled
 
 
+def _alnum(text):
+    """Letters and digits only, lowercased -- 'Pop Culture Colors' and
+    'popcultureColors' are the same answer to "which game is this?"."""
+    return re.sub(r'[^a-z0-9]', '', (text or '').lower())
+
+
+def _site(url):
+    """A game's page identity: host (minus scheme and www.) plus its path, with
+    the query string dropped -- `dialed.gg/sound` and `nytimes.com/games/wordle`.
+    Compared whole, never as a prefix: dialed.gg hosts three separate tracked
+    games and nytimes.com/games four, so a host-level match would read a fourth
+    game on either as already supported."""
+    m = re.search(r'(?:https?://)?(?:www\.)?([^\s?#<>]+)', url or '', re.IGNORECASE)
+    return m.group(1).rstrip('/').lower() if m else ''
+
+
+def match_suggestion(name='', url='', text=''):
+    """The GameSpec a /suggest submission is plainly already about, or None.
+
+    Deliberately narrow: an exact name/key hit, or the game's own page among the
+    links in the submission. match_message() cannot answer this -- its patterns
+    are pinned to one day's puzzle number and a suggestion gets pasted whenever
+    -- and a looser scan (spec titles as substrings) would read the games called
+    "Color" and "Sound" into any text that mentions them, discarding a real
+    suggestion to save the devs a duplicate. Anything less than obvious is
+    forwarded instead and read by a human, which is the cheaper mistake.
+    """
+    key = _alnum(name)
+    sites = {s for s in
+             [_site(url)] + [_site(u) for u in re.findall(r'https?://\S+', text or '')]
+             if s}
+    for spec in GAME_SPECS:
+        if key and key in (_alnum(spec.title), _alnum(spec.key)):
+            return spec
+        if _site(spec.url) in sites:
+            return spec
+    return None
+
+
 def build_games(puzzle_numbers, game_overrides=None):
     """Resolve GAME_SPECS into concrete Game descriptors for one reference date.
 

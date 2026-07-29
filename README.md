@@ -51,7 +51,8 @@ is the whole onboarding.
 1. Create a bot on the [Discord Developer Page](https://discord.com/developers/applications)
     - Copy the token from the `Bot` page into your `.env` as `DISCORD_BOT_TOKEN`; set
       `DISCORD_BOT_ID`, `DISCORD_APPLICATION_ID`, and `DISCORD_PUBLIC_KEY` from the
-      `General Information`/`Bot` pages
+      `General Information`/`Bot` pages. Optionally set `DEV_CHANNEL_ID` to the
+      channel `/suggest` submissions should land in (see below)
     - On the `OAuth2` page select the `bot` and `applications.commands` scopes with
       `Send Messages`, `Read Message History`, `Manage Messages` (embed suppression +
       pinning); open the generated link to add the bot to your server
@@ -76,6 +77,18 @@ is the whole onboarding.
       Yesterday link while paused); `/setup sticky enabled:false` — remove the sticky
     - `/games` — a multi-select of every supported game; games the code marks
       default-off (e.g. timestamp-only games) can be enabled here per server
+
+### Game Suggestions (Optional)
+`/suggest` is open to everyone: it opens a form for a game name, an optional link,
+and a pasted result from a game the bot doesn't track yet. The bot forwards it —
+paste kept verbatim, mentions defused, link un-embedded — to the channel named by
+the `DEV_CHANNEL_ID` env var on the interaction lambda, where it becomes a
+candidate for a new `GAME_SPECS` entry.
+
+Suggestions naming a game that is already supported are answered on the spot
+instead of forwarded, including the case worth acting on: *supported, but off in
+this server — an admin can switch it back on with `/games`*. With `DEV_CHANNEL_ID`
+unset the command still answers, saying it has nowhere to send them.
 
 ### Streak & Stats Store (Optional)
 The bot can persist daily results to DynamoDB to track server/player streaks and per-game player stats (see `docs/SPEC.md` for the full design). Without the table the bot still works — persistence failures are logged and skipped.

@@ -77,6 +77,14 @@ COMMANDS = [
         'type': CHAT_INPUT,
     },
     {
+        # No permission gate and no options: anyone can suggest, and the reply is
+        # a modal (interaction_lambda.suggest_modal) because the payload is a
+        # multi-line paste that command options can't carry.
+        'name': 'suggest',
+        'description': 'Suggest a daily game to add — paste one of your results',
+        'type': CHAT_INPUT,
+    },
+    {
         'name': 'setup',
         'description': 'Configure the daily game scoreboard for this server',
         'type': CHAT_INPUT,

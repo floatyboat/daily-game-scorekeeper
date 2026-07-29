@@ -44,6 +44,7 @@ PERM_MANAGE_GUILD = 0x20
 MAX_ACTION_ROWS = 5          # top-level components in one message
 MAX_BUTTONS_PER_ROW = 5
 MAX_SELECT_OPTIONS = 25      # options in one string select
+MAX_MESSAGE_LENGTH = 2000    # characters in one message's content
 
 
 # (connect, read) seconds applied to every Discord call made through
