@@ -158,6 +158,18 @@ def post_hour(cfg):
     return cfg['hours_after_midnight'] if cfg['post_hour'] is None else cfg['post_hour']
 
 
+def installed_app_ids(cfg):
+    """Discord application ids this guild has told us about.
+
+    Just the Wordle bot today, whose id doubles as its application id (Discord
+    gives an app's bot user the application's own id). Game specs carry the app
+    they belong to (GameSpec.discord_app), so the Play list can offer an
+    in-Discord launcher for any game whose app is present without either module
+    having to name a field of the other's.
+    """
+    return {app_id for app_id in (cfg['wordle_bot_id'],) if app_id}
+
+
 _resource = None
 _table = None
 

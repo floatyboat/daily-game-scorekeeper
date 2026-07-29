@@ -105,7 +105,7 @@ registrar and the handler.
 | `time_window_hours` | `time window_hours` | `24` | Hours submissions stay open each day |
 | `minimum_players` | `limits minimum_players` | `1` | Games with fewer players are hidden and score nobody |
 | `hundreds_of_messages` | `limits message_volume` | `1` | Input-channel volume (1–8), sets the fetch depth |
-| `wordle_bot_id` | `limits wordle_bot` | unset | Official Wordle bot; enables image results |
+| `wordle_bot_id` | `limits wordle_bot` | unset | Official Wordle bot; enables image results and the in-Discord Play launcher |
 | `daily_enabled` | `daily enabled` | `true` | Whether the daily board posts |
 | `sticky_enabled` | `sticky enabled` | `true` | Whether the sticky is maintained |
 | `game_overrides` | `games` | `{}` | Explicit per-guild flips of each game's default state |
@@ -136,6 +136,18 @@ posts nothing anywhere.
   nor the guild-member avatar fetch happens; Wordle is tracked from pasted share text
   alone. With it set, grids are attributed to players by avatar hash, and multi-player
   grids match against server avatars as well as global ones.
+- A game may also carry `GameSpec.discord_app`, the application id of an official Discord
+  app for that game (Wordle only, today). When the guild has that app configured —
+  `store.installed_app_ids(cfg)`, currently just `wordle_bot_id`, which doubles as the
+  app's id — the Play list points that game's button at the app's own launch button in the
+  channel (`scoreboard.find_launch_url`) instead of its website, so it opens inside Discord.
+  Discord reserves the `LAUNCH_ACTIVITY` interaction response for an app's own activity, so
+  linking to a message where the app already posted that button is as direct as a third
+  party can get. The scan reuses the page `fetch_today_results` already fetched, costs no
+  extra call, matches on "that app posted it and it carries a button" rather than on a
+  custom_id, and takes the newest hit. Both the game's own button and a Random pick of it
+  resolve through the same URL; with no app configured, or no launch message in the page,
+  the button falls back to the website.
 - Two Discord payload caps bound how far `GAME_SPECS` can grow before these surfaces need
   splitting across two messages (constants in `scoreboard.py`, noted at the `GAME_SPECS`
   declaration): the `/setup games` menu is one option per spec, capped at 25; `/play` is one

@@ -332,6 +332,33 @@ def is_sticky_message(msg, bot_id=None):
     return (msg.get('content') or '').startswith(STICKY_HEADING)
 
 
+def find_launch_url(messages, app_id, guild_id, channel_id):
+    """Jump link to a game app's own launch button, or None.
+
+    Discord reserves LAUNCH_ACTIVITY for an app's own activity, so no bot can
+    open Wordle from a button of its own. What it can do is point at a message
+    where the app already put that button: Wordle posts its daily summary and
+    every live game with a "Play now!" button (custom_ids summary_launch /
+    live_game_launch) that opens the game right in the channel. The Play list
+    links there, leaving the launch one tap away and skipping the browser.
+
+    Matched on "this app posted it and it carries a button", not on the
+    custom_id, so renaming their buttons doesn't silently break the link. Newest
+    wins -- fetch_messages returns newest first -- which is the live game when
+    one is running and the daily summary otherwise.
+    """
+    if not (app_id and guild_id and channel_id):
+        return None
+    for m in messages:
+        if m.get('author', {}).get('id') != app_id and m.get('application_id') != app_id:
+            continue
+        for row in (m.get('components') or []):
+            for c in row.get('components', []):
+                if c.get('type') == 2 and c.get('custom_id'):
+                    return f'https://discord.com/channels/{guild_id}/{channel_id}/{m["id"]}'
+    return None
+
+
 def _extract_user_avatars(messages):
     """{user_id: global avatar id or None} for everyone seen in the window.
 
