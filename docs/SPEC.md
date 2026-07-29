@@ -148,11 +148,11 @@ Access patterns → reads:
   Play list, Scores, scoreboard render.
 - Historical `DAY#`/aggregate data for a disabled game is retained, just not displayed
   or accrued while disabled.
-- Managed by `/games`: one admin-only multi-select menu of all games, pre-selected to
-  the guild's current effective state.
+- Managed by `/setup games`: one admin-only multi-select menu of all games,
+  pre-selected to the guild's current effective state.
 - Two Discord payload caps bound how far `GAME_SPECS` can grow before the surfaces
   need splitting across two messages (constants in `scoreboard.py`, noted at the
-  `GAME_SPECS` declaration): the `/games` menu is one option per spec, capped at 25;
+  `GAME_SPECS` declaration): the `/setup games` menu is one option per spec, capped at 25;
   `/play` is one button per *enabled* game at 5 per row plus the Random row, capped
   at 20. 17 specs today.
 
@@ -214,15 +214,14 @@ mode: recompute all aggregates from `DAY#` items whenever logic changes.
   escape hatch for channels the picker can't show, or no args at all — the reply is
   then an ephemeral channel-select menu; every path validates the bot can actually
   see the channel and errors with instructions when it can't) · `daily on|off` ·
-  `sticky on|off` (off also deletes the existing sticky) · `time` (timezone /
-  day_start_hour / post_hour / window_hours) · `limits` (minimum_players /
-  message_volume / wordle_bot).
+  `sticky on|off` (off also deletes the existing sticky) · `games` (the
+  multi-select menu above) · `time` (timezone / day_start_hour / post_hour /
+  window_hours) · `limits` (minimum_players / message_volume / wordle_bot).
 - `post_hour` is the guild-local hour the board posts and the sticky wakes;
   `hours_after_midnight` stays the scoring-day cutoff (the two were conflated in env
   land — prod posted at 9 while the day started at 3). Unset post_hour = day start.
 - With `daily_enabled` off nothing posts and the sticky drops its Yesterday link
   (whatever board is still in the channel is stale by definition).
-- **`/games`**: the multi-select menu above.
 - **`/suggest`** (everyone, no permission gate): a modal — Discord's only
   multi-line input — taking a game name, an optional link, and a pasted result,
   posted to the `DEV_CHANNEL_ID` channel as a candidate `GAME_SPECS` entry. The
@@ -285,7 +284,7 @@ version gated on `PROFILE.dm_opt_in` via `/stats dm on|off`. `/stats [@user]`
    script, IAM.
 2. **Display** — SHIPPED: streaks on scoreboard/Scores, reordered Play list, sticky
    flair.
-3. **Multi-server** — BUILT (deploy steps below): `/setup` + `/games`,
+3. **Multi-server** — BUILT (deploy steps below): `/setup` (incl. `games`),
    config-from-table only (no env fallback), hourly daily schedule with per-guild
    gating, current server migrated, invite scopes/README.
 4. **Rollups**: weekly/monthly summaries, `/stats`, DM opt-in.
@@ -322,4 +321,4 @@ the old "posted = played" fold gave them and only new days follow the new rule.
   distinct players, then title — identical on the Play list and scoreboard sections.
 - **Per-server disabled games**: `GameSpec.disabled` is only each game's default;
   `config.game_overrides` stores explicit per-guild flips (diffs only), managed via
-  the `/games` multi-select, historical data retained.
+  the `/setup games` multi-select, historical data retained.

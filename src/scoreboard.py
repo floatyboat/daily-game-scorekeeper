@@ -35,7 +35,7 @@ PERM_MANAGE_GUILD = 0x20
 
 # Discord payload caps the rendered surfaces have to fit inside. Today's 17
 # games clear both: /play tops out at 4 button rows plus the Random row, and the
-# /games menu uses 17 of 25 options.
+# /setup games menu uses 17 of 25 options.
 #
 # FUTURE: when GAME_SPECS outgrows either cap, split across two messages (the
 # interaction reply plus a follow-up) rather than truncating -- a silently

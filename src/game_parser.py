@@ -467,9 +467,9 @@ class GameSpec:
       total_key puzzle_numbers slot whose value overrides `total` (bandle's total
                 comes off the message); parse must emit it in its metadata
       disabled  the game's DEFAULT state: guilds start with it untracked. Admins
-                flip any game either way per guild via /games (game_overrides in
-                the guild config); this flag only decides what a guild gets
-                before anyone touches the menu.
+                flip any game either way per guild via /setup games
+                (game_overrides in the guild config); this flag only decides
+                what a guild gets before anyone touches the menu.
     """
     key: str
     emoji: str
@@ -582,10 +582,10 @@ def _parse_travle(m, content):
 #
 # Adding a game is one entry here and nothing else -- except that two rendered
 # surfaces have Discord payload caps this list now feeds (scoreboard.py holds
-# the constants): the /games menu is one option per spec and tops out at 25,
-# and /play is one button per ENABLED game at 5 per row plus the Random row,
-# so it tops out at 20. 17 specs today. Past either, the fix is to split the
-# response across two messages -- see the FUTURE note in scoreboard.py.
+# the constants): the /setup games menu is one option per spec and tops out
+# at 25, and /play is one button per ENABLED game at 5 per row plus the Random
+# row, so it tops out at 20. 17 specs today. Past either, the fix is to split
+# the response across two messages -- see the FUTURE note in scoreboard.py.
 
 GAME_SPECS = [
     GameSpec(
@@ -712,7 +712,7 @@ GAME_SPECS = [
 
 
 def spec_enabled(spec, game_overrides=None):
-    """Whether a game is tracked for a guild: the guild's explicit /games
+    """Whether a game is tracked for a guild: the guild's explicit /setup games
     choice when present, the spec's coded default otherwise."""
     if game_overrides and spec.key in game_overrides:
         return bool(game_overrides[spec.key])

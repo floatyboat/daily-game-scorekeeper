@@ -66,7 +66,7 @@ class ConfigField:
                   back as whatever JSON had; this is the one place that is fixed.
         group     the /setup subcommand exposing this field ('time'/'limits'),
                   or None for settings with a surface of their own (the channel
-                  subcommands, the on/off toggles, /games, the run markers)
+                  subcommands, the on/off toggles, /setup games, the run markers)
         option    slash-command option name when it differs from `name`
         opt_type  Discord option type
         describe  option description shown in Discord's picker
@@ -97,7 +97,7 @@ class ConfigField:
 def _overrides(value):
     """game_overrides holds only explicit deviations from each GameSpec's coded
     default, so a newly added game reaches every guild with its own default
-    rather than a frozen snapshot of an old /games submission."""
+    rather than a frozen snapshot of an old /setup games submission."""
     return {k: bool(v) for k, v in (value or {}).items()}
 
 
@@ -128,7 +128,7 @@ CONFIG_FIELDS = [
                 opt_type=OPT_USER,
                 describe='The official Wordle bot (enables image results)'),
 
-    # Toggles (/setup daily, /setup sticky) and the game menu (/games).
+    # Toggles (/setup daily, /setup sticky) and the game menu (/setup games).
     ConfigField('daily_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     ConfigField('sticky_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     ConfigField('game_overrides', default={}, coerce=_overrides),

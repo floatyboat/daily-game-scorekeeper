@@ -4,9 +4,9 @@
 
 Re-run whenever a command or option changes. The `time` and `limits` options are
 generated from store.CONFIG_FIELDS, the same table interaction_lambda reads them
-back through, so no option name is written out twice. /setup and /games default
-to Manage Server via default_member_permissions; the interaction handler
-re-verifies the permission bit regardless of how a server re-maps the command.
+back through, so no option name is written out twice. /setup defaults to Manage
+Server via default_member_permissions; the interaction handler re-verifies the
+permission bit regardless of how a server re-maps the command.
 """
 
 import os
@@ -99,16 +99,11 @@ COMMANDS = [
                        'Post the daily scoreboard?'),
             toggle_sub('sticky', 'Turn the Now Playing sticky on or off',
                        'Keep a sticky pinned to the bottom of the input channel?'),
+            {'type': OPT_SUB_COMMAND, 'name': 'games',
+             'description': 'Choose which games are tracked in this server'},
             field_sub('time', 'Timezone and daily schedule'),
             field_sub('limits', 'Display minimum, message volume, and the Wordle bot'),
         ],
-    },
-    {
-        'name': 'games',
-        'description': 'Choose which games are tracked in this server',
-        'type': CHAT_INPUT,
-        'default_member_permissions': MANAGE_GUILD,
-        'dm_permission': False,
     },
 ]
 

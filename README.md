@@ -75,7 +75,7 @@ is the whole onboarding.
     - `/setup limits minimum_players:<n> message_volume:<hundreds per day> wordle_bot:<user>` (1 / 1 / unset)
     - `/setup daily enabled:false` — pause the daily post (the sticky drops its
       Yesterday link while paused); `/setup sticky enabled:false` — remove the sticky
-    - `/games` — a multi-select of every supported game; games the code marks
+    - `/setup games` — a multi-select of every supported game; games the code marks
       default-off (e.g. timestamp-only games) can be enabled here per server
 
 ### Game Suggestions (Optional)
@@ -87,7 +87,7 @@ candidate for a new `GAME_SPECS` entry.
 
 Suggestions naming a game that is already supported are answered on the spot
 instead of forwarded, including the case worth acting on: *supported, but off in
-this server — an admin can switch it back on with `/games`*. With `DEV_CHANNEL_ID`
+this server — an admin can switch it back on with `/setup games`*. With `DEV_CHANNEL_ID`
 unset the command still answers, saying it has nowhere to send them.
 
 ### Streak & Stats Store (Optional)

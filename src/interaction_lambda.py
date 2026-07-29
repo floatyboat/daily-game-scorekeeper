@@ -363,7 +363,7 @@ def run_deferred(work):
             'body': json.dumps({'deferred': work['action'], 'edit': r.status_code})}
 
 
-# --- /setup and /games (admin configuration) -----------------------------------
+# --- /setup (admin configuration) ----------------------------------------------
 
 def _ephemeral(content, components=None):
     """CHANNEL_MESSAGE_WITH_SOURCE, visible only to the invoker."""
@@ -589,6 +589,13 @@ def handle_setup(body, guild_id):
                 pass
         return _ephemeral(f'⏸️ Sticky disabled{note}.')
 
+    if sub == 'games':
+        return _ephemeral(
+            'Select every game this server should track — unselected games are hidden '
+            'from parsing, the scoreboard, and the Play list.',
+            components=[games_select_row(cfg['game_overrides'])],
+        )
+
     if sub == 'time':
         updates = collect_updates('time', args)
         if not updates:
@@ -623,15 +630,6 @@ def handle_setup(body, guild_id):
 
     # 'show' and anything unrecognized fall back to the summary.
     return _ephemeral(config_summary(cfg))
-
-
-def handle_games(body, guild_id):
-    cfg = guild_cfg(guild_id, strict=True)
-    return _ephemeral(
-        'Select every game this server should track — unselected games are hidden '
-        'from parsing, the scoreboard, and the Play list.',
-        components=[games_select_row(cfg['game_overrides'])],
-    )
 
 
 def handle_setup_component(body, guild_id):
@@ -753,7 +751,7 @@ def already_tracked(spec, guild_id):
     # A DM has no server to have turned it off, so it is seeing the coded default.
     where = 'in this server' if guild_id else 'by default'
     return _ephemeral(f'{spec.emoji} **{spec.title}** is already supported but turned '
-                      f'off {where} — an admin can switch it back on with `/games`.')
+                      f'off {where} — an admin can switch it back on with `/setup games`.')
 
 
 def handle_suggest(body):
@@ -790,7 +788,7 @@ def handle_suggest(body):
         print(f'suggest: post failed {r.status_code} {r.text[:200]}')
         return _ephemeral("I couldn't pass that along just now — try again shortly.")
     return _ephemeral(f'✅ Sent **{_inline(name)}** to the devs — thanks! Games show '
-                      'up in `/games` once one is added.')
+                      'up in `/setup games` once one is added.')
 
 
 def guarded(fn, *args):
@@ -856,8 +854,6 @@ def lambda_handler(event, context):
             return _http(defer(ACTION_PLAY, body))
         if command_name == 'setup':
             return _http(admin_dispatch(handle_setup, body))
-        if command_name == 'games':
-            return _http(admin_dispatch(handle_games, body))
         if command_name == 'suggest':
             # Opening a modal is the whole response -- the paste comes back as a
             # separate MODAL_SUBMIT interaction below.
