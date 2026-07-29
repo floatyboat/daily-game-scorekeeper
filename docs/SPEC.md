@@ -16,11 +16,11 @@ anywhere, which is why streaks and all-time counts need a store.
 | `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, sticky Play/Scores buttons; live ephemeral views |
 
 Each rule is named after the function it drives, except `time` (legacy; it is the
-hourly daily-scoreboard rule, and `infra_setup.DAILY_RULE` still hardcodes that
-name). The per-minute rule was renamed from `real-time` on 2026-07-28 — EventBridge
-rules cannot be renamed in place, so that was a create-new/delete-old swap, which
-also means re-adding the `events.amazonaws.com` invoke permission on the target
-lambda for the new rule ARN.
+hourly daily-scoreboard rule, declared as such on the `daily-game-score` entry in
+`infra_setup.FUNCTIONS`). The per-minute rule was renamed from `real-time` on
+2026-07-28 — EventBridge rules cannot be renamed in place, so that was a
+create-new/delete-old swap, which also means re-adding the `events.amazonaws.com`
+invoke permission on the target lambda for the new rule ARN.
 
 Global secrets are env vars per lambda; per-server config is table-only (Phase 3).
 Deploys are zip uploads from three GitHub Actions workflows (us-east-1). No IaC.
@@ -38,10 +38,8 @@ missing dependency fails the build instead of the next cold start. Two implicit
 sources were removed: `game_parser` no longer leans on the runtime's bundled
 boto3 vendoring `dateutil`, and `daily-game-score` no longer takes `requests`
 from a `Klayers-p311-requests` layer built for 3.11 while the function runs 3.13.
-That layer is still attached and is now inert (`/var/task` shadows `/opt`);
-detach it with `python3 tools/infra_setup.py --drop-requests-layer` **after** the
-bundling deploy is live — the step verifies the deployed zip actually contains
-`requests` and no-ops until then, so running it early is safe.
+That layer has since been detached. No lambda declares a layer now, so
+`infra_setup.py` reports any it finds as drift and removes them under `--prune`.
 
 ## Database: DynamoDB
 
@@ -243,8 +241,8 @@ mode: recompute all aggregates from `DAY#` items whenever logic changes.
   name cannot drift between the registrar and the handler.
 - Global config stays env (bot token, public key, bot/app ID, TABLE_NAME,
   TEST_CHANNEL_ID, DEV_CHANNEL_ID). **Per-server config lives only in the table —
-  there is no env fallback.** `infra_setup.py --migrate` copied the original server's legacy CONFIG
-  item into the GUILDS partition.
+  there is no env fallback.** The original server's legacy CONFIG item was copied
+  into the GUILDS partition during the phase 3 rollout.
 - **Scheduling across timezones**: the daily EventBridge rule becomes **hourly**.
   Each tick loads all configs and posts for any guild whose local hour has reached
   its `post_hour` and whose `last_posted_day` is stale, plus a
@@ -284,19 +282,21 @@ version gated on `PROFILE.dm_opt_in` via `/stats dm on|off`. `/stats [@user]`
    script, IAM.
 2. **Display** — SHIPPED: streaks on scoreboard/Scores, reordered Play list, sticky
    flair.
-3. **Multi-server** — BUILT (deploy steps below): `/setup` (incl. `games`),
-   config-from-table only (no env fallback), hourly daily schedule with per-guild
-   gating, current server migrated, invite scopes/README.
+3. **Multi-server** — SHIPPED: `/setup` (incl. `games`), config-from-table only
+   (no env fallback), hourly daily schedule with per-guild gating, original
+   server migrated, invite scopes/README.
 4. **Rollups**: weekly/monthly summaries, `/stats`, DM opt-in.
 
-Phase 3 go-live order (config migration is already done and is invisible to the old
-code): **1.** push/deploy all three lambdas → **2.** `python3 tools/infra_setup.py
---hourly` (daily rule → `cron(0 * * * ? *)` + daily timeout 120s; before this the
-still-daily rule just means the new code posts once at 13:00 UTC as before) →
-**3.** `python3 tools/infra_setup.py --prune-env` (strip the dead per-server vars) →
-**4.** `dotenv run -- python3 tools/register_commands.py` (needs DISCORD_APPLICATION_ID
-in .env, falls back to DISCORD_BOT_ID) → **5.** test events + `/setup show` in the
-server.
+The one-off flags that carried phases 1–3 across the line (`--migrate`,
+`--hourly`, `--prune-env`, `--drop-requests-layer`) have all been applied and
+are gone from `infra_setup.py`; git history has them if a detail is ever needed.
+Their outcomes are now simply part of the declared state the script converges
+to — hourly rule, 120s daily timeout, no layers, global-only env. Rebuilding
+from nothing is `dotenv run -- python3 tools/infra_setup.py`, then the checklist
+it prints (deploy each function, point Discord's Interactions Endpoint at the
+new Function URL, `dotenv run -- python3 tools/register_commands.py` — which
+needs DISCORD_APPLICATION_ID in `.env` and falls back to DISCORD_BOT_ID), then
+test events + `/setup show` in the server.
 
 Per-player overall streaks (the points-summary `🔥N`) are a later addition and need
 one `dotenv run -- python3 tools/backfill.py --rebuild-only` to seed the new

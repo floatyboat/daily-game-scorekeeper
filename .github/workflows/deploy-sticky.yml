@@ -1,6 +1,9 @@
 name: Deploy Sticky Lambda
 
 on:
+  # Manual trigger so a rebuilt function can be filled with real code without a
+  # dummy commit (tools/infra_setup.py creates functions with placeholder code).
+  workflow_dispatch:
   push:
     branches: [ master ]
     paths:

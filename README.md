@@ -39,6 +39,7 @@ pip install -r requirements.txt
 
 dotenv run -- python3 src/lambda_function.py       # local test-mode scoreboard
 dotenv run -- python3 src/interaction_lambda.py    # replay an interaction fixture
+dotenv run -- python3 tools/infra_setup.py --plan  # diff the live AWS stack
 ```
 
 ## Setup
@@ -56,11 +57,16 @@ is the whole onboarding.
     - On the `OAuth2` page select the `bot` and `applications.commands` scopes with
       `Send Messages`, `Read Message History`, `Manage Messages` (embed suppression +
       pinning); open the generated link to add the bot to your server
-2. Deploy the three lambdas (see `.github/workflows/`) with EventBridge schedules:
-   the daily scoreboard rule fires **hourly** (each server posts when its own local
-   post hour comes around), the sticky rule every minute. Point your Discord app's
-   Interactions Endpoint URL at the interaction lambda's Function URL, then register
-   the commands: `dotenv run -- python3 tools/register_commands.py`
+2. Build the AWS side with `dotenv run -- python3 tools/infra_setup.py` (add
+   `--plan` first to see what it would do). It creates the table, one role per
+   lambda, the three functions, their log retention, the EventBridge schedules —
+   the daily scoreboard rule fires **hourly**, since each server posts when its own
+   local post hour comes around, and the sticky rule every minute — and the
+   interaction lambda's public Function URL. Re-running is a no-op; it only writes
+   differences. Functions are created with placeholder code, so finish with the
+   checklist it prints: deploy each function (`.github/workflows/`), point your
+   Discord app's Interactions Endpoint URL at the Function URL it reports, and
+   register the commands (`dotenv run -- python3 tools/register_commands.py`).
 3. In your server (needs **Manage Server**):
     - `/setup input` — channel scores are read in (and where the sticky lives).
       Pick from the menu, or pass `channel` / `channel_id:<id>` for channels the
@@ -93,7 +99,7 @@ unset the command still answers, saying it has nowhere to send them.
 ### Streak & Stats Store (Optional)
 The bot can persist daily results to DynamoDB to track server/player streaks and per-game player stats (see `docs/SPEC.md` for the full design). Without the table the bot still works — persistence failures are logged and skipped.
 
-1. Run `python3 tools/infra_setup.py` with AWS credentials to create the `daily-game-tracker` table (provisioned 5/5, inside the always-free tier), grant each Lambda's role access, and set `TABLE_NAME` on each function. Steps it lacks permission for are printed as commands to run with an admin identity.
+1. Run `dotenv run -- python3 tools/infra_setup.py` with AWS credentials. It creates the `daily-game-tracker` table (provisioned 5/5, inside the always-free tier) and grants each Lambda's role access to it. Steps it lacks permission for are printed as commands to run with an admin identity.
 2. Seed history so streaks start at their true values: `dotenv run -- python3 tools/backfill.py --all` (or `--days N`). Re-running is safe; `--rebuild-only` recomputes aggregates from the archived days without touching Discord.
 
 ### Wordle Image Recognition (Optional)
