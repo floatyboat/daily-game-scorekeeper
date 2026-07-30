@@ -41,6 +41,7 @@ and the bot picks it up.
 | Globle | https://globle.org | no |
 | MapTap | https://maptap.gg | yes |
 | MapTap Challenge | https://maptap.gg/adventures?gametype=challenge | no |
+| Minute Cryptic | https://www.minutecryptic.com | yes |
 | Pips | https://www.nytimes.com/games/pips | yes |
 | Pop Culture Colors | https://dialed.gg/color2?d=1 | yes |
 | Quizl | https://quizl.io | yes |

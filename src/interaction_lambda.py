@@ -455,7 +455,7 @@ def set_channel(guild_id, kind, channel_id, cfg=None):
 
 
 def games_select_row(game_overrides):
-    # One option per GameSpec, 17 of scoreboard.MAX_SELECT_OPTIONS today; see
+    # One option per GameSpec, 18 of scoreboard.MAX_SELECT_OPTIONS today; see
     # the split-across-two-messages note on that constant for when it runs out.
     options = [{
         'label': spec.title,

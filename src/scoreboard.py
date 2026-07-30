@@ -33,9 +33,9 @@ TEXT_CHANNEL_TYPES = (0, 5)   # guild text, announcement
 PERM_ADMINISTRATOR = 0x8
 PERM_MANAGE_GUILD = 0x20
 
-# Discord payload caps the rendered surfaces have to fit inside. Today's 17
+# Discord payload caps the rendered surfaces have to fit inside. Today's 18
 # games clear both: /play tops out at 4 button rows plus the Random row, and the
-# /setup games menu uses 17 of 25 options.
+# /setup games menu uses 18 of 25 options.
 #
 # FUTURE: when GAME_SPECS outgrows either cap, split across two messages (the
 # interaction reply plus a follow-up) rather than truncating -- a silently

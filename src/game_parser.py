@@ -584,7 +584,7 @@ def _parse_travle(m, content):
 # surfaces have Discord payload caps this list now feeds (scoreboard.py holds
 # the constants): the /setup games menu is one option per spec and tops out
 # at 25, and /play is one button per ENABLED game at 5 per row plus the Random
-# row, so it tops out at 20. 17 specs today. Past either, the fix is to split
+# row, so it tops out at 20. 18 specs today. Past either, the fix is to split
 # the response across two messages -- see the FUTURE note in scoreboard.py.
 
 GAME_SPECS = [
@@ -706,6 +706,18 @@ GAME_SPECS = [
         total=100, url='https://enclose.horse',
         puzzle=lambda ref: (ref - datetime(2025, 12, 30)).days + 1,
         pattern=lambda ref, n: re.compile(rf'enclose\.horse Day {n}\b.*?(\d+)%', re.IGNORECASE | re.DOTALL),
+        parse=lambda m, c: (int(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='minutecryptic', emoji='🧩', title='Minute Cryptic', metric='guesses',
+        total=0, url='https://www.minutecryptic.com',
+        puzzle=lambda ref: f'{ref.day} {ref.strftime("%B")}, {ref.year}',
+        # Scored like golf on hints used, so fewer is better and 0 is a clean
+        # solve -- the same shape as the other total=0 'guesses' games. The
+        # leading emoji on the hint line varies with par (🏆 at or under, 🏋
+        # over), so match the count and not the emoji.
+        pattern=lambda ref, n: re.compile(rf'Minute Cryptic\s*[-–—]\s*{re.escape(n)}.*?(\d+)\s+hints?\b',
+                                          re.IGNORECASE | re.DOTALL),
         parse=lambda m, c: (int(m.group(1)), {}),
     ),
 ]
