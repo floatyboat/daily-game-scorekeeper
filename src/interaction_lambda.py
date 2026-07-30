@@ -17,7 +17,6 @@ from game_parser import (
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
     build_avatar_pool, safe_guild_id, gather_streaks, is_sticky_message,
-    find_launch_url,
     PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     TEXT_CHANNEL_TYPES, PERM_ADMINISTRATOR, PERM_MANAGE_GUILD, MAX_BUTTONS_PER_ROW,
     MAX_MESSAGE_LENGTH,
@@ -92,9 +91,7 @@ def fetch_today_results(channel_id, cfg):
     under Discord's 3-second interaction-response budget; the daily summary
     lambda is the source of truth for the full archive, this is a live preview.
 
-    Returns (results, puzzle_numbers, today, messages) -- the raw page comes
-    back too so the Play list can find a game app's launch button in it without
-    paying for a second fetch.
+    Returns (results, puzzle_numbers, today).
     """
     tz = ZoneInfo(cfg['timezone'])
     today = reference_date(datetime.now(tz), tz, cfg['hours_after_midnight'])
@@ -108,7 +105,7 @@ def fetch_today_results(channel_id, cfg):
         wordle_bot_id=cfg['wordle_bot_id'], avatar_hashes=avatar_pool,
         game_overrides=cfg['game_overrides'],
     )
-    return results, puzzle_numbers, today, messages
+    return results, puzzle_numbers, today
 
 
 def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
@@ -119,7 +116,7 @@ def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
     someone plays.
     """
     cfg = cfg or guild_cfg(guild_id)
-    results, puzzle_numbers, today, _ = fetch_today_results(channel_id, cfg)
+    results, puzzle_numbers, today = fetch_today_results(channel_id, cfg)
 
     streaks = gather_streaks(guild_id, today, results,
                              build_games(puzzle_numbers, cfg['game_overrides']),
@@ -173,12 +170,10 @@ def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
     user_id (an unidentifiable presser) every game is returned. results and
     the gather_streaks() bundle (or None) cover ALL games, so counts and
     streak numbers reflect the whole server, not just the presser's remainder.
-    The fetched page rides along for the caller's own use of the same messages.
     """
     today = None
-    messages = []
     try:
-        results, puzzle_numbers, today, messages = fetch_today_results(channel_id, cfg)
+        results, puzzle_numbers, today = fetch_today_results(channel_id, cfg)
     except Exception:
         # Counts are a nice-to-have; never let a fetch/parse hiccup block the
         # core action. Fall back to today's games with no counts or streaks.
@@ -194,7 +189,7 @@ def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
     if user_id is not None:
         games = [g for g in games if user_id not in results.get(g.key, {})]
 
-    return games, results, streaks, messages
+    return games, results, streaks
 
 
 ALL_PLAYED_MESSAGE = "\U0001F389 You've played every tracked game today!"
@@ -211,36 +206,21 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None):
     today and a fire-streak suffix while the game's server streak is alive.
     With no user_id (an unidentifiable presser) every game is listed; with no
     reachable store the order falls back to live count then title.
-
-    A game whose official Discord app this guild has configured points at that
-    app's own launch button in the channel instead of its website, so it opens
-    inside Discord rather than in a browser.
     """
     cfg = cfg or guild_cfg(guild_id)
-    games, results, streaks, messages = unplayed_games(channel_id, cfg, user_id, guild_id)
+    games, results, streaks = unplayed_games(channel_id, cfg, user_id, guild_id)
     game_streaks = (streaks or {}).get('games', {})
-    apps = store.installed_app_ids(cfg)
-    guild = cfg['guild_id'] or guild_id
 
     games.sort(key=lambda g: game_sort_key(g, results, streaks))
 
-    def play_url(g):
-        """Where this game's button sends the presser: the Discord app's live
-        launch button when the guild has that app and it has posted one, the
-        game's website otherwise (no app, or nothing to jump to yet)."""
-        if g.discord_app in apps:
-            return find_launch_url(messages, g.discord_app, guild, channel_id) or g.url
-        return g.url
-
-    buttons, urls = [], {}
+    buttons = []
     for g in games:
         count = len(results.get(g.key) or {})
         label = f"{g.emoji} {g.title} ({count})" if count else f"{g.emoji} {g.title}"
         streak = game_streaks.get(g.key, 0)
         if streak >= STREAK_MIN:
             label += f" \U0001F525{streak}"
-        urls[g.key] = play_url(g)
-        buttons.append({"type": 2, "style": 5, "label": label, "url": urls[g.key]})
+        buttons.append({"type": 2, "style": 5, "label": label, "url": g.url})
 
     action_rows = []
     for i in range(0, len(buttons), MAX_BUTTONS_PER_ROW):
@@ -249,12 +229,11 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None):
     # A "surprise me" shortcut: one random unplayed game as its own grey link
     # button on its own row above the list. Resolved here, at click time, so the
     # link points straight at a game this user hasn't logged — one tap, no
-    # follow-up. It reuses the same resolved URL as the game's own button, so a
-    # random Wordle lands on the Discord app just like the deliberate pick does.
+    # follow-up.
     if games:
         pick = random.choice(games)
         action_rows.insert(0, {"type": 1, "components": [
-            {"type": 2, "style": 5, "label": "\U0001F52E Random", "url": urls[pick.key]},
+            {"type": 2, "style": 5, "label": "\U0001F52E Random", "url": pick.url},
         ]})
 
     # Filtering can empty the list once a user has logged everything today.

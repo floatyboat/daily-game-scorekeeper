@@ -113,8 +113,7 @@ Defaults in parentheses.
   (`1` / `1` / unset) — `minimum_players` hides (and stops scoring) games with fewer
   players than that, `message_volume` is roughly how many hundreds of messages a day
   the input channel sees, `wordle_bot` turns on
-  [Wordle image results](#wordle-image-results), which are off until you set it, and
-  swaps the Play list's Wordle link for the in-Discord launcher.
+  [Wordle image results](#wordle-image-results), which are off until you set it.
 - **`/setup games`** — a multi-select of every supported game, pre-ticked to this
   server's current state.
 - **`/setup daily enabled:false`** — pause the daily post. The sticky drops its
@@ -144,13 +143,6 @@ player by their avatar. Until an admin names that bot with
 **`/setup limits wordle_bot:@Wordle`**, image messages are skipped entirely: no image
 parsing, no avatar lookups, and Wordle is tracked from pasted share text only, like every
 other game.
-
-Naming it also changes where the Play list sends you. Every other game's button opens its
-website; once the server has the Wordle app, the Wordle button jumps to that app's latest
-post in the channel — its daily summary, or a game in progress — where Wordle's own
-**Play now!** button opens the game inside Discord, the same place the image results come
-from. Servers without the app, or channels where Wordle hasn't posted lately, keep the
-link to nytimes.com.
 
 ---
 

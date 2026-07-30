@@ -35,7 +35,6 @@ class Game:
     needs_timestamp: bool = False
     search_pattern: re.Pattern = None   # optional cheap pre-check before the full pattern
     parse: object = None                # callable(match, content) -> (score, metadata)
-    discord_app: str = None             # official Discord app id; see GameSpec
 
 
 def compute_puzzle_numbers(reference_date):
@@ -471,11 +470,6 @@ class GameSpec:
                 flip any game either way per guild via /setup games
                 (game_overrides in the guild config); this flag only decides
                 what a guild gets before anyone touches the menu.
-      discord_app
-                application id of an official Discord app for this game. In
-                guilds that have it configured (store.installed_app_ids), the
-                Play list points the game's button at that app's own launch
-                button instead of its website (scoreboard.find_launch_url).
     """
     key: str
     emoji: str
@@ -490,7 +484,6 @@ class GameSpec:
     search: object = None       # callable(reference_date, puzzle) -> re.Pattern
     total_key: str = None       # puzzle_numbers key that overrides `total`
     disabled: bool = False
-    discord_app: str = None     # official Discord app id -- in-Discord launcher
 
 
 # --- Per-game score extractors -------------------------------------------------
@@ -679,8 +672,6 @@ GAME_SPECS = [
         puzzle=lambda ref: (ref - datetime(2021, 6, 19)).days,
         pattern=lambda ref, n: re.compile(rf'Wordle\s+{n:,}\s+([1-6X])/6', re.IGNORECASE),
         parse=_parse_wordle,
-        # Wordle also ships as an official Discord app, which plays in-channel.
-        discord_app='1211781489931452447',
     ),
     GameSpec(
         key='travle', emoji='✈️', title='Travle', metric='travle',
@@ -789,7 +780,6 @@ def build_games(puzzle_numbers, game_overrides=None):
             needs_timestamp=spec.needs_timestamp,
             search_pattern=spec.search(ref, puzzle) if spec.search else None,
             parse=spec.parse,
-            discord_app=spec.discord_app,
         ))
     return games
 
@@ -1100,7 +1090,7 @@ def _format_game_players(game_scores, metric, total, player_streaks=None):
             raw_n = eff_n - hints * (hints + 1) // 2  # undo hint penalty for display
             parts = []
             if tier == 0 or k:
-                parts.append(f"{k}✅")
+                parts.append(f"{k}✓")
             if hints:
                 parts.append(f"{hints} hint" + ("s" if hints != 1 else ""))
             extra = f" ({', '.join(parts)})" if parts else ""
