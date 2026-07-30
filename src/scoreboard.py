@@ -8,7 +8,7 @@ from collections import defaultdict
 import store
 from game_parser import (
     compute_puzzle_numbers, build_games, scoring_players,
-    make_timestamp_checker, match_message, _avatar_ahash,
+    make_timestamp_checker, match_message, _avatar_ahash, WORDLE_BOT_ID,
 )
 
 DISCORD_API_BASE = 'https://discord.com/api/v10'
@@ -240,15 +240,14 @@ def reference_date(now, tz, hours_after_midnight, days_back=0):
 
 
 def parse_results(messages, ref_date, tz, hours_after_midnight, time_window_hours,
-                  *, wordle_bot_id=None, avatar_hashes=None, game_overrides=None):
+                  *, avatar_hashes=None, game_overrides=None):
     puzzle_numbers = compute_puzzle_numbers(ref_date)
     games = build_games(puzzle_numbers, game_overrides)
     checker = make_timestamp_checker(ref_date, tz, hours_after_midnight, time_window_hours)
     results = defaultdict(dict)
     for msg in messages:
         for game_key, score, metadata, uid_override in match_message(
-                msg, games, checker,
-                wordle_bot_id=wordle_bot_id, avatar_hashes=avatar_hashes):
+                msg, games, checker, avatar_hashes=avatar_hashes):
             user_id = (uid_override
                        or msg.get('interaction_metadata', {}).get('user', {}).get('id')
                        or msg['author']['id'])
@@ -257,21 +256,21 @@ def parse_results(messages, ref_date, tz, hours_after_midnight, time_window_hour
     return results, puzzle_numbers
 
 
-def build_avatar_pool(session, messages, checker, wordle_bot_id, guild_id=None):
+def build_avatar_pool(session, messages, checker, guild_id=None):
     """{user_id: (avatar hash, ...)} for attributing multi-player Wordle grids.
 
     Built only when the window actually holds a multi-player image, since it
     costs a CDN round trip per candidate user (plus a member lookup when
-    guild_id is known). Each user can carry more than one hash -- see
+    guild_id is known). That guard is an in-memory scan of messages the caller
+    already fetched, so a channel the Wordle bot doesn't post in pays nothing
+    for this call. Each user can carry more than one hash -- see
     _user_avatar_hashes for why -- and _match_avatar scores them by their
     closest one.
 
     guild_id is optional so a caller that can't resolve it still gets the
     global-avatar pool rather than nothing.
     """
-    if not wordle_bot_id:
-        return {}
-    if not _has_multiplayer_wordle(messages, checker, wordle_bot_id):
+    if not _has_multiplayer_wordle(messages, checker):
         return {}
     uid_to_avatar = _extract_user_avatars(messages)
     if not uid_to_avatar:
@@ -359,9 +358,9 @@ def _extract_user_avatars(messages):
     return out
 
 
-def _has_multiplayer_wordle(messages, checker, wordle_bot_id):
+def _has_multiplayer_wordle(messages, checker):
     for m in messages:
-        if m.get('author', {}).get('id') != wordle_bot_id:
+        if m.get('author', {}).get('id') != WORDLE_BOT_ID:
             continue
         if not checker(m['timestamp']):
             continue

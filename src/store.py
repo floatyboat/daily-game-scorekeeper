@@ -124,13 +124,12 @@ CONFIG_FIELDS = [
     ConfigField('hundreds_of_messages', default=1, coerce=int, group='limits',
                 option='message_volume', minimum=1, maximum=8,
                 describe='Hundreds of messages/day in the input channel (default 1)'),
-    ConfigField('wordle_bot_id', coerce=str, group='limits', option='wordle_bot',
-                opt_type=OPT_USER,
-                describe='The official Wordle bot (enables image results)'),
 
-    # Toggles (/setup daily, /setup sticky) and the game menu (/setup games).
+    # Toggles (/setup daily, /setup sticky, /setup embeds) and the game menu
+    # (/setup games).
     ConfigField('daily_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     ConfigField('sticky_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
+    ConfigField('suppress_embeds', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     ConfigField('game_overrides', default={}, coerce=_overrides),
 
     # Run markers, written by the daily lambda. last_posted_day is the post
@@ -141,6 +140,60 @@ CONFIG_FIELDS = [
 ]
 
 CONFIG_DEFAULTS = {f.name: f.default for f in CONFIG_FIELDS}
+
+# The channel settings, in the order a summary lists them.
+CHANNEL_FIELDS = ('input_channel_id', 'output_channel_id')
+
+
+@dataclass(frozen=True)
+class ChannelSub:
+    """One /setup subcommand that points the bot at a channel.
+
+        name      the subcommand
+        fields    the channel config fields it writes
+        blurb     what that channel is, in prose -- used by the picker prompt,
+                  the confirmation, and the /setup show summary
+        describe  the subcommand description Discord shows in its picker
+
+    Same bargain as ConfigField above: register_commands.py builds these
+    subcommands straight off this list and interaction_lambda dispatches off
+    it, so a channel subcommand cannot exist on one side only.
+    """
+    name: str
+    fields: tuple
+    blurb: str
+    describe: str
+
+    @property
+    def combined(self):
+        """Whether this one sets every channel at once."""
+        return len(self.fields) > 1
+
+    @property
+    def label(self):
+        """How the target reads in prose: 'input channel', or plain 'channel'
+        for the combined subcommand."""
+        return self.name if self.combined else f'{self.name} channel'
+
+
+# One channel for everything is the default path a fresh server is pointed at;
+# the single-sided subcommands exist to override one half of it afterwards.
+CHANNEL_SUBS = [
+    ChannelSub('channel', CHANNEL_FIELDS,
+               'where scores are read and the daily scoreboard posts',
+               'Use one channel for everything — start here'),
+    ChannelSub('input', ('input_channel_id',),
+               'where scores are read and the sticky lives',
+               'Read scores from a different channel than /setup channel'),
+    ChannelSub('output', ('output_channel_id',),
+               'where the daily scoreboard posts',
+               'Post the daily scoreboard somewhere other than /setup channel'),
+]
+
+
+def channel_sub(name):
+    """The ChannelSub a /setup subcommand name refers to, or None."""
+    return next((c for c in CHANNEL_SUBS if c.name == name), None)
 
 
 def setup_options(group):

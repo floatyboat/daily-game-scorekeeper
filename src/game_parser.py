@@ -405,6 +405,16 @@ def _get_wordle_fetch_session():
     return _wordle_fetch_session
 
 
+# The official Wordle Discord bot. One application, so it carries this same ID
+# in every server it joins -- there is nothing per-server to discover, which is
+# why it is a constant here rather than a setting each admin has to find and
+# type in. It costs a server without that bot nothing: every path below keys on
+# a message's author being this exact ID, and none is reached until the
+# text-pattern loop has already failed to match, so the work starts when a grid
+# actually shows up and not before.
+WORDLE_BOT_ID = '1211781489931452447'
+
+
 def parse_wordle_attachment(attachment, candidate_hashes=None):
     """Download and parse a Wordle bot image attachment.
 
@@ -796,7 +806,7 @@ def build_games(puzzle_numbers, game_overrides=None):
     return games
 
 
-def match_message(msg, games, timestamp_checker, wordle_bot_id=None, avatar_hashes=None):
+def match_message(msg, games, timestamp_checker, avatar_hashes=None):
     """Run a single message through all games, including Wordle bot image parsing.
 
     Returns a list of (game_key, score, metadata, user_id_override) tuples.
@@ -825,8 +835,7 @@ def match_message(msg, games, timestamp_checker, wordle_bot_id=None, avatar_hash
         return [(game.key, score, metadata, None)]
 
     # Wordle bot image parsing -- a separate input path (bot attachments, not text).
-    if (wordle_bot_id
-            and msg['author']['id'] == wordle_bot_id
+    if (msg['author']['id'] == WORDLE_BOT_ID
             and msg.get('attachments')
             and timestamp_checker(timestamp)):
         for attachment in msg['attachments']:

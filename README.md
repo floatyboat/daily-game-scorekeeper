@@ -1,6 +1,6 @@
 ### ➕ [Add the bot to your Discord server](https://discord.com/oauth2/authorize?client_id=1425892168471548006&scope=bot+applications.commands&permissions=76800)
 
-Then run `/setup input` and `/setup output` in the server — that's the whole setup.
+Then run `/setup channel` in the server — that's the whole setup.
 
 ---
 
@@ -87,19 +87,26 @@ https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot+applic
 The bot has to be running somewhere before its slash commands do anything — see
 [Self-hosting on AWS](#self-hosting-on-aws) below.
 
-## 2. Point it at your channels
+## 2. Point it at a channel
 
-Run these in the server:
+Run this in the server:
 
-- **`/setup input`** — the channel scores are read from, and where the sticky lives.
-- **`/setup output`** — the channel the daily scoreboard posts to. Can be the same channel.
+- **`/setup channel`** — the one channel the bot reads scores from and posts in.
 
-Each takes a channel from the native picker, or `channel_id:<id>` for channels the
+That is the whole thing for most servers. If you want the daily scoreboard to land
+somewhere other than where people paste their results, override one side afterwards:
+
+- **`/setup input`** — read scores from a different channel (the sticky follows it).
+- **`/setup output`** — post the daily scoreboard to a different channel.
+
+Each moves only the side it names and leaves the other where `/setup channel` put it.
+
+All three take a channel from the native picker, or `channel_id:<id>` for channels the
 picker can't show, or no arguments at all — the reply is then a channel-select menu.
 Every path verifies the bot can actually see the channel and tells you what to fix if
 it can't; a private channel needs the bot's role added to it.
 
-Nothing posts until both are set. **`/setup show`** prints the whole configuration.
+Nothing posts until a channel is set. **`/setup show`** prints the whole configuration.
 
 ## 3. Tune it (optional)
 
@@ -110,16 +117,19 @@ Defaults in parentheses.
   over, `post_hour` is the local hour the board posts, `window_hours` is how long
   submissions stay open each day. Example: `America/New_York`, day start 3, post 9,
   window 21 keeps submissions open 3AM–midnight local and posts the board at 9AM.
-- **`/setup limits minimum_players:<n> message_volume:<hundreds per day> wordle_bot:<user>`**
-  (`1` / `1` / unset) — `minimum_players` hides (and stops scoring) games with fewer
-  players than that, `message_volume` is roughly how many hundreds of messages a day
-  the input channel sees, `wordle_bot` turns on
-  [Wordle image results](#wordle-image-results), which are off until you set it.
+- **`/setup limits minimum_players:<n> message_volume:<hundreds per day>`**
+  (`1` / `1`) — `minimum_players` hides (and stops scoring) games with fewer players
+  than that, `message_volume` is roughly how many hundreds of messages a day the input
+  channel sees.
 - **`/setup games`** — a multi-select of every supported game, pre-ticked to this
   server's current state.
 - **`/setup daily enabled:false`** — pause the daily post. The sticky drops its
   Yesterday link while paused, since whatever board is still in the channel is stale.
 - **`/setup sticky enabled:false`** — remove the sticky.
+- **`/setup embeds suppress:false`** — stop stripping link previews off posted results
+  (`true` by default). Stripping happens as the sticky counts each result, so it needs
+  **Manage Messages** and does nothing at all while the sticky is off. Turning it off
+  doesn't restore previews already stripped.
 
 ## Suggesting a game
 
@@ -137,13 +147,16 @@ configured a dev channel, the command still answers, saying it has nowhere to se
 
 <img src="img/wordle_result.png" alt="A Wordle result image posted by the official Wordle Discord bot" width="380">
 
-**Off by default, per server.** The official
+**Always on, nothing to configure.** The official
 [Wordle Discord bot](https://support.nytimes.com/s/article/wordle-discord-bot) posts
-results as images rather than text, and this bot can read them — matching each grid to a
-player by their avatar. Until an admin names that bot with
-**`/setup limits wordle_bot:@Wordle`**, image messages are skipped entirely: no image
-parsing, no avatar lookups, and Wordle is tracked from pasted share text only, like every
-other game.
+results as images rather than text, and this bot reads them — matching each grid to a
+player by their avatar. That bot is one application with the same ID in every server it
+joins, so there's nothing to look up and no setting to turn on.
+
+It costs nothing in a server that doesn't have it. Both image paths key on the message's
+author being that exact bot, and both are reached only after a message has failed to
+match every game's text pattern — so no image is downloaded and no avatar is looked up
+until a real grid shows up.
 
 ---
 

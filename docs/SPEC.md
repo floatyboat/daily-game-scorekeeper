@@ -43,8 +43,9 @@ GUILDS                      GUILD#<guild_id>   per-server config: input_channel_
                                                output_channel_id, timezone,
                                                hours_after_midnight, post_hour,
                                                time_window_hours, minimum_players,
-                                               hundreds_of_messages, wordle_bot_id,
+                                               hundreds_of_messages,
                                                daily_enabled, sticky_enabled,
+                                               suppress_embeds,
                                                game_overrides (map key->bool),
                                                last_finalized_day, last_posted_day
 GUILD#<guild_id>            DAY#<YYYY-MM-DD>   full parsed results for the day:
@@ -97,23 +98,31 @@ registrar and the handler.
 
 | Field | `/setup` option | Default | Meaning |
 |---|---|---|---|
-| `input_channel_id` | `input` | unset | Channel scores are read from; the sticky lives here |
-| `output_channel_id` | `output` | unset | Channel the daily scoreboard posts to |
+| `input_channel_id` | `channel`, `input` | unset | Channel scores are read from; the sticky lives here |
+| `output_channel_id` | `channel`, `output` | unset | Channel the daily scoreboard posts to |
 | `timezone` | `time timezone` | `UTC` | IANA name |
 | `hours_after_midnight` | `time day_start_hour` | `0` | Hour the scoring day starts |
 | `post_hour` | `time post_hour` | day start hour | Guild-local hour the board posts and the sticky wakes |
 | `time_window_hours` | `time window_hours` | `24` | Hours submissions stay open each day |
 | `minimum_players` | `limits minimum_players` | `1` | Games with fewer players are hidden and score nobody |
 | `hundreds_of_messages` | `limits message_volume` | `1` | Input-channel volume (1–8), sets the fetch depth |
-| `wordle_bot_id` | `limits wordle_bot` | unset | Official Wordle bot; enables image results |
 | `daily_enabled` | `daily enabled` | `true` | Whether the daily board posts |
 | `sticky_enabled` | `sticky enabled` | `true` | Whether the sticky is maintained |
+| `suppress_embeds` | `embeds suppress` | `true` | Whether link previews are stripped off counted results |
 | `game_overrides` | `games` | `{}` | Explicit per-guild flips of each game's default state |
 | `last_finalized_day` | — | — | Written at finalize; records how far aggregates are folded |
 | `last_posted_day` | — | — | Written after a real post; the post gate |
 
 A guild with no stored item resolves to these defaults with both channels unset, which
 posts nothing anywhere.
+
+The channel subcommands are declared the same way, once each as a `ChannelSub` in
+`store.CHANNEL_SUBS` (name, the config fields it writes, its prose blurb, its Discord
+description), which `register_commands.py` registers from and `handle_setup` dispatches
+off. `/setup channel` writes **both** fields — one channel for everything is the path a
+fresh server is pointed at, and the only one `go_live_hint()` names while nothing is
+set. `/setup input` / `/setup output` write one field each, to override one side of it
+afterwards; every reply from them says so.
 
 ## Games and per-server enabling
 
@@ -130,12 +139,18 @@ posts nothing anywhere.
   nor accrued while disabled.
 - `/setup games` manages the set: one admin-only multi-select of all games, pre-selected to
   the guild's current effective state.
-- Wordle results posted as **images** by the official Wordle Discord bot are parsed only
-  when `wordle_bot_id` is set, which is unset by default. Without it `match_message` never
-  considers an attachment and `build_avatar_pool` returns empty, so neither the image parse
-  nor the guild-member avatar fetch happens; Wordle is tracked from pasted share text
-  alone. With it set, grids are attributed to players by avatar hash, and multi-player
-  grids match against server avatars as well as global ones.
+- Wordle results posted as **images** by the official Wordle Discord bot are parsed with no
+  configuration at all. That bot is one application, so it carries the same ID in every
+  server it joins: `game_parser.WORDLE_BOT_ID` is a **constant, not a setting** — there is
+  nothing per-server to discover, and no reason a server would want it pointed elsewhere.
+  Grids are attributed to players by avatar hash, and multi-player grids match against
+  server avatars as well as global ones.
+- **It is free where that bot isn't posting.** Both image paths key on the message's author
+  being `WORDLE_BOT_ID`, and both are reached only after the text-pattern loop has already
+  failed: `match_message` considers attachments only for that author, and
+  `build_avatar_pool` returns `{}` from an in-memory scan (`_has_multiplayer_wordle`) unless
+  the window actually holds a multi-player grid — before any member fetch or CDN round
+  trip. A server without the Wordle bot does no image work whatsoever.
 - Two Discord payload caps bound how far `GAME_SPECS` can grow before these surfaces need
   splitting across two messages (constants in `scoreboard.py`, noted at the `GAME_SPECS`
   declaration): the `/setup games` menu is one option per spec, capped at 25; `/play` is one
@@ -214,13 +229,19 @@ retroactively.
 ## Commands
 
 - **`/setup`** — admin-only via `default_member_permissions` = Manage Server; the handler
-  re-verifies `member.permissions`, since servers can re-map the default. Subcommands:
-  `show` · `input`/`output` · `daily on|off` · `sticky on|off` (off also deletes the
-  existing sticky) · `games` · `time` · `limits`. The channel subcommands take a
-  channel-type option, a `channel_id` string escape hatch for channels the picker can't
-  show, or no arguments at all — the reply is then an ephemeral channel-select menu. Every
-  path validates that the bot can see the channel and errors with instructions when it
-  can't.
+  re-verifies `member.permissions`, since servers can re-map the default. Subcommands, in
+  the order `register_commands.py` lists them (which is the order Discord displays):
+  `show` · `channel` (both sides at once) · `time` · `limits` · `games` · `daily on|off` ·
+  `sticky on|off` (off also deletes the existing sticky) · `embeds suppress:on|off` ·
+  `input`/`output` (override one side of `channel`, so they sit last). `limits` carries
+  the display minimum and the message volume only — the Wordle bot is a code constant, not
+  a per-server option. That array is
+  display order and nothing else — dispatch is by name, so it is free to churn;
+  `check_channel_coverage()` fails the registration if a declared `ChannelSub` was left
+  out of it. Each channel subcommand takes a channel-type option, a `channel_id` string
+  escape hatch for channels the picker can't show, or no arguments at all — the reply is
+  then an ephemeral channel-select menu. Every path validates that the bot can see the
+  channel and errors with instructions when it can't.
 - **`/play`** — ephemeral list of today's enabled games as link buttons, in `game_sort_key`
   order, with live counts and streak suffixes, plus a Random row.
 - **`/suggest`** — open to everyone, no permission gate: a modal (Discord's only multi-line
@@ -242,6 +263,11 @@ retroactively.
   `last_posted_day`.
 - The sticky rule fires every minute, loops guilds the same way, and skips guilds outside
   their `[post_hour, midnight)` window.
+- Link-preview suppression rides on that pass: each message the sticky counts also gets its
+  embeds flagged away when `suppress_embeds` is on (the default). It therefore needs Manage
+  Messages, and does nothing in a guild with `sticky_enabled` off — that guild is skipped
+  before anything is scanned. Turning it off stops future stripping; it never restores an
+  already-stripped preview.
 - With `daily_enabled` off nothing posts, and the sticky drops its Yesterday link.
 - Onboarding is automatic: `/setup` writes the config item and the next tick picks the guild
   up, with no deploy or schedule change.

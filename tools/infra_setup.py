@@ -673,8 +673,8 @@ def report_guilds(cv):
         cv.skip('cannot read the GUILDS partition from here')
         return
     if not items:
-        cv.skip('no guilds configured -- run /setup input and /setup output in the '
-                'server (nothing posts until then)')
+        cv.skip('no guilds configured -- run /setup channel in the server '
+                '(nothing posts until then)')
         return
     for item in items:
         gid = item.get('guild_id') or item['SK'].split('#', 1)[-1]

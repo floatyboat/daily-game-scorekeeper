@@ -24,8 +24,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 
 # Local imports after load_dotenv(): store reads TABLE_NAME at import time.
 from scoreboard import PERM_MANAGE_GUILD, TEXT_CHANNEL_TYPES
+import store
 from store import (
-    OPT_SUB_COMMAND, OPT_STRING, OPT_BOOLEAN, OPT_CHANNEL, setup_options,
+    OPT_SUB_COMMAND, OPT_STRING, OPT_BOOLEAN, OPT_CHANNEL, CHANNEL_SUBS,
+    setup_options,
 )
 
 APPLICATION_ID = os.getenv('DISCORD_APPLICATION_ID') or os.getenv('DISCORD_BOT_ID')
@@ -53,21 +55,25 @@ def field_sub(group, description):
             'options': [field_option(f) for f in setup_options(group)]}
 
 
-def channel_sub(name, blurb):
-    """A channel-setting subcommand: native picker option, raw-ID escape hatch,
-    or no args at all (the handler then replies with a select menu)."""
-    return {'type': OPT_SUB_COMMAND, 'name': name, 'description': blurb, 'options': [
-        {'type': OPT_CHANNEL, 'name': 'channel', 'description': 'Pick the channel',
-         'channel_types': list(TEXT_CHANNEL_TYPES), 'required': False},
-        {'type': OPT_STRING, 'name': 'channel_id',
-         'description': "Channel ID, for channels the picker can't show", 'required': False},
-    ]}
+def channel_sub(name):
+    """A channel-setting subcommand, straight off its store.ChannelSub: native
+    picker option, raw-ID escape hatch, or no args at all (the handler then
+    replies with a select menu)."""
+    sub = store.channel_sub(name)
+    return {'type': OPT_SUB_COMMAND, 'name': sub.name, 'description': sub.describe,
+            'options': [
+                {'type': OPT_CHANNEL, 'name': 'channel', 'description': 'Pick the channel',
+                 'channel_types': list(TEXT_CHANNEL_TYPES), 'required': False},
+                {'type': OPT_STRING, 'name': 'channel_id',
+                 'description': "Channel ID, for channels the picker can't show",
+                 'required': False},
+            ]}
 
 
-def toggle_sub(name, description, prompt):
+def toggle_sub(name, description, prompt, option='enabled'):
     """An on/off subcommand with a single required boolean."""
     return {'type': OPT_SUB_COMMAND, 'name': name, 'description': description, 'options': [
-        {'type': OPT_BOOLEAN, 'name': 'enabled', 'description': prompt, 'required': True}]}
+        {'type': OPT_BOOLEAN, 'name': option, 'description': prompt, 'required': True}]}
 
 
 COMMANDS = [
@@ -90,22 +96,50 @@ COMMANDS = [
         'type': CHAT_INPUT,
         'default_member_permissions': MANAGE_GUILD,
         'dm_permission': False,
+        # Display order, and nothing else: Discord renders subcommands in the
+        # order this array carries them, and dispatch is by name. Roughly: what
+        # is this set to, how do I set it up, tune it, switch parts off -- with
+        # the one-sided channel overrides last, since a server that needs them
+        # already knows they exist.
         'options': [
             {'type': OPT_SUB_COMMAND, 'name': 'show',
              'description': 'Show the current configuration'},
-            channel_sub('input', 'Set where scores are read and the sticky lives'),
-            channel_sub('output', 'Set where the daily scoreboard posts'),
+            channel_sub('channel'),
+            field_sub('time', 'Timezone and daily schedule'),
+            {'type': OPT_SUB_COMMAND, 'name': 'games',
+                         'description': 'Choose which games are tracked in this server'},
+            field_sub('limits', 'Display minimum, message volume, and the Wordle bot'),
             toggle_sub('daily', 'Turn the daily scoreboard post on or off',
                        'Post the daily scoreboard?'),
             toggle_sub('sticky', 'Turn the Now Playing sticky on or off',
                        'Keep a sticky pinned to the bottom of the input channel?'),
-            {'type': OPT_SUB_COMMAND, 'name': 'games',
-             'description': 'Choose which games are tracked in this server'},
-            field_sub('time', 'Timezone and daily schedule'),
-            field_sub('limits', 'Display minimum, message volume, and the Wordle bot'),
+            toggle_sub('embeds', 'Strip link previews off posted game results',
+                       'Suppress link previews on game results?', option='suppress'),
+            channel_sub('input'),
+            channel_sub('output'),
         ],
     },
 ]
+
+
+def check_channel_coverage():
+    """Every declared channel subcommand has to appear in COMMANDS.
+
+    The subcommands above are spelled out one per line so the display order is
+    editable, which costs the guarantee that spreading CHANNEL_SUBS gave for
+    free: a newly declared channel would otherwise be handled by
+    interaction_lambda and never registered, so nobody could reach it. Buy the
+    guarantee back here instead of hoping the two lists stay in step.
+    """
+    registered = {o['name'] for c in COMMANDS if c['name'] == 'setup'
+                  for o in c['options']}
+    missing = [c.name for c in CHANNEL_SUBS if c.name not in registered]
+    if missing:
+        raise SystemExit(f'store.CHANNEL_SUBS declares {missing}, which /setup does '
+                         'not register -- add it to COMMANDS in display order.')
+
+
+check_channel_coverage()
 
 
 def register():

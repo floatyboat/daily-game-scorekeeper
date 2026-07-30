@@ -56,9 +56,11 @@ def delete_message(channel_id, message_id):
 def suppress_embeds(channel_id, message):
     """Strip URL previews on a matched game-score message.
 
-    No-op when the message has no embeds or already has the flag set. Requires
-    MANAGE_MESSAGES for messages the bot didn't author; failures are swallowed
-    so a missing perm or since-deleted message doesn't kill the run.
+    Per-guild, via the `suppress_embeds` config field -- run_guild owns that
+    gate and this stays the mechanism. No-op when the message has no embeds or
+    already has the flag set. Requires MANAGE_MESSAGES for messages the bot
+    didn't author; failures are swallowed so a missing perm or since-deleted
+    message doesn't kill the run.
     """
     if not message.get('embeds'):
         return False
@@ -194,17 +196,15 @@ def run_guild(cfg, force=False):
                                      cfg['time_window_hours'])
 
     messages = fetch_messages(_session, channel_id, limit=200)
-    avatar_pool = build_avatar_pool(_session, messages, checker, cfg['wordle_bot_id'],
-                                    cfg['guild_id'])
+    avatar_pool = build_avatar_pool(_session, messages, checker, cfg['guild_id'])
 
     results = defaultdict(dict)
     suppressed = 0
     for msg in messages:
-        entries = match_message(msg, games, checker,
-                                wordle_bot_id=cfg['wordle_bot_id'], avatar_hashes=avatar_pool)
+        entries = match_message(msg, games, checker, avatar_hashes=avatar_pool)
         if not entries:
             continue
-        if suppress_embeds(channel_id, msg):
+        if cfg['suppress_embeds'] and suppress_embeds(channel_id, msg):
             suppressed += 1
         for game_key, score, metadata, uid_override in entries:
             user_id = uid_override or msg.get('interaction_metadata', {}).get('user', {}).get('id') or msg['author']['id']
@@ -220,7 +220,8 @@ def run_guild(cfg, force=False):
 
     action = update_sticky(channel_id, messages, results, server_streak,
                            link_yesterday=cfg['daily_enabled'])
-    return f'{action} (embeds suppressed: {suppressed})'
+    note = f' (embeds suppressed: {suppressed})' if cfg['suppress_embeds'] else ''
+    return f'{action}{note}'
 
 
 def lambda_handler(event, context):

@@ -33,13 +33,11 @@ _session = make_session(DISCORD_BOT_TOKEN)
 
 GAMES_SELECT_ID = 'setup_games'
 CHANNEL_SELECT_PREFIX = 'setup_channel:'
-# The two channel settings, as their config field and the phrase that explains
-# them -- kept together so a third channel is one entry, not two edits.
-CHANNEL_FIELDS = {'input': 'input_channel_id', 'output': 'output_channel_id'}
-CHANNEL_BLURBS = {
-    'input': 'where scores are read and the sticky lives',
-    'output': 'where the daily scoreboard posts',
-}
+# Every reply from a one-sided channel subcommand says so: `/setup channel`
+# points both sides at one channel, and an admin who then runs `/setup input`
+# should be able to tell that it moved one side and left the other alone.
+OVERRIDE_NOTE = ('-# Overrides `/setup channel` on this side only — '
+                 'the other channel stays as it is.')
 
 
 def get_body(event):
@@ -98,12 +96,10 @@ def fetch_today_results(channel_id, cfg):
     messages = fetch_messages(_session, channel_id, limit=100)
     checker = make_timestamp_checker(today, tz, cfg['hours_after_midnight'],
                                      cfg['time_window_hours'])
-    avatar_pool = build_avatar_pool(_session, messages, checker, cfg['wordle_bot_id'],
-                                    cfg['guild_id'])
+    avatar_pool = build_avatar_pool(_session, messages, checker, cfg['guild_id'])
     results, puzzle_numbers = parse_results(
         messages, today, tz, cfg['hours_after_midnight'], cfg['time_window_hours'],
-        wordle_bot_id=cfg['wordle_bot_id'], avatar_hashes=avatar_pool,
-        game_overrides=cfg['game_overrides'],
+        avatar_hashes=avatar_pool, game_overrides=cfg['game_overrides'],
     )
     return results, puzzle_numbers, today
 
@@ -418,40 +414,60 @@ def resolve_channel(channel_id, guild_id):
     return ch, None
 
 
-def channel_select_row(kind):
+def channel_select_row(sub):
     return {'type': 1, 'components': [{
         'type': 8,   # channel select
-        'custom_id': f'{CHANNEL_SELECT_PREFIX}{kind}',
+        'custom_id': f'{CHANNEL_SELECT_PREFIX}{sub.name}',
         'channel_types': list(TEXT_CHANNEL_TYPES),
-        'placeholder': f'Select the {kind} channel',
+        'placeholder': f'Select the {sub.label}',
     }]}
 
 
-def channel_picker_response(kind):
-    return _ephemeral(
-        f'Pick the **{kind}** channel — {CHANNEL_BLURBS[kind]}.\n'
-        f'-# Channel not listed? Run `/setup {kind} channel_id:<id>` with the raw ID instead.',
-        components=[channel_select_row(kind)],
-    )
+def channel_picker_response(sub):
+    lines = [f'Pick the **{sub.label}** — {sub.blurb}.',
+             f'-# Channel not listed? Run `/setup {sub.name} channel_id:<id>` '
+             'with the raw ID instead.']
+    if not sub.combined:
+        lines.append(OVERRIDE_NOTE)
+    return _ephemeral('\n'.join(lines), components=[channel_select_row(sub)])
 
 
-def set_channel(guild_id, kind, channel_id, cfg=None):
-    """Validate and store a channel choice. Returns (user-facing text, error)."""
+def go_live_hint(cfg):
+    """The `-#` line naming what a server still has to point the bot at, or
+    None when both channels are set.
+
+    A server with neither set is being onboarded, so it gets pointed at the
+    one-channel default rather than told to run two commands.
+    """
+    if not any(cfg[f] for f in store.CHANNEL_FIELDS):
+        return '-# Nothing posts yet — run `/setup channel` to go live.'
+    missing = [c.name for c in store.CHANNEL_SUBS
+               if not c.combined and not cfg[c.fields[0]]]
+    return f'-# Still needed to go live: `/setup {missing[0]}`.' if missing else None
+
+
+def set_channel(guild_id, sub, channel_id, cfg=None):
+    """Validate and store a channel choice. Returns (user-facing text, error).
+
+    `sub` is the store.ChannelSub that was invoked, which is also what decides
+    how many fields the choice writes: `/setup channel` sets both sides at once.
+    """
     ch, err = resolve_channel(channel_id, guild_id)
     if err:
         return None, err
-    field = CHANNEL_FIELDS[kind]
     cfg = cfg or guild_cfg(guild_id, strict=True)
-    store.update_config(guild_id, {field: str(channel_id)})
-    text = f'✅ {kind.capitalize()} channel set to <#{channel_id}> — {CHANNEL_BLURBS[kind]}.'
+    updates = {f: str(channel_id) for f in sub.fields}
+    store.update_config(guild_id, updates)
+    lines = [f'✅ Set: <#{channel_id}> is {sub.blurb}.']
+    if not sub.combined:
+        lines.append(OVERRIDE_NOTE)
     # Apply the write to the config we already hold rather than re-reading it:
     # get_item is eventually consistent, so a read this soon after the write can
     # still miss it and tell the admin to set the channel they just set.
-    cfg = {**cfg, field: str(channel_id)}
-    missing = [k for k, f in CHANNEL_FIELDS.items() if not cfg[f]]
-    if missing:
-        text += f'\n-# Still needed to go live: `/setup {missing[0]}`.'
-    return text, None
+    hint = go_live_hint({**cfg, **updates})
+    if hint:
+        lines.append(hint)
+    return '\n'.join(lines), None
 
 
 def games_select_row(game_overrides):
@@ -517,15 +533,17 @@ def config_summary(cfg):
         return 'on' if v else 'off'
 
     post_hour = store.post_hour(cfg)
-    lines = [
-        '### ⚙️ Scoreboard setup',
-        f"Input channel ({CHANNEL_BLURBS['input']}): {ch(cfg['input_channel_id'])}",
-        f"Output channel ({CHANNEL_BLURBS['output']}): {ch(cfg['output_channel_id'])}",
-        f"Daily scoreboard: **{onoff(cfg['daily_enabled'])}** · Sticky: **{onoff(cfg['sticky_enabled'])}**",
+    lines = ['### ⚙️ Scoreboard setup']
+    lines += [f'{c.label.capitalize()} ({c.blurb}): {ch(cfg[c.fields[0]])}'
+              for c in store.CHANNEL_SUBS if not c.combined]
+    lines += [
+        f"Daily scoreboard: **{onoff(cfg['daily_enabled'])}** · "
+        f"Sticky: **{onoff(cfg['sticky_enabled'])}** · "
+        f"Link previews: **{'stripped' if cfg['suppress_embeds'] else 'kept'}**",
         f"Timezone `{cfg['timezone']}` · day starts {cfg['hours_after_midnight']:02d}:00 · "
         f"posts {post_hour:02d}:00 · window {cfg['time_window_hours']}h",
-        f"Minimum players {cfg['minimum_players']} · volume ~{cfg['hundreds_of_messages'] * 100} msgs/day"
-        + (f" · Wordle bot <@{cfg['wordle_bot_id']}>" if cfg['wordle_bot_id'] else ''),
+        f"Minimum players {cfg['minimum_players']} · "
+        f"volume ~{cfg['hundreds_of_messages'] * 100} msgs/day",
     ]
     enabled = [s for s in GAME_SPECS if spec_enabled(s, cfg['game_overrides'])]
     disabled = [s for s in GAME_SPECS if not spec_enabled(s, cfg['game_overrides'])]
@@ -533,8 +551,9 @@ def config_summary(cfg):
                  if enabled else '⚠️ Tracking no games!')
     if disabled:
         lines.append(f'-# Off: {_game_list(disabled)}')
-    if not cfg['input_channel_id'] or not cfg['output_channel_id']:
-        lines.append('-# Set both channels (`/setup input`, `/setup output`) to go live.')
+    hint = go_live_hint(cfg)
+    if hint:
+        lines.append(hint)
     return '\n'.join(lines)
 
 
@@ -558,11 +577,12 @@ def handle_setup(body, guild_id):
     sub, args = _sub_options(body)
     cfg = guild_cfg(guild_id, strict=True)
 
-    if sub in CHANNEL_FIELDS:
+    chan_sub = store.channel_sub(sub)
+    if chan_sub:
         cid = args.get('channel') or (str(args.get('channel_id') or '').strip() or None)
         if cid is None:
-            return channel_picker_response(sub)
-        text, err = set_channel(guild_id, sub, cid, cfg)
+            return channel_picker_response(chan_sub)
+        text, err = set_channel(guild_id, chan_sub, cid, cfg)
         return _ephemeral(err or text)
 
     if sub == 'daily':
@@ -588,6 +608,19 @@ def handle_setup(body, guild_id):
             except Exception:
                 pass
         return _ephemeral(f'⏸️ Sticky disabled{note}.')
+
+    if sub == 'embeds':
+        suppress = bool(args.get('suppress'))
+        store.update_config(guild_id, {'suppress_embeds': suppress})
+        # Suppression happens on the sticky pass, as each result is counted, so
+        # a server with the sticky off has nothing scanning for links to strip.
+        note = '' if cfg['sticky_enabled'] else ('\n-# The sticky is off, so nothing '
+                                                 'scans for results to strip.')
+        if suppress:
+            return _ephemeral('🔗 Link previews will be stripped from game results '
+                              f'as they are counted.{note}')
+        return _ephemeral('🔗 Link previews left alone — results already stripped '
+                          f'stay that way.{note}')
 
     if sub == 'games':
         return _ephemeral(
@@ -624,9 +657,7 @@ def handle_setup(body, guild_id):
         store.update_config(guild_id, updates)
         merged = {**cfg, **updates}
         return _ephemeral(f"✅ Limits updated: minimum players {merged['minimum_players']}, "
-                          f"volume ~{merged['hundreds_of_messages'] * 100} msgs/day"
-                          + (f", Wordle bot <@{merged['wordle_bot_id']}>"
-                             if merged['wordle_bot_id'] else ''))
+                          f"volume ~{merged['hundreds_of_messages'] * 100} msgs/day.")
 
     # 'show' and anything unrecognized fall back to the summary.
     return _ephemeral(config_summary(cfg))
@@ -640,13 +671,13 @@ def handle_setup_component(body, guild_id):
         return _update(apply_games_selection(guild_id, values))
 
     if custom_id.startswith(CHANNEL_SELECT_PREFIX):
-        kind = custom_id[len(CHANNEL_SELECT_PREFIX):]
-        if kind not in CHANNEL_FIELDS or not values:
+        sub = store.channel_sub(custom_id[len(CHANNEL_SELECT_PREFIX):])
+        if not sub or not values:
             return _update('Nothing selected — run the command again.')
-        text, err = set_channel(guild_id, kind, values[0])
+        text, err = set_channel(guild_id, sub, values[0])
         if err:
             # Keep the picker so the admin can retry after fixing permissions.
-            return _update(err, components=[channel_select_row(kind)])
+            return _update(err, components=[channel_select_row(sub)])
         return _update(text)
 
     return _update('Unknown control — re-run `/setup`.')
