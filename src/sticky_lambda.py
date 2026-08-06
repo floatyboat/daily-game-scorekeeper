@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from collections import defaultdict
 
 from game_parser import (
-    compute_puzzle_numbers, build_games,
+    compute_puzzle_numbers, build_games, top_game_buttons,
     match_message, make_timestamp_checker, STREAK_MIN,
 )
 from scoreboard import (
@@ -25,14 +25,29 @@ DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 _session = make_session(DISCORD_BOT_TOKEN)
 
 
-def build_sticky_components(yesterday_url=None):
+# How many games get their own shortcut button on the sticky. Three fits one
+# row alongside nothing else and keeps the sticky short; the rest of the list
+# is one Play tap away.
+STICKY_GAMES = 2
+
+
+def build_sticky_components(yesterday_url=None, game_buttons=()):
+    """The sticky's rows: the action row, then the top-games shortcut row.
+
+    game_buttons are the leading games in the app-wide order, so the row is the
+    head of the Play list surfaced a tap earlier. Empty (no games enabled) just
+    drops the row -- Discord rejects an action row with no components.
+    """
     buttons = [
         {'type': 2, 'style': 1, 'label': 'Play', 'custom_id': PLAY_BUTTON_CUSTOM_ID},
         {'type': 2, 'style': 2, 'label': 'Scores', 'custom_id': SCORES_BUTTON_CUSTOM_ID},
     ]
     if yesterday_url:
         buttons.append({'type': 2, 'style': 5, 'label': 'Yesterday', 'url': yesterday_url})
-    return [{'type': 1, 'components': buttons}]
+    rows = [{'type': 1, 'components': buttons}]
+    if game_buttons:
+        rows.append({'type': 1, 'components': list(game_buttons)})
+    return rows
 
 
 def send_sticky(channel_id, content, components):
@@ -92,15 +107,26 @@ def find_latest_scoreboard_id(messages):
     return None
 
 
-def _sticky_is_current(sticky, content, want_url):
+def _button_identity(rows):
+    """Every button in row order, reduced to what we actually render.
+
+    Discord echoes components back with extra server-set fields (component ids
+    and the like), so compare this projection rather than the raw dicts.
+    """
+    return [(c.get('custom_id'), c.get('label'), c.get('url'))
+            for row in (rows or []) for c in row.get('components', [])]
+
+
+def _sticky_is_current(sticky, content, components):
+    """True when the live sticky already renders exactly what we'd post now.
+
+    Content plus every button, so a stale Yesterday link, a reshuffled or
+    restreaked top-three row, and a sticky posted before either button existed
+    all force a repost.
+    """
     if sticky.get('content', '') != content:
         return False
-    btns = [c for row in (sticky.get('components') or [])
-            for c in row.get('components', [])]
-    if not any(c.get('custom_id') == PLAY_BUTTON_CUSTOM_ID for c in btns):
-        return False
-    existing_url = next((c.get('url') for c in btns if c.get('style') == 5), None)
-    return existing_url == want_url
+    return _button_identity(sticky.get('components')) == _button_identity(components)
 
 
 def build_sticky_content(results, server_streak=0):
@@ -119,14 +145,15 @@ def build_sticky_content(results, server_streak=0):
 
 
 def update_sticky(channel_id, channel_messages, results, server_streak=0,
-                  link_yesterday=True):
+                  link_yesterday=True, game_buttons=()):
     """Maintain exactly one sticky at the bottom of channel_id.
 
-    No-op only when a single sticky is already the most recent message AND its
-    content matches what we'd render now — content comparison catches the
-    day-transition case where the sticky is still at the bottom but shows
-    yesterday's stats, and URL comparison catches the case where the daily
-    scoreboard just posted and the Yesterday link is now stale.
+    No-op only when a single sticky is already the most recent message AND both
+    its content and its buttons match what we'd render now — content comparison
+    catches the day-transition case where the sticky is still at the bottom but
+    shows yesterday's stats, and button comparison catches a Yesterday link gone
+    stale behind a freshly posted scoreboard, or a top-three row the day's plays
+    have since reordered.
 
     link_yesterday=False (guild has the daily scoreboard disabled) drops the
     Yesterday button even when an old board is still in the channel — the
@@ -149,11 +176,11 @@ def update_sticky(channel_id, channel_messages, results, server_streak=0,
             # Discord's client routes by channel_id/message_id; the guild slot
             # accepts @me even for guild messages.
             yesterday_url = f'https://discord.com/channels/@me/{channel_id}/{scoreboard_id}'
-    components = build_sticky_components(yesterday_url)
+    components = build_sticky_components(yesterday_url, game_buttons)
 
     if (len(stickies) == 1 and channel_messages
             and channel_messages[0]['id'] == stickies[0]['id']
-            and _sticky_is_current(stickies[0], content, yesterday_url)):
+            and _sticky_is_current(stickies[0], content, components)):
         return 'unchanged'
 
     for old in stickies:
@@ -218,8 +245,12 @@ def run_guild(cfg, force=False):
                              cfg['minimum_players'], include_players=False)
     server_streak = (streaks or {}).get('server', 0)
 
+    # Shortcut row: the head of the Play list, same ordering and labels.
+    game_buttons = top_game_buttons(games, results, streaks, STICKY_GAMES)
+
     action = update_sticky(channel_id, messages, results, server_streak,
-                           link_yesterday=cfg['daily_enabled'])
+                           link_yesterday=cfg['daily_enabled'],
+                           game_buttons=game_buttons)
     note = f' (embeds suppressed: {suppressed})' if cfg['suppress_embeds'] else ''
     return f'{action}{note}'
 

@@ -12,7 +12,7 @@ from nacl.exceptions import BadSignatureError
 from game_parser import (
     build_games, compute_puzzle_numbers, format_scoreboard_components,
     make_timestamp_checker, game_sort_key, match_suggestion, GAME_SPECS,
-    spec_enabled, STREAK_MIN,
+    spec_enabled, game_link_button,
 )
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
@@ -197,11 +197,13 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None):
     When user_id is known, only games that user hasn't logged today are shown,
     so the Play list is personal to whoever pressed the button. Buttons follow
     the app-wide game ordering (game_sort_key, same as scoreboard sections):
-    today's live count, then active server streak, then all-time distinct
-    players, then title. Labels get a "(count)" suffix once someone has played
-    today and a fire-streak suffix while the game's server streak is alive.
-    With no user_id (an unidentifiable presser) every game is listed; with no
-    reachable store the order falls back to live count then title.
+    today's live count, then active server streak, then 30-day distinct
+    players, then all-time distinct players, then title. Labels
+    (game_link_button) carry a fire-streak suffix
+    while the game's server streak is alive; today's count orders the list but
+    is not shown. With no user_id (an unidentifiable presser) every game is
+    listed; with no reachable store the order falls back to live count then
+    title.
     """
     cfg = cfg or guild_cfg(guild_id)
     games, results, streaks = unplayed_games(channel_id, cfg, user_id, guild_id)
@@ -209,14 +211,7 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None):
 
     games.sort(key=lambda g: game_sort_key(g, results, streaks))
 
-    buttons = []
-    for g in games:
-        count = len(results.get(g.key) or {})
-        label = f"{g.emoji} {g.title} ({count})" if count else f"{g.emoji} {g.title}"
-        streak = game_streaks.get(g.key, 0)
-        if streak >= STREAK_MIN:
-            label += f" \U0001F525{streak}"
-        buttons.append({"type": 2, "style": 5, "label": label, "url": g.url})
+    buttons = [game_link_button(g, game_streaks.get(g.key, 0)) for g in games]
 
     action_rows = []
     for i in range(0, len(buttons), MAX_BUTTONS_PER_ROW):

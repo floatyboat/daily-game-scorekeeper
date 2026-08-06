@@ -1187,16 +1187,44 @@ STREAK_MIN = int(os.getenv('MINIMUM_STREAK') or 3)
 
 
 def game_sort_key(game, results, streaks):
-    """The app-wide game ordering, shared by the scoreboard sections and the
-    Play list: today's players desc -> active streak desc -> all-time distinct
-    players desc -> title. results supplies today's live counts; streaks is a
-    gather_streaks() bundle or None (which degrades to count -> title).
+    """The app-wide game ordering, shared by the scoreboard sections, the Play
+    list and the sticky's shortcut row: today's players desc -> active streak
+    desc -> distinct players in the last 30 days desc -> all-time distinct
+    players desc -> title.
+
+    The 30-day tier is what keeps the tail current: all-time player sets only
+    grow, so a game the server has drifted away from outranks a newer one
+    forever on that number alone. results supplies today's live counts; streaks
+    is a gather_streaks() bundle or None (which degrades to count -> title).
     """
     bundle = streaks or {}
     return (-len(results.get(game.key) or {}),
             -bundle.get('games', {}).get(game.key, 0),
+            -bundle.get('players_30d', {}).get(game.key, 0),
             -bundle.get('players_total', {}).get(game.key, 0),
             game.title.lower())
+
+
+def game_link_button(game, streak=0):
+    """One game as a Discord link button, shared by every surface that lists
+    games: the Play/Random list and the sticky's shortcut row.
+
+    Label is emoji + title, plus a fire suffix while the game's server streak
+    is alive. Today's player count sorts games (game_sort_key) but is
+    deliberately not in the label -- the counts read as a scoreboard the
+    scoreboard already renders, and they churned the label on every play.
+    """
+    label = f'{game.emoji} {game.title}'
+    if streak >= STREAK_MIN:
+        label += f' \U0001F525{streak}'
+    return {'type': 2, 'style': 5, 'label': label, 'url': game.url}
+
+
+def top_game_buttons(games, results, streaks, limit):
+    """Link buttons for the first `limit` games in the app-wide order."""
+    game_streaks = (streaks or {}).get('games', {})
+    ordered = sorted(games, key=lambda g: game_sort_key(g, results, streaks))
+    return [game_link_button(g, game_streaks.get(g.key, 0)) for g in ordered[:limit]]
 
 
 def _streak_header_lines(streaks, games_by_key):

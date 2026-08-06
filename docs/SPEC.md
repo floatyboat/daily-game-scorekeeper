@@ -209,9 +209,14 @@ retroactively.
 - **`store.py`** owns all DynamoDB I/O and the config schema. IAM per lambda role:
   Query/GetItem/PutItem/UpdateItem/Scan on the table ARN.
 - **Game ordering** (`game_sort_key`, one shared helper): today's live count desc → active
-  server streak desc → all-time distinct players desc → title. Used everywhere games are
-  listed — Play buttons and scoreboard sections — so the app presents one consistent order.
-  Play labels carry a streak suffix: `🔗 Connections (3) 🔥14`.
+  server streak desc → distinct players in the last 30 days desc (`players_30d` off the game
+  aggregate, via the streak bundle) → all-time distinct players desc → title. The 30-day
+  tier keeps the tail current: all-time sets only grow, so without it a game the server has
+  drifted away from outranks a newer one forever. Used everywhere games are
+  listed — Play buttons, the sticky's shortcut row, and scoreboard sections — so the app
+  presents one consistent order. One helper (`game_link_button`) renders every game link
+  button: emoji, title, and a streak suffix — `🔗 Connections 🔥14`. Today's live count
+  orders the list but is not in the label.
 - **Scoreboard and Scores button** (`format_scoreboard_components`, one shared path) take an
   optional streaks argument: a `🔥N` suffix on each game's title line, a `💔 <Game> streak
   ended at N` callout on the day it breaks, and personal streak markers at or above the
@@ -224,7 +229,11 @@ retroactively.
   in the points summary (`_overall_streak_tag()`). Per-game player streaks repeat on every
   score line of every game and stay a plain `(xN)` (`_streak_tag()`).
 - **Sticky**: the content line ends with the server-wide streak (points scored in any game,
-  live-adjusted) as a bare `🔥N`. The sticky is identified by its own Play button.
+  live-adjusted) as a bare `🔥N`. Two rows of buttons: Play · Scores · Yesterday, then a
+  shortcut row of the first `STICKY_GAMES` (3) games in `game_sort_key` order — the head of
+  the Play list, one tap earlier. The sticky is identified by its own Play button, so extra
+  rows never confuse the match; it reposts when its content *or* any button changes, which
+  now includes the top three reshuffling as the day's plays land.
 
 ## Commands
 
@@ -243,7 +252,7 @@ retroactively.
   then an ephemeral channel-select menu. Every path validates that the bot can see the
   channel and errors with instructions when it can't.
 - **`/play`** — ephemeral list of today's enabled games as link buttons, in `game_sort_key`
-  order, with live counts and streak suffixes, plus a Random row.
+  order, with streak suffixes, plus a Random row.
 - **`/suggest`** — open to everyone, no permission gate: a modal (Discord's only multi-line
   input) taking a game name, an optional link, and a pasted result, posted to the
   `DEV_CHANNEL_ID` channel as a candidate `GAME_SPECS` entry. The paste goes in a code

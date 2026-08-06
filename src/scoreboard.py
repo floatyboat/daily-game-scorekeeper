@@ -132,6 +132,9 @@ def gather_streaks(guild_id, ref_date, results, games, minimum_players=1,
                     day; displayed on the sticky, not the scoreboard)
       games         {game_key: streak to show}
       broken        {game_key: streak that ended on ref_date}
+      players_30d   {game_key: rolling 30-day distinct-player count, as of the
+                    last finalize (store.refresh_players_30d); 0 for a game
+                    whose aggregate predates the field or has never been played}
       players_total {game_key: all-time distinct-player count}
       players       {game_key: {user_id: streak to show}} (players who SCORED
                     on ref_date only; empty when include_players=False). A
@@ -153,8 +156,8 @@ def gather_streaks(guild_id, ref_date, results, games, minimum_players=1,
         game_items = {store.game_key_from_sk(sk): item for sk, item in aggs.items()
                       if sk.startswith(store.GAME_AGG_PREFIX)}
 
-        bundle = {'games': {}, 'broken': {}, 'players_total': {}, 'players': {},
-                  'players_overall': {},
+        bundle = {'games': {}, 'broken': {}, 'players_30d': {},
+                  'players_total': {}, 'players': {}, 'players_overall': {},
                   'server': store.display_streak(
                       aggs.get(store.SERVER_AGG_SK), day,
                       any(scorers.values()))}
@@ -164,6 +167,9 @@ def gather_streaks(guild_id, ref_date, results, games, minimum_players=1,
             ended = store.broken_streak_on(item, day)
             if ended:
                 bundle['broken'][key] = ended
+            # int(): DynamoDB hands numbers back as Decimal, and the bundle is
+            # documented (and deferred-invoke serialized) as JSON-safe.
+            bundle['players_30d'][key] = int((item or {}).get('players_30d') or 0)
             bundle['players_total'][key] = len((item or {}).get('players') or ())
 
         if include_players:
