@@ -25,18 +25,13 @@ DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 _session = make_session(DISCORD_BOT_TOKEN)
 
 
-# How many games get their own shortcut button on the sticky. Three fits one
-# row alongside nothing else and keeps the sticky short; the rest of the list
-# is one Play tap away.
-STICKY_GAMES = 2
-
-
 def build_sticky_components(yesterday_url=None, game_buttons=()):
     """The sticky's rows: the action row, then the top-games shortcut row.
 
     game_buttons are the leading games in the app-wide order, so the row is the
-    head of the Play list surfaced a tap earlier. Empty (no games enabled) just
-    drops the row -- Discord rejects an action row with no components.
+    head of the Play list surfaced a tap earlier. Empty -- the guild's
+    sticky_games is 0 (the default), or it has no games enabled -- just drops
+    the row; Discord rejects an action row with no components.
     """
     buttons = [
         {'type': 2, 'style': 1, 'label': 'Play', 'custom_id': PLAY_BUTTON_CUSTOM_ID},
@@ -121,8 +116,8 @@ def _sticky_is_current(sticky, content, components):
     """True when the live sticky already renders exactly what we'd post now.
 
     Content plus every button, so a stale Yesterday link, a reshuffled or
-    restreaked top-three row, and a sticky posted before either button existed
-    all force a repost.
+    restreaked shortcut row, a row an admin has just resized or switched off,
+    and a sticky posted before either button existed all force a repost.
     """
     if sticky.get('content', '') != content:
         return False
@@ -152,8 +147,8 @@ def update_sticky(channel_id, channel_messages, results, server_streak=0,
     its content and its buttons match what we'd render now — content comparison
     catches the day-transition case where the sticky is still at the bottom but
     shows yesterday's stats, and button comparison catches a Yesterday link gone
-    stale behind a freshly posted scoreboard, or a top-three row the day's plays
-    have since reordered.
+    stale behind a freshly posted scoreboard, or a shortcut row the day's plays
+    have since reordered (or an admin has resized via /setup sticky).
 
     link_yesterday=False (guild has the daily scoreboard disabled) drops the
     Yesterday button even when an old board is still in the channel — the
@@ -245,8 +240,12 @@ def run_guild(cfg, force=False):
                              cfg['minimum_players'], include_players=False)
     server_streak = (streaks or {}).get('server', 0)
 
-    # Shortcut row: the head of the Play list, same ordering and labels.
-    game_buttons = top_game_buttons(games, results, streaks, STICKY_GAMES)
+    # Shortcut row: the head of the Play list, same ordering and labels. Off by
+    # default (sticky_games 0), and then the ordering pass never runs -- a
+    # guild that doesn't want the row pays nothing to rank games for it.
+    game_buttons = ()
+    if cfg['sticky_games']:
+        game_buttons = top_game_buttons(games, results, streaks, cfg['sticky_games'])
 
     action = update_sticky(channel_id, messages, results, server_streak,
                            link_yesterday=cfg['daily_enabled'],

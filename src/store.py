@@ -64,9 +64,10 @@ class ConfigField:
         coerce    stored/incoming value -> the type callers expect. DynamoDB
                   hands numbers back as Decimal, and Discord hands option values
                   back as whatever JSON had; this is the one place that is fixed.
-        group     the /setup subcommand exposing this field ('time'/'limits'),
-                  or None for settings with a surface of their own (the channel
-                  subcommands, the on/off toggles, /setup games, the run markers)
+        group     the /setup subcommand exposing this field as an option
+                  ('time'/'limits'/'sticky'), or None for settings with a
+                  surface of their own (the channel subcommands, the on/off
+                  toggles, /setup games, the run markers)
         option    slash-command option name when it differs from `name`
         opt_type  Discord option type
         describe  option description shown in Discord's picker
@@ -126,9 +127,13 @@ CONFIG_FIELDS = [
                 describe='Hundreds of messages/day in the input channel (default 1)'),
 
     # Toggles (/setup daily, /setup sticky, /setup embeds) and the game menu
-    # (/setup games).
+    # (/setup games). sticky_games rides along on the sticky toggle as an
+    # optional option, since it only means anything while the sticky is on.
     ConfigField('daily_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     ConfigField('sticky_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
+    ConfigField('sticky_games', default=0, coerce=int, group='sticky',
+                option='games', minimum=0, maximum=3,
+                describe='Game shortcut buttons on the sticky, 0-3 (default 0, off)'),
     ConfigField('suppress_embeds', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     ConfigField('game_overrides', default={}, coerce=_overrides),
 

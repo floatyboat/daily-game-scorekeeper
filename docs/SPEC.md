@@ -45,7 +45,7 @@ GUILDS                      GUILD#<guild_id>   per-server config: input_channel_
                                                time_window_hours, minimum_players,
                                                hundreds_of_messages,
                                                daily_enabled, sticky_enabled,
-                                               suppress_embeds,
+                                               sticky_games, suppress_embeds,
                                                game_overrides (map key->bool),
                                                last_finalized_day, last_posted_day
 GUILD#<guild_id>            DAY#<YYYY-MM-DD>   full parsed results for the day:
@@ -108,6 +108,7 @@ registrar and the handler.
 | `hundreds_of_messages` | `limits message_volume` | `1` | Input-channel volume (1–8), sets the fetch depth |
 | `daily_enabled` | `daily enabled` | `true` | Whether the daily board posts |
 | `sticky_enabled` | `sticky enabled` | `true` | Whether the sticky is maintained |
+| `sticky_games` | `sticky games` | `0` | Game shortcut buttons on the sticky's second row (0–3); 0 skips the ranking pass entirely |
 | `suppress_embeds` | `embeds suppress` | `true` | Whether link previews are stripped off counted results |
 | `game_overrides` | `games` | `{}` | Explicit per-guild flips of each game's default state |
 | `last_finalized_day` | — | — | Written at finalize; records how far aggregates are folded |
@@ -229,11 +230,13 @@ retroactively.
   in the points summary (`_overall_streak_tag()`). Per-game player streaks repeat on every
   score line of every game and stay a plain `(xN)` (`_streak_tag()`).
 - **Sticky**: the content line ends with the server-wide streak (points scored in any game,
-  live-adjusted) as a bare `🔥N`. Two rows of buttons: Play · Scores · Yesterday, then a
-  shortcut row of the first `STICKY_GAMES` (3) games in `game_sort_key` order — the head of
-  the Play list, one tap earlier. The sticky is identified by its own Play button, so extra
-  rows never confuse the match; it reposts when its content *or* any button changes, which
-  now includes the top three reshuffling as the day's plays land.
+  live-adjusted) as a bare `🔥N`. One row of buttons always — Play · Scores · Yesterday —
+  and an optional second: a shortcut row of the first `sticky_games` games in
+  `game_sort_key` order, the head of the Play list one tap earlier. `sticky_games` is 0 by
+  default, and at 0 the ranking pass is skipped rather than run and thrown away. The sticky
+  is identified by its own Play button, so extra rows never confuse the match; it reposts
+  when its content *or* any button changes, which covers the shortcut row reshuffling as
+  the day's plays land and an admin resizing or removing it.
 
 ## Commands
 
@@ -241,7 +244,9 @@ retroactively.
   re-verifies `member.permissions`, since servers can re-map the default. Subcommands, in
   the order `register_commands.py` lists them (which is the order Discord displays):
   `show` · `channel` (both sides at once) · `time` · `limits` · `games` · `daily on|off` ·
-  `sticky on|off` (off also deletes the existing sticky) · `embeds suppress:on|off` ·
+  `sticky on|off` (off also deletes the existing sticky; carries the optional `games`
+  shortcut-row size, a `ConfigField` in the `sticky` group that `toggle_sub` appends the
+  same way `field_sub` builds a whole subcommand) · `embeds suppress:on|off` ·
   `input`/`output` (override one side of `channel`, so they sit last). `limits` carries
   the display minimum and the message volume only — the Wordle bot is a code constant, not
   a per-server option. That array is

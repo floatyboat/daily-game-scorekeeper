@@ -520,6 +520,13 @@ def delete_stickies(channel_id):
     return removed
 
 
+def sticky_row_phrase(count):
+    """The sticky's shortcut row in prose, for the summary and the toggle reply."""
+    if not count:
+        return 'no shortcut row'
+    return f"{count} game shortcut{'' if count == 1 else 's'}"
+
+
 def config_summary(cfg):
     def ch(v):
         return f'<#{v}>' if v else '*not set*'
@@ -533,7 +540,8 @@ def config_summary(cfg):
               for c in store.CHANNEL_SUBS if not c.combined]
     lines += [
         f"Daily scoreboard: **{onoff(cfg['daily_enabled'])}** · "
-        f"Sticky: **{onoff(cfg['sticky_enabled'])}** · "
+        f"Sticky: **{onoff(cfg['sticky_enabled'])}** "
+        f"({sticky_row_phrase(cfg['sticky_games'])}) · "
         f"Link previews: **{'stripped' if cfg['suppress_embeds'] else 'kept'}**",
         f"Timezone `{cfg['timezone']}` · day starts {cfg['hours_after_midnight']:02d}:00 · "
         f"posts {post_hour:02d}:00 · window {cfg['time_window_hours']}h",
@@ -589,11 +597,17 @@ def handle_setup(body, guild_id):
                           'and the sticky drops its Yesterday link.')
 
     if sub == 'sticky':
+        # `games` rides along on this subcommand (store.CONFIG_FIELDS declares
+        # it group='sticky'), so one call can switch the sticky on and size its
+        # shortcut row. Left out, the stored value stands.
         enabled = bool(args.get('enabled'))
-        store.update_config(guild_id, {'sticky_enabled': enabled})
+        updates = {'sticky_enabled': enabled, **collect_updates('sticky', args)}
+        store.update_config(guild_id, updates)
+        rows = updates.get('sticky_games', cfg['sticky_games'])
         if enabled:
             return _ephemeral('▶️ Sticky enabled — it will appear in the input '
-                              'channel within a minute.')
+                              'channel within a minute, with '
+                              f'{sticky_row_phrase(rows)}.')
         note = ''
         if cfg['input_channel_id']:
             try:

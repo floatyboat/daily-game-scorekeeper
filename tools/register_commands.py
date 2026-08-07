@@ -70,10 +70,19 @@ def channel_sub(name):
             ]}
 
 
-def toggle_sub(name, description, prompt, option='enabled'):
-    """An on/off subcommand with a single required boolean."""
-    return {'type': OPT_SUB_COMMAND, 'name': name, 'description': description, 'options': [
-        {'type': OPT_BOOLEAN, 'name': option, 'description': prompt, 'required': True}]}
+def toggle_sub(name, description, prompt, option='enabled', group=None):
+    """An on/off subcommand with a single required boolean.
+
+    `group` appends every config field declared in that group as an optional
+    option, the same way field_sub builds a whole subcommand from one — for
+    settings that only shape a feature that is already on (see sticky_games).
+    """
+    options = [{'type': OPT_BOOLEAN, 'name': option, 'description': prompt,
+                'required': True}]
+    if group:
+        options += [field_option(f) for f in setup_options(group)]
+    return {'type': OPT_SUB_COMMAND, 'name': name, 'description': description,
+            'options': options}
 
 
 COMMANDS = [
@@ -112,7 +121,8 @@ COMMANDS = [
             toggle_sub('daily', 'Turn the daily scoreboard post on or off',
                        'Post the daily scoreboard?'),
             toggle_sub('sticky', 'Turn the Now Playing sticky on or off',
-                       'Keep a sticky pinned to the bottom of the input channel?'),
+                       'Keep a sticky pinned to the bottom of the input channel?',
+                       group='sticky'),
             toggle_sub('embeds', 'Strip link previews off posted game results',
                        'Suppress link previews on game results?', option='suppress'),
             channel_sub('input'),
