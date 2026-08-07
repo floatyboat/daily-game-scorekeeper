@@ -721,13 +721,19 @@ GAME_SPECS = [
     GameSpec(
         key='minutecryptic', emoji='🧩', title='Minute Cryptic', metric='guesses',
         total=0, url='https://www.minutecryptic.com',
-        puzzle=lambda ref: f'{ref.day} {ref.strftime("%B")}, {ref.year}',
+        puzzle=lambda ref: (ref - datetime(2024, 6, 26)).days + 1,
         # Scored like golf on hints used, so fewer is better and 0 is a clean
         # solve -- the same shape as the other total=0 'guesses' games. The
         # leading emoji on the hint line varies with par (🏆 at or under, 🏋
         # over), so match the count and not the emoji.
-        pattern=lambda ref, n: re.compile(rf'Minute Cryptic\s*[-–—]\s*{re.escape(n)}.*?(\d+)\s+hints?\b',
-                                          re.IGNORECASE | re.DOTALL),
+        # The share text heads on the date, not the puzzle number, so the
+        # pattern derives its own '7 August, 2026' from ref and ignores n --
+        # n is the real puzzle number, used only for the '#773' display label.
+        pattern=lambda ref, n: re.compile(
+            r'Minute Cryptic\s*[-–—]\s*'
+            + re.escape(f'{ref.day} {ref.strftime("%B")}, {ref.year}')
+            + r'.*?(\d+)\s+hints?\b',
+            re.IGNORECASE | re.DOTALL),
         parse=lambda m, c: (int(m.group(1)), {}),
     ),
 ]
