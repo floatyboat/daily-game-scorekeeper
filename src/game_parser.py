@@ -1233,8 +1233,13 @@ def top_game_buttons(games, results, streaks, limit):
     return [game_link_button(g, game_streaks.get(g.key, 0)) for g in ordered[:limit]]
 
 
-def _streak_header_lines(streaks, games_by_key):
-    """Header callouts: one line per game streak that ended on the displayed day."""
+def _streak_break_lines(streaks, games_by_key):
+    """One line per game streak that ended on the displayed day.
+
+    Rendered at the foot of the scores section, under the games that were
+    actually played: a broken streak is a result for that game too, and it
+    reads as one when it sits with them rather than in the header.
+    """
     if not streaks:
         return []
     lines = []
@@ -1249,9 +1254,9 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     """Format the scoreboard as Discord Components V2 (list of top-level components).
 
     streaks is an optional gather_streaks() bundle; it adds "streak ended"
-    header callouts, per-game fire suffixes on title lines, a personal fire
-    suffix for each player's overall streak in the points summary, and personal
-    "(xN)" markers on the per-game score lines.
+    callouts at the foot of the scores section, per-game fire suffixes on title
+    lines, a personal fire suffix for each player's overall streak in the points
+    summary, and personal "(xN)" markers on the per-game score lines.
     None renders exactly the streak-less board. game_overrides is the
     guild's per-game enable map -- without it a guild-enabled game whose spec
     defaults to disabled would silently drop out of the render.
@@ -1264,16 +1269,17 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     # --- Header container ---
     header_text = f"### 🧮 {title} - {reference_date.strftime('%B %d, %Y')}"
     header_children = [{"type": 10, "content": header_text}]
-    streak_lines = _streak_header_lines(streaks, {g.key: g for g in games})
-    if streak_lines:
-        header_children.append({"type": 10, "content": "\n".join(streak_lines)})
+    break_lines = _streak_break_lines(streaks, {g.key: g for g in games})
+    break_child = ([{"type": 10, "content": "\n".join(break_lines)}]
+                   if break_lines else [])
 
     if not results:
-        # Break callouts still render: a no-results day is exactly when
-        # every alive streak snaps.
+        # Break callouts still render: a no-results day is exactly when every
+        # alive streak snaps. There is no scores section to sit at the foot of,
+        # so they go at the foot of the only container there is.
         return [{"type": 17, "accent_color": HEADER_COLOR, "components": header_children + [
             {"type": 10, "content": "No results found!"},
-        ]}]
+        ] + break_child}]
 
     # --- Points container (gold accent) ---
     points = compute_points(results, games, minimum_players)
@@ -1306,6 +1312,11 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
             results[game.key], game.metric, game.total,
             player_streaks.get(game.key)).rstrip('\n')
         scores_children.append({"type": 10, "content": score_text})
+
+    if break_child:
+        if scores_children:
+            scores_children.append({"type": 14, "spacing": 1})  # Separator
+        scores_children += break_child
 
     if scores_children:
         components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": scores_children})

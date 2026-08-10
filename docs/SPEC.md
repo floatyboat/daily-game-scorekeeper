@@ -220,7 +220,10 @@ retroactively.
   orders the list but is not in the label.
 - **Scoreboard and Scores button** (`format_scoreboard_components`, one shared path) take an
   optional streaks argument: a `🔥N` suffix on each game's title line, a `💔 <Game> streak
-  ended at N` callout on the day it breaks, and personal streak markers at or above the
+  ended at N` callout on the day it breaks — at the foot of the scores section, under the
+  games that were played, since a broken streak is a result for that game too (on a
+  no-results day, where there is no scores section, it falls back to the header
+  container) — and personal streak markers at or above the
   display minimum — the player's **overall** streak in the points summary
   (`👑 @alice: 12 pts 🔥14`) and their per-game streak on each score line
   (`👑 @alice (x9): 3/6 guesses`). The header carries no server-streak line; the server
