@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import time
 import traceback
 from datetime import datetime
@@ -48,21 +49,32 @@ def pin_message(channel_id, message_id):
     _session.put(url)
 
 
-def persist_results(cfg, results, puzzle_numbers, ref_date, games, rotation=None):
+def persist_results(cfg, results, puzzle_numbers, ref_date, games, rotation=None,
+                    write=True):
     """SPEC.md write path: freeze the day and fold streak aggregates.
 
     Runs BEFORE the scoreboard renders (the board displays the exact streaks
     this fold produces, including break callouts) and never raises --
     persistence problems must not break the user-facing post, which simply
-    goes out streak-less. Test invocations parse the same real input channels
-    and every store write is idempotent, so they persist too, which keeps
-    this path covered by the standard post-change test event.
+    goes out streak-less.
+
+    write=False does everything except touch the table. A throwaway parse must
+    never land on real history: write_day's put_item is unconditional, and a
+    parse made after the input channel has scrolled past the fetch window sees
+    fewer messages than the run that first wrote the day -- overwriting a
+    complete archive with a partial one. (The aggregates were always safe;
+    _put_guarded's finalized_through condition rejects a replay.) The scoring
+    fold still runs either way, so the parse -> points path stays covered by
+    the routine post-change test event.
     """
     try:
         day = store.day_str(ref_date)
         # Doubles as the streak-eligibility signal: finalize_day counts a play
         # only where points landed.
         points_by_game = points_per_game(results, games, cfg['minimum_players'])
+        if not write:
+            n_scored = sum(1 for pts in points_by_game.values() if pts)
+            return f'store: dry run, would write day={day} ({n_scored} scored games)'
         archived = store.write_day(cfg['guild_id'], day, results, points_by_game,
                                    puzzle_numbers, rotation)
         stats = store.finalize_day(cfg['guild_id'], day, results, points_by_game,
@@ -195,16 +207,21 @@ def settle_rotation(cfg, is_test, channel, day, today_day, results, games, strea
     return f'rotation {today_day}: {", ".join(rotation)}'
 
 
-def process_guild(cfg, is_test, test_channel_id):
+def process_guild(cfg, is_test, test_channel_id, days_back=1):
     """Post one guild's daily scoreboard if it is due, then settle its rotation.
 
     Two stages on one hourly tick, sharing a single parse of the closed day:
     the board (post_blocked: post hour, last_posted_day) and the rotation draw
     (settle_rotation: day start, independent of the board). Test runs skip the
-    board's timing gates, post to the test channel, never pin, and never
-    advance last_posted_day or the rotation -- but they still persist the day
-    (idempotently), keeping the store path covered by the routine post-change
-    test event.
+    board's timing gates, post to the test channel, never pin, and write
+    nothing at all: not last_posted_day, not the rotation, not the day archive.
+    They read the real table and parse the real input channel, so what they
+    render is exactly what a live run would -- they just leave no trace.
+
+    days_back selects the day the board scores, counting back from the guild's
+    current day: 1 (the default, and the only value the schedule ever uses) is
+    the closed day. 0 scores today, which is a preview only -- the day is still
+    open, so it is rendered but never persisted; see the guard below.
     """
     gid = cfg['guild_id']
     t0 = time.time()
@@ -218,8 +235,9 @@ def process_guild(cfg, is_test, test_channel_id):
     tz = ZoneInfo(cfg['timezone'])
     now_local = datetime.now(tz)
     today = reference_date(now_local, tz, cfg['hours_after_midnight'])
-    yesterday = reference_date(now_local, tz, cfg['hours_after_midnight'], days_back=1)
-    day = store.day_str(yesterday)
+    scored = reference_date(now_local, tz, cfg['hours_after_midnight'],
+                            days_back=days_back)
+    day = store.day_str(scored)
     today_day = store.day_str(today)
     # The rotation that governed the day being scored (or None: unrestricted).
     # Today's draw has usually already shifted it into the previous slot by now;
@@ -264,12 +282,12 @@ def process_guild(cfg, is_test, test_channel_id):
             blocked = f'scoreboard already in channel; marked {day} posted'
 
     if board_due or needs_counts:
-        checker = make_timestamp_checker(yesterday, tz, cfg['hours_after_midnight'],
+        checker = make_timestamp_checker(scored, tz, cfg['hours_after_midnight'],
                                          cfg['time_window_hours'])
         avatar_pool = build_avatar_pool(_session, messages, checker, gid)
         note(f'avatar pool has {len(avatar_pool)} users')
         results, puzzle_numbers = parse_results(
-            messages, yesterday, tz, cfg['hours_after_midnight'], cfg['time_window_hours'],
+            messages, scored, tz, cfg['hours_after_midnight'], cfg['time_window_hours'],
             avatar_hashes=avatar_pool, game_overrides=cfg['game_overrides'],
         )
         note(f'parsed {sum(len(v) for v in results.values())} game results')
@@ -277,10 +295,15 @@ def process_guild(cfg, is_test, test_channel_id):
     parts, response = [], None
     if board_due:
         games = build_games(puzzle_numbers, cfg['game_overrides'])
-        note(persist_results(cfg, results, puzzle_numbers, yesterday, games, rotation))
+        # Two independent reasons to hold the write back: a test run must leave
+        # the table exactly as it found it, and an open day has no business
+        # being archived at all. Reads are unaffected -- gather_streaks below
+        # still renders real streaks either way.
+        note(persist_results(cfg, results, puzzle_numbers, scored, games, rotation,
+                             write=not is_test and days_back >= 1))
 
-        streaks = gather_streaks(gid, yesterday, results, games, cfg['minimum_players'])
-        components = format_scoreboard_components(results, yesterday, puzzle_numbers,
+        streaks = gather_streaks(gid, scored, results, games, cfg['minimum_players'])
+        components = format_scoreboard_components(results, scored, puzzle_numbers,
                                                   minimum_players=cfg['minimum_players'],
                                                   streaks=streaks,
                                                   game_overrides=cfg['game_overrides'],
@@ -332,9 +355,13 @@ def lambda_handler(event, context):
     happens on it. The guild list comes from the table each invocation, so a
     server onboarded via /setup is picked up with no deploy or schedule change.
     Event keys:
-      test             any value: post to the test channel, skip gates, no pin
+      test             any value: post to the test channel, skip gates, no
+                       writes of any kind
       test_channel_id  overrides the TEST_CHANNEL_ID env for this run
       guild_id         only process this guild
+      days_back        which day the board scores, counting back from the
+                       guild's current day (default 1, the closed day). 0
+                       scores today so far -- a preview, never persisted.
     """
     event = event if isinstance(event, dict) else {}
     is_test = 'test' in event
@@ -343,6 +370,15 @@ def lambda_handler(event, context):
         return {'statusCode': 400,
                 'body': json.dumps('test mode needs test_channel_id in the event '
                                    'or TEST_CHANNEL_ID in the env')}
+    try:
+        days_back = int(event.get('days_back', 1))
+    except (TypeError, ValueError):
+        return {'statusCode': 400,
+                'body': json.dumps(f'days_back must be an integer, '
+                                   f'got {event["days_back"]!r}')}
+    if days_back < 0:
+        return {'statusCode': 400,
+                'body': json.dumps('days_back must be 0 or more')}
 
     configs = store.all_configs()
     if event.get('guild_id'):
@@ -352,7 +388,7 @@ def lambda_handler(event, context):
     for cfg in configs:
         gid = cfg['guild_id']
         try:
-            summary[gid] = process_guild(cfg, is_test, test_channel_id)
+            summary[gid] = process_guild(cfg, is_test, test_channel_id, days_back)
         except Exception as e:
             traceback.print_exc()
             summary[gid] = f'FAILED {type(e).__name__}: {e}'
@@ -364,4 +400,13 @@ def lambda_handler(event, context):
 
 
 if __name__ == '__main__':
-    print(lambda_handler({'test': True}, None))
+    # No argument runs the plain test event, so the documented post-change
+    # check stays `python3 src/lambda_function.py`. Pass a fixture path (or
+    # inline JSON) to run any other one:
+    #   dotenv run -- python3 src/lambda_function.py tests/events/daily/scoreboard_today.json
+    arg = sys.argv[1] if len(sys.argv) > 1 else None
+    if arg:
+        event = json.loads(arg if arg.lstrip().startswith('{') else open(arg).read())
+    else:
+        event = {'test': True}
+    print(lambda_handler(event, None))

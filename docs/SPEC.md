@@ -401,6 +401,16 @@ retroactively.
   the test channel (`test_channel_id` in the event overrides the `TEST_CHANNEL_ID` env;
   `guild_id` filters); on the sticky it runs the test channel under a default config, with
   any config field overridable straight from the event.
+- **Test mode never writes.** It reads the real table and parses the real input channel, so
+  the board it renders is exactly the live one, but no `DAY#` archive, aggregate, rotation or
+  `last_posted_day` is touched. `write_day`'s `put_item` is unconditional, so a test parse
+  made after the input channel scrolled past the fetch window would otherwise replace a
+  complete archived day with a partial one.
+- **`days_back` picks the scored day**, counting back from the guild's current day: `1` (the
+  default, and the only value the schedule uses) is the closed day. `0` scores today so far —
+  a preview, never persisted whether or not it is a test, because an open day must not be
+  archived. Fixtures: `tests/events/daily/scoreboard_test.json` and `scoreboard_today.json`;
+  either runs locally as `dotenv run -- python3 src/lambda_function.py <path>`.
 
 ## Capacity and cost
 

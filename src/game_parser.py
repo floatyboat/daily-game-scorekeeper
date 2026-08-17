@@ -8,8 +8,12 @@ from collections import defaultdict, Counter, namedtuple
 from dataclasses import dataclass
 
 # Accent color constants (Discord integer colors) for the scoreboard containers.
-HEADER_COLOR = 16766720       # gold
-OTHER_GAMES_COLOR = 10395294  # gray
+# The accent is a container's left bar; it costs nothing against the component
+# and code-point caps. Warm gold leads (points), vivid teal carries the scored
+# games, muted gray recedes for everything that earns nothing.
+HEADER_COLOR = 16766720       # gold  #FFD700
+SCORES_COLOR = 3003583        # teal  #2DD4BF
+OTHER_GAMES_COLOR = 10395294  # gray  #9E9E9E
 
 # Wordle's guess limit. Shared by the Wordle game spec and the standalone
 # bot-image grid parser (_parse_single_grid), so it stays a module constant.
@@ -1263,8 +1267,6 @@ def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game
     return message
 
 
-MEDAL_COLOR = 15844367  # dark gold
-
 # Minimum streak length to display, everywhere streaks appear: game title
 # suffixes, Play labels, sticky flair, personal markers, and break callouts.
 # Shorter streaks still accrue and drive sort order -- they just don't render.
@@ -1539,7 +1541,7 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
         scores_children += break_child
 
     if scores_children:
-        components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": scores_children})
+        components.append({"type": 17, "accent_color": SCORES_COLOR, "components": scores_children})
 
     # --- Off-rotation container ---
     # Games outside the rotation that were played: rendered with scores but no
@@ -1548,7 +1550,7 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
         exhibition = [g for g in games if g.key not in rot and results.get(g.key)
                       and len(results[g.key]) >= minimum_players]
         if exhibition:
-            heading = [{"type": 10, "content": "**Off rotation** — played for fun, no points today"}]
+            heading = [{"type": 10, "content": "**Off rotation** — no points today"}]
             if style.separators:
                 heading.append({"type": 14, "spacing": 1})
             components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR,
