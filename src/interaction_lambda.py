@@ -16,7 +16,7 @@ from game_parser import (
 )
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
-    build_avatar_pool, safe_guild_id, gather_streaks, is_sticky_message,
+    build_avatar_pool, build_name_map, safe_guild_id, gather_streaks, is_sticky_message,
     PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     TEXT_CHANNEL_TYPES, PERM_ADMINISTRATOR, PERM_MANAGE_GUILD, MAX_BUTTONS_PER_ROW,
     MAX_MESSAGE_LENGTH,
@@ -89,9 +89,10 @@ def fetch_today_results(channel_id, cfg):
     under Discord's 3-second interaction-response budget; the daily summary
     lambda is the source of truth for the full archive, this is a live preview.
 
-    Returns (results, puzzle_numbers, today, rotation) -- rotation is
+    Returns (results, puzzle_numbers, today, rotation, names) -- rotation is
     store.current_rotation's key list for today, or None when the day is
-    unrestricted.
+    unrestricted, and names is the display-name map the scoreboard falls back
+    to when it has to trade mentions for room inside Discord's text budget.
     """
     tz = ZoneInfo(cfg['timezone'])
     today = reference_date(datetime.now(tz), tz, cfg['hours_after_midnight'])
@@ -104,7 +105,7 @@ def fetch_today_results(channel_id, cfg):
         messages, today, tz, cfg['hours_after_midnight'], cfg['time_window_hours'],
         avatar_hashes=avatar_pool, game_overrides=cfg['game_overrides'],
     )
-    return results, puzzle_numbers, today, rotation
+    return results, puzzle_numbers, today, rotation, build_name_map(messages)
 
 
 def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
@@ -115,7 +116,7 @@ def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
     someone plays.
     """
     cfg = cfg or guild_cfg(guild_id)
-    results, puzzle_numbers, today, rotation = fetch_today_results(channel_id, cfg)
+    results, puzzle_numbers, today, rotation, names = fetch_today_results(channel_id, cfg)
 
     streaks = gather_streaks(guild_id, today, results,
                              build_games(puzzle_numbers, cfg['game_overrides']),
@@ -124,7 +125,7 @@ def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
         results, today, puzzle_numbers,
         title="Today's Scores", minimum_players=cfg['minimum_players'], streaks=streaks,
         game_overrides=cfg['game_overrides'], rotation=rotation,
-        rotation_off=cfg['rotation_off_mode'],
+        rotation_off=cfg['rotation_off_mode'], names=names,
     )
 
     # 64 (EPHEMERAL) | 1<<15 (IS_COMPONENTS_V2). V2 messages can't have a
@@ -183,7 +184,7 @@ def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
     today = None
     rotation = None
     try:
-        results, puzzle_numbers, today, rotation = fetch_today_results(channel_id, cfg)
+        results, puzzle_numbers, today, rotation, _ = fetch_today_results(channel_id, cfg)
     except Exception:
         # Counts are a nice-to-have; never let a fetch/parse hiccup block the
         # core action. Fall back to today's games with no counts or streaks --

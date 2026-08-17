@@ -11,7 +11,8 @@ from game_parser import (format_scoreboard_components, make_timestamp_checker,
                          GAME_SPECS, spec_enabled)
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date,
-    parse_results, build_avatar_pool, is_scoreboard_message, gather_streaks,
+    parse_results, build_avatar_pool, build_name_map, is_scoreboard_message,
+    gather_streaks,
     FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
     MAX_BUTTONS_PER_ROW, MAX_ACTION_ROWS,
 )
@@ -204,7 +205,8 @@ def process_guild(cfg, is_test, test_channel_id):
                                               streaks=streaks,
                                               game_overrides=cfg['game_overrides'],
                                               rotation=rotation,
-                                              rotation_off=cfg['rotation_off_mode'])
+                                              rotation_off=cfg['rotation_off_mode'],
+                                              names=build_name_map(messages))
 
     # Draw the new day's rotation before posting, so its announcement can ride
     # directly under the board. Yesterday's list seeds the swap only when it

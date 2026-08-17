@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dateutil import parser as dateutil_parser
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, namedtuple
 from dataclasses import dataclass
 
 # Accent color constants (Discord integer colors) for the scoreboard containers.
@@ -1069,15 +1069,47 @@ def format_points_summary(points, player_streaks=None):
     return message + '\n'
 
 
-def _format_game_players(game_scores, metric, total, player_streaks=None):
+# Ranks that keep a real mention when the board is over its text budget --
+# exactly the ranks that earn a medal, so the reduction never splits a line's
+# treatment from how it renders.
+PODIUM = 3
+
+_MARKDOWN_SPECIALS = re.compile(r'([*_~`|\\<>])')
+
+
+def _plain_name(name):
+    """A display name safe to drop into the board's markdown.
+
+    Escapes what would otherwise become formatting (or look like a mention),
+    and trims a runaway name so one player can't eat the text budget that
+    swapping their mention out was meant to buy.
+    """
+    return _MARKDOWN_SPECIALS.sub(r'\\\1', name[:32])
+
+
+def _format_game_players(game_scores, metric, total, player_streaks=None,
+                         names=None, mention_limit=None):
     """Format ranked player lines for a single game.
 
     Returns a markdown string with medal emojis, player mentions, and scores.
     player_streaks ({user_id: streak}) appends an "(xN)" marker to players whose
     streak for this game has reached the display minimum.
+
+    mention_limit is the scoreboard's text-budget reduction (see _REDUCTIONS):
+    None mentions everyone, PODIUM mentions only the medal ranks, 0 mentions
+    nobody. Anyone past the limit renders as a plain name from `names` instead.
+    A `<@id>` costs 21 characters against Discord's 4000-character budget
+    however short the name it renders as, so this buys room without dropping
+    anyone from the board -- it only costs those players their ping. Anyone
+    `names` can't resolve keeps their mention: unidentifiable is a worse
+    failure than over budget, and the ladder has another rung to try.
     """
-    def mention(uid):
-        return f'<@{uid}>{_streak_tag(player_streaks, uid)}'
+    def mention(uid, rank):
+        tag = _streak_tag(player_streaks, uid)
+        name = (names or {}).get(uid)
+        if mention_limit is not None and rank > mention_limit and name:
+            return f'{_plain_name(name)}{tag}'
+        return f'<@{uid}>{tag}'
 
     medals = ['👑', '🥈', '🥉']
     lines = ''
@@ -1096,10 +1128,10 @@ def _format_game_players(game_scores, metric, total, player_streaks=None):
             score_tuple = (weighted, unweighted)
             if score_tuple != prev_val:
                 rank = i + 1
-            tied = [mention(sorted_players[i][0])]
+            tied = [mention(sorted_players[i][0], rank)]
             j = i + 1
             while j < len(sorted_players) and (sorted_players[j][1][0], sorted_players[j][1][1]) == score_tuple:
-                tied.append(mention(sorted_players[j][0]))
+                tied.append(mention(sorted_players[j][0], rank))
                 j += 1
             medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
             if weighted == 0:
@@ -1130,10 +1162,10 @@ def _format_game_players(game_scores, metric, total, player_streaks=None):
         if current_score != prev_score:
             rank = i + 1
 
-        tied_players = [mention(players[i][0])]
+        tied_players = [mention(players[i][0], rank)]
         j = i + 1
         while j < len(players) and players[j][1] == current_score:
-            tied_players.append(mention(players[j][0]))
+            tied_players.append(mention(players[j][0], rank))
             j += 1
 
         medal = f"{medals[rank - 1]} " if rank <= len(medals) else f""
@@ -1297,8 +1329,95 @@ def _streak_break_lines(streaks, games_by_key):
     return lines
 
 
-def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None, rotation=None, rotation_off='shown'):
-    """Format the scoreboard as Discord Components V2 (list of top-level components).
+# Discord's two caps on a single Components-V2 message, both measured against
+# the live API rather than taken from the docs (which only state the first):
+#
+#   40 components   every node in the tree, nested children included
+#                   (rejected as COMPONENT_MAX_TOTAL_COMPONENTS_EXCEEDED)
+#   4000 characters the raw `content` of every Text Display, summed
+#                   (rejected as COMPONENT_DISPLAYABLE_TEXT_SIZE_EXCEEDED)
+#
+# The character cap counts code points -- exactly Python's len() of the markup
+# we send. So a `<@id>` mention costs 21 however short the name it renders as,
+# and an astral emoji costs 1, not the 2 a UTF-16 length would report. That
+# makes the preflight below exact: the board is built and measured in-process,
+# with no network call, so it never has to guess whether a post will be
+# rejected. (Discord separately 500s past ~2500 emoji in one Text Display --
+# far beyond the few dozen a real board carries, so it isn't modelled here.)
+MAX_TOTAL_COMPONENTS = 40
+MAX_DISPLAYABLE_TEXT = 4000
+
+
+def count_components(components):
+    """What Discord counts against MAX_TOTAL_COMPONENTS: every node, nested."""
+    return sum(1 + count_components(c.get('components') or [])
+               for c in components)
+
+
+def displayable_text(components):
+    """What Discord counts against MAX_DISPLAYABLE_TEXT: every Text Display's
+    raw content, summed."""
+    return sum((len(c.get('content') or '') if c.get('type') == 10 else 0)
+               + displayable_text(c.get('components') or [])
+               for c in components)
+
+
+def over_budget(components):
+    """The caps this board currently breaks, as a set of _REDUCTIONS tags."""
+    over = set()
+    if count_components(components) > MAX_TOTAL_COMPONENTS:
+        over.add('components')
+    if displayable_text(components) > MAX_DISPLAYABLE_TEXT:
+        over.add('text')
+    return over
+
+
+# How a board is rendered. The full style is what every board has always used;
+# the ladder below relaxes one field at a time when a cap is exceeded.
+_Style = namedtuple('_Style', 'separators merge_games mention_limit urls')
+_FULL_STYLE = _Style(separators=True, merge_games=False, mention_limit=None, urls=True)
+
+# (field, relaxed value, the cap it relieves), least-lossy first.
+#
+# The two caps need different rungs and neither ladder helps the other: losing
+# separators or merging games costs components but not a character, while
+# dropping mentions and URLs costs characters but leaves the component count
+# untouched. So each reduction is applied only when its own cap is the one over
+# budget -- a text-heavy board keeps its separators, and a game-heavy one keeps
+# every mention. Ordered so the board gives up decoration before it gives up
+# information: dividers, then per-game structure, then pings below the podium,
+# then links, then the last pings. No rung drops a game or a player, so the
+# board stays complete however far down the ladder it goes -- a board that
+# silently omits a game is indistinguishable from one an admin turned off.
+#
+# Past the last rung the text is irreducible: a line is down to a name, a score
+# and a newline, and 4000 characters holds around 200-230 of those however the
+# games and players divide up (tools/check_caps.py measures the frontier). A day
+# bigger than that does not fit in one message at any formatting, and nothing
+# here truncates to hide it -- see format_scoreboard_components for what happens
+# instead.
+_REDUCTIONS = (
+    ('separators', False, 'components'),
+    ('merge_games', True, 'components'),
+    ('mention_limit', PODIUM, 'text'),
+    ('urls', False, 'text'),
+    ('mention_limit', 0, 'text'),
+)
+
+
+def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None, rotation=None, rotation_off='shown', names=None):
+    """Format the scoreboard as Discord Components V2, within Discord's caps.
+
+    Renders the full board, measures it, and if it breaks either cap re-renders
+    with the next reduction from _REDUCTIONS that relieves the cap it actually
+    broke, until it fits. Rendering is pure local string work, so a board is
+    measured before anything is sent and the post is never the thing that finds
+    out it was too big. A board that fits -- every board today does -- takes the
+    first pass and is byte-identical to what this produced before the ladder
+    existed.
+
+    names ({user_id: display name}) feeds the podium_only reduction; without it
+    that rung is a no-op and the ladder falls through to dropping URLs.
 
     streaks is an optional gather_streaks() bundle; it adds "streak ended"
     callouts at the foot of the scores section, per-game fire suffixes on title
@@ -1317,6 +1436,35 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
 
     Returns a list[dict] suitable for the 'components' field in a Discord message.
     """
+    style, applied = _FULL_STYLE, set()
+    while True:
+        components = _render_scoreboard(
+            results, reference_date, puzzle_numbers, title, minimum_players,
+            streaks, game_overrides, rotation, rotation_off, names, style)
+        over = over_budget(components)
+        if not over:
+            return components
+        size = (f'{count_components(components)} components, '
+                f'{displayable_text(components)} chars')
+        for i, (field, value, cap) in enumerate(_REDUCTIONS):
+            if i not in applied and cap in over:
+                applied.add(i)
+                style = style._replace(**{field: value})
+                print(f'scoreboard: {cap} over budget ({size}) -- '
+                      f'retrying with {field}={value}')
+                break
+        else:
+            # Out of rungs. Post it anyway and let Discord reject it: a loud
+            # 400 in the logs beats silently inventing a truncation rule here.
+            print(f'scoreboard: STILL over budget after every reduction ({size}); '
+                  f'posting as-is')
+            return components
+
+
+def _render_scoreboard(results, reference_date, puzzle_numbers, title,
+                       minimum_players, streaks, game_overrides, rotation,
+                       rotation_off, names, style):
+    """One pass of the board at a given style. See format_scoreboard_components."""
     games = build_games(puzzle_numbers, game_overrides)
     rot = set(rotation) if rotation is not None else None
     components = []
@@ -1358,27 +1506,35 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     game_streaks = streaks['games'] if streaks else {}
     player_streaks = streaks['players'] if streaks else {}
 
+    def game_text(game):
+        puzzle_label = _puzzle_label(game.puzzle, reference_date)
+        titled = f"[{game.title}]({game.url})" if style.urls else game.title
+        score_text = f"**{titled} {game.emoji} {puzzle_label}**"
+        streak = game_streaks.get(game.key, 0)
+        if streak >= STREAK_MIN:
+            score_text += f" \U0001F525{streak}"
+        return score_text + "\n" + _format_game_players(
+            results[game.key], game.metric, game.total,
+            player_streaks.get(game.key), names, style.mention_limit).rstrip('\n')
+
     def game_sections(game_list):
+        # Merging folds every game into one Text Display: the games read the
+        # same, but the section costs one component instead of one per game.
+        if style.merge_games:
+            return ([{"type": 10, "content": "\n\n".join(game_text(g) for g in game_list)}]
+                    if game_list else [])
         children = []
         for g_idx, game in enumerate(game_list):
-            if g_idx > 0:
+            if g_idx > 0 and style.separators:
                 children.append({"type": 14, "spacing": 1})  # Separator
-            puzzle_label = _puzzle_label(game.puzzle, reference_date)
-            score_text = f"**[{game.title}]({game.url}) {game.emoji} {puzzle_label}**"
-            streak = game_streaks.get(game.key, 0)
-            if streak >= STREAK_MIN:
-                score_text += f" \U0001F525{streak}"
-            score_text += "\n" + _format_game_players(
-                results[game.key], game.metric, game.total,
-                player_streaks.get(game.key)).rstrip('\n')
-            children.append({"type": 10, "content": score_text})
+            children.append({"type": 10, "content": game_text(game)})
         return children
 
     # --- Scores container ---
     scores_children = game_sections(qualified)
 
     if break_child:
-        if scores_children:
+        if scores_children and style.separators:
             scores_children.append({"type": 14, "spacing": 1})  # Separator
         scores_children += break_child
 
@@ -1392,10 +1548,11 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
         exhibition = [g for g in games if g.key not in rot and results.get(g.key)
                       and len(results[g.key]) >= minimum_players]
         if exhibition:
-            components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": [
-                {"type": 10, "content": "**Off rotation** — played for fun, no points today"},
-                {"type": 14, "spacing": 1},
-            ] + game_sections(exhibition)})
+            heading = [{"type": 10, "content": "**Off rotation** — played for fun, no points today"}]
+            if style.separators:
+                heading.append({"type": 14, "spacing": 1})
+            components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR,
+                               "components": heading + game_sections(exhibition)})
 
     return components
 

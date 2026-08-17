@@ -364,6 +364,34 @@ def _extract_user_avatars(messages):
     return out
 
 
+def build_name_map(messages):
+    """{user_id: display name} for everyone seen in the window.
+
+    Feeds the scoreboard's podium_only reduction, which swaps a 21-character
+    `<@id>` for a plain name once the board is over Discord's text budget.
+    Built from messages the caller already fetched, so it adds no API call and
+    no latency: a player only has a score because they posted the message that
+    produced it, so everyone the reduction can reach is already in here.
+
+    Prefers the guild nickname, then the global display name, then the
+    username -- the order Discord itself renders a member in. Messages arrive
+    newest-first and the first sighting wins, so a rename shows up immediately.
+    """
+    names = {}
+    for m in messages:
+        sources = [(m.get('author'), (m.get('member') or {}).get('nick'))]
+        iu = m.get('interaction_metadata', {})
+        if iu:
+            sources.append((iu.get('user'), None))
+        for src, nick in sources:
+            if not src or not src.get('id'):
+                continue
+            name = nick or src.get('global_name') or src.get('username')
+            if name:
+                names.setdefault(src['id'], name)
+    return names
+
+
 def _has_multiplayer_wordle(messages, checker):
     for m in messages:
         if m.get('author', {}).get('id') != WORDLE_BOT_ID:
