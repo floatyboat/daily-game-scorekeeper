@@ -39,6 +39,7 @@ and the bot picks it up.
 | Connections | https://www.nytimes.com/games/connections | yes |
 | Enclose | https://enclose.horse | yes |
 | Flagle | https://flagle.org | no |
+| Gerrymandle | https://gerrymandle.com | yes |
 | Globle | https://globle.org | no |
 | MapTap | https://maptap.gg | yes |
 | MapTap Challenge | https://maptap.gg/adventures?gametype=challenge | no |

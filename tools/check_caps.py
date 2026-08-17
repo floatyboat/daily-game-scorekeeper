@@ -65,6 +65,7 @@ def fake_score(metric, i):
     """A score of the shape each metric's formatter expects."""
     return {'connections': (i % 4, 4), 'maptap': (100 - i, 90 - i),
             'travle': (0, 3, 0, -2), 'time': 90 + i,
+            'timed_win': (0, 1, 0, 90 + i),
             'score': 50 + i}.get(metric, 3)
 
 
@@ -158,17 +159,35 @@ def main():
             check(f'{label} ({n_games}x{n_players})', board, rungs, out,
                   failures, args.report)
 
-    # A board that already fits must be untouched by the ladder: today's posts
-    # have to render exactly as they did before the preflight existed.
+    # A board that already fits must be untouched by the ladder: those posts
+    # have to render exactly as they did before the preflight existed. Full
+    # style spends 3 components on the header container (itself plus the title
+    # and points lines) and 2 per game (its text plus the separator above it),
+    # so it holds this many games and no more.
+    full_style_games = (gp.MAX_TOTAL_COMPONENTS - 3) // 2
     if args.report:
         print('\ninvariants')
-    board, rungs, _ = build(n_specs, 3)
+    board, rungs, _ = build(min(n_specs, full_style_games), 3)
     if rungs:
         failures.append(f'a fitting board was reduced anyway: {rungs}')
     elif not any(c.get('type') == 14 for c in board[1].get('components', [])):
         failures.append('a fitting board lost its separators')
     elif args.report:
-        print('  fitting board renders unreduced, separators intact')
+        print(f'  fitting board ({full_style_games} games) renders unreduced, '
+              f'separators intact')
+
+    # Past that the day is one where every tracked game got played, and the
+    # only thing it costs is the dividers -- the first and least-lossy rung.
+    # Every game and every player still renders, so this is the ladder working,
+    # not the board breaking; it is asserted so a future spec pushes the board
+    # no further down the ladder without this saying so.
+    if n_specs > full_style_games:
+        board, rungs, _ = build(n_specs, 3)
+        if rungs != ['separators=False']:
+            failures.append(f'all {n_specs} games x 3 players reduced past '
+                            f'separators: {rungs}')
+        elif args.report:
+            print(f'  all {n_specs} games x 3 players costs separators only')
 
     # The empty board still renders (and still carries its break callouts).
     empty = gp.format_scoreboard_components({}, REF, gp.compute_puzzle_numbers(REF))

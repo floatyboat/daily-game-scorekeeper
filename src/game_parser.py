@@ -523,6 +523,38 @@ def _parse_pips(m, content):
     return minutes * 60 + seconds, {}
 
 
+def _parse_gerrymandle(m, content):
+    """(tier, hints, untimed, seconds) -- the result, then the help, then the clock.
+
+    Only a win scores: a tie or a loss is a poop however fast it was, so the
+    tier leads and the ascending sort every other tuple metric uses puts the
+    wins on top, ties next, losses last. Inside a block hints outrank the
+    clock, because a hint is a lasting advantage while the timer only measures
+    how long someone sat with it.
+
+    Hints come as their own badge line ("\U0001F50D Used 2 hints"), which the
+    share text omits entirely at zero -- so no line IS zero, and a clean solve
+    needs nothing parsed. Only the badge block belonging to THIS result is
+    read: everything from the outcome line to the blank line the share text
+    always puts before its link, so a second game pasted into the same message
+    cannot donate its hint count.
+
+    The time is written M:SS or H:MM:SS, and dropped entirely for a player who
+    has the in-game timer hidden. `untimed` is the flag for that: it sorts
+    those results below every timed one otherwise equal to them rather than
+    inventing a clock for them, and they still score.
+    """
+    tier = {'won': 0, 'tied': 1}.get(m.group(1).lower(), 2)
+    badges = content[m.end():].split('\n\n', 1)[0]
+    hint_match = re.search(r'\bUsed (\d+) hints?\b', badges, re.IGNORECASE)
+    hints = int(hint_match.group(1)) if hint_match else 0
+    clock = re.search(r'\bin (?:(\d+):)?(\d+):(\d+)', m.group(2), re.IGNORECASE)
+    if not clock:
+        return (tier, hints, 1, 0), {}
+    hours, minutes, seconds = (int(g or 0) for g in clock.groups())
+    return (tier, hints, 0, hours * 3600 + minutes * 60 + seconds), {}
+
+
 def _parse_maptap_challenge(m, content):
     score_match = re.search(r'Score: (\d+)', content, re.IGNORECASE)
     if not score_match:
@@ -599,7 +631,7 @@ def _parse_travle(m, content):
 # surfaces have Discord payload caps this list now feeds (scoreboard.py holds
 # the constants): the /setup games menu is one option per spec and tops out
 # at 25, and /play is one button per ENABLED game at 5 per row plus the Random
-# row, so it tops out at 20. 18 specs today. Past either, the fix is to split
+# row, so it tops out at 20. 19 specs today. Past either, the fix is to split
 # the response across two messages -- see the FUTURE note in scoreboard.py.
 
 GAME_SPECS = [
@@ -740,6 +772,20 @@ GAME_SPECS = [
             + r'.*?(\d+)\s+hints?\b',
             re.IGNORECASE | re.DOTALL),
         parse=lambda m, c: (int(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='gerrymandle', emoji='🗳️', title='Gerrymandle', metric='timed_win',
+        total=0, url='https://gerrymandle.com',
+        puzzle=lambda ref: (ref - datetime(2026, 5, 11)).days + 1,
+        # The headline line is all the pattern claims; _parse_gerrymandle digs
+        # the clock out of it, because everything after the verb is optional and
+        # reorderable -- the percentage only appears when the player shares
+        # their district split, and the time only when they haven't hidden the
+        # in-game timer. Anchoring on the verb alone keeps the match from
+        # depending on which of those they happen to have switched on.
+        pattern=lambda ref, n: re.compile(rf'Gerrymandle #{n}\s+(Won|Tied|Lost)\b([^\n]*)',
+                                          re.IGNORECASE),
+        parse=_parse_gerrymandle,
     ),
 ]
 
@@ -961,6 +1007,9 @@ def compute_points(results, games, minimum_players=1):
             elif metric == 'travle':
                 if current_score[0] == 2:
                     is_poop = True
+            elif metric == 'timed_win':
+                if current_score[0] != 0:
+                    is_poop = True
 
             # Collect tied players
             j = i + 1
@@ -1091,6 +1140,13 @@ def _plain_name(name):
     return _MARKDOWN_SPECIALS.sub(r'\\\1', name[:32])
 
 
+def _mmss(seconds):
+    """A clock as M:SS, shared by every timed metric. Past an hour the minutes
+    just keep counting (73:20) rather than growing an hours field -- a daily
+    puzzle that took that long is a curiosity, not a format to design for."""
+    return f'{seconds // 60}:{seconds % 60:02d}'
+
+
 def _format_game_players(game_scores, metric, total, player_streaks=None,
                          names=None, mention_limit=None):
     """Format ranked player lines for a single game.
@@ -1175,9 +1231,22 @@ def _format_game_players(game_scores, metric, total, player_streaks=None,
         medal = f"{medals[rank - 1]} " if rank <= len(medals) else f""
 
         if metric == 'time':
-            minutes = current_score // 60
-            seconds = current_score % 60
-            score_str = f"{minutes}:{seconds:02d}"
+            score_str = _mmss(current_score)
+        elif metric == 'timed_win':
+            tier, hints, untimed, seconds = current_score
+            if tier:
+                medal = '💩 '
+            # A win is just its time -- the clock IS the result, and "won" in
+            # front of every top line would be noise. The other two say so.
+            parts = [{1: 'tied', 2: 'lost'}[tier]] if tier else []
+            if not untimed:
+                parts.append(_mmss(seconds))
+            score_str = ' '.join(parts) or 'won'
+            if hints:
+                # Hints outrank the clock, so they have to be visible: two
+                # players a second apart are otherwise ordered by something
+                # the line doesn't show.
+                score_str += f" ({hints} hint" + ("s)" if hints != 1 else ")")
         elif metric == 'connections':
             mistakes, solved = current_score
             if mistakes == -1:
