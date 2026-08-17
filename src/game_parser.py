@@ -1,4 +1,5 @@
 import os
+import random
 import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -747,6 +748,73 @@ def spec_enabled(spec, game_overrides=None):
     return not spec.disabled
 
 
+def rotation_overrides(game_overrides, rotation):
+    """game_overrides with every game outside `rotation` forced off -- how
+    off_rotation='skipped' makes a day parse exactly as if those games were
+    disabled, with no new plumbing anywhere downstream of build_games().
+
+    Force-off is written after the admin's map so it wins for non-rotation
+    keys (an admin-enable can't leak a game back in), while rotation members
+    keep their admin value (a rotation key an admin has since disabled stays
+    off -- consumers intersect the rotation with built games for the same
+    reason).
+    """
+    keep = set(rotation)
+    overrides = dict(game_overrides or {})
+    for spec in GAME_SPECS:
+        if spec.key not in keep:
+            overrides[spec.key] = False
+    return overrides
+
+
+def next_rotation(enabled_keys, count, mode, min_players, prev_rotation, results):
+    """Draw the rotation for a new day: the game keys that will score on it.
+
+    prev_rotation is yesterday's list only when it actually governed the day
+    just scored, else None -- None or mode='random' means a fresh sample of
+    `count` games. Swap mode treats membership as earned by participation
+    (distinct posters in `results`, the same len(day_games[key]) count the
+    archive stores -- poop results keep a game in), one threshold both ways:
+    members that drew at least min_players stay, and off-rotation games that
+    drew them join. `count` is a hard cap -- more qualifiers than slots keeps
+    the most played, and the sort is stable, so an exact tie favors the
+    sitting member over the newcomer. Remaining slots are filled at random
+    from the enabled remainder -- never a key that just fell out, unless
+    nothing else is left to keep the board from shrinking. (Off mode
+    'skipped' never parses off-rotation games, so nothing can earn its way
+    in under it.)
+    """
+    target = min(count, len(enabled_keys))
+    if target <= 0:
+        return []
+    if mode != 'swap' or not prev_rotation:
+        return random.sample(list(enabled_keys), target)
+    enabled = set(enabled_keys)
+    prev = [k for k in prev_rotation if k in enabled]
+    prev_set = set(prev)
+
+    def played(k):
+        return len(results.get(k) or {})
+
+    keep = [k for k in prev if played(k) >= min_players]
+    promoted = [k for k in enabled_keys
+                if k not in prev_set and played(k) >= min_players]
+    dropped = [k for k in prev if played(k) < min_players]
+    rotation = keep + promoted
+    if len(rotation) > target:
+        rotation.sort(key=lambda k: -played(k))
+        rotation = rotation[:target]
+    taken = set(rotation)
+    pool = [k for k in enabled_keys if k not in taken and k not in set(dropped)]
+    random.shuffle(pool)
+    while len(rotation) < target and pool:
+        rotation.append(pool.pop())
+    random.shuffle(dropped)
+    while len(rotation) < target and dropped:
+        rotation.append(dropped.pop())
+    return rotation
+
+
 def _alnum(text):
     """Letters and digits only, lowercased -- 'Pop Culture Colors' and
     'popcultureColors' are the same answer to "which game is this?"."""
@@ -1250,7 +1318,7 @@ def _streak_break_lines(streaks, games_by_key):
     return lines
 
 
-def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None):
+def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None, rotation=None, rotation_off=None):
     """Format the scoreboard as Discord Components V2 (list of top-level components).
 
     streaks is an optional gather_streaks() bundle; it adds "streak ended"
@@ -1261,9 +1329,17 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     guild's per-game enable map -- without it a guild-enabled game whose spec
     defaults to disabled would silently drop out of the render.
 
+    rotation is the day's rotation (key list) or None for an unrestricted
+    board. It narrows the display only -- the points summary and the scores
+    section -- because for off modes 'hidden'/'shown' the caller still parses
+    and archives every enabled game; 'skipped' days arrive already narrowed
+    via game_overrides. rotation_off='shown' adds the off-rotation games that
+    were played as a separate zero-point section.
+
     Returns a list[dict] suitable for the 'components' field in a Discord message.
     """
     games = build_games(puzzle_numbers, game_overrides)
+    rot = set(rotation) if rotation is not None else None
     components = []
 
     # --- Header container ---
@@ -1282,7 +1358,10 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
         ] + break_child}]
 
     # --- Points container (gold accent) ---
-    points = compute_points(results, games, minimum_players)
+    # The one rotation-restricted compute_points call site: off-rotation games
+    # earn no points on the board, whatever the archive froze for them.
+    scored_games = games if rot is None else [g for g in games if g.key in rot]
+    points = compute_points(results, scored_games, minimum_players)
     points_section = format_points_summary(points, (streaks or {}).get('players_overall'))
     if points_section:
         header_children.append({"type": 10, "content": points_section.rstrip('\n')})
@@ -1293,25 +1372,31 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     # Canonical app-wide ordering, same as the Play list
     games.sort(key=lambda g: game_sort_key(g, results, streaks))
 
-    qualified = [g for g in games if g.key in results and results[g.key] and len(results[g.key]) >= minimum_players]
+    qualified = [g for g in games if g.key in results and results[g.key]
+                 and len(results[g.key]) >= minimum_players
+                 and (rot is None or g.key in rot)]
 
     game_streaks = streaks['games'] if streaks else {}
     player_streaks = streaks['players'] if streaks else {}
 
+    def game_sections(game_list):
+        children = []
+        for g_idx, game in enumerate(game_list):
+            if g_idx > 0:
+                children.append({"type": 14, "spacing": 1})  # Separator
+            puzzle_label = _puzzle_label(game.puzzle, reference_date)
+            score_text = f"**[{game.title}]({game.url}) {game.emoji} {puzzle_label}**"
+            streak = game_streaks.get(game.key, 0)
+            if streak >= STREAK_MIN:
+                score_text += f" \U0001F525{streak}"
+            score_text += "\n" + _format_game_players(
+                results[game.key], game.metric, game.total,
+                player_streaks.get(game.key)).rstrip('\n')
+            children.append({"type": 10, "content": score_text})
+        return children
+
     # --- Scores container ---
-    scores_children = []
-    for g_idx, game in enumerate(qualified):
-        if g_idx > 0:
-            scores_children.append({"type": 14, "spacing": 1})  # Separator
-        puzzle_label = _puzzle_label(game.puzzle, reference_date)
-        score_text = f"**[{game.title}]({game.url}) {game.emoji} {puzzle_label}**"
-        streak = game_streaks.get(game.key, 0)
-        if streak >= STREAK_MIN:
-            score_text += f" \U0001F525{streak}"
-        score_text += "\n" + _format_game_players(
-            results[game.key], game.metric, game.total,
-            player_streaks.get(game.key)).rstrip('\n')
-        scores_children.append({"type": 10, "content": score_text})
+    scores_children = game_sections(qualified)
 
     if break_child:
         if scores_children:
@@ -1320,6 +1405,18 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
 
     if scores_children:
         components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": scores_children})
+
+    # --- Off-rotation container ---
+    # 'shown' only: games outside the rotation that were played, rendered with
+    # scores but no points. 'hidden' omits them; 'skipped' never parsed them.
+    if rot is not None and rotation_off == 'shown':
+        exhibition = [g for g in games if g.key not in rot and results.get(g.key)
+                      and len(results[g.key]) >= minimum_players]
+        if exhibition:
+            components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": [
+                {"type": 10, "content": "**Off rotation** — played for fun, no points today"},
+                {"type": 14, "spacing": 1},
+            ] + game_sections(exhibition)})
 
     return components
 

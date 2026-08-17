@@ -10,7 +10,7 @@ all per-server configuration lives in the table.
 
 | Lambda | Module | Trigger | Role |
 |---|---|---|---|
-| `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Posts and pins yesterday's scoreboard; the only writer of day and aggregate items |
+| `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Posts and pins yesterday's scoreboard and announces today's rotation; the only writer of day and aggregate items |
 | `daily-game-sticky` | `src/sticky_lambda.py` | EventBridge rule `daily-game-sticky`, `cron(* * * * ? *)` | Maintains the one sticky ("Now Playing") at the bottom of the input channel |
 | `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, `/setup`, `/suggest`, sticky Play/Scores buttons; live ephemeral views |
 
@@ -46,11 +46,18 @@ GUILDS                      GUILD#<guild_id>   per-server config: input_channel_
                                                hundreds_of_messages,
                                                daily_enabled, sticky_enabled,
                                                sticky_games, suppress_embeds,
+                                               rotation_enabled, rotation_count,
+                                               rotation_mode, rotation_min_players,
+                                               rotation_off_mode,
                                                game_overrides (map key->bool),
-                                               last_finalized_day, last_posted_day
+                                               last_finalized_day, last_posted_day,
+                                               rotation_day + rotation_games (the
+                                               drawn rotation and the day it governs)
 GUILD#<guild_id>            DAY#<YYYY-MM-DD>   full parsed results for the day:
                                                {game: {user_id: {score, points}}}, puzzle
-                                               numbers. The durable archive + rebuild source.
+                                               numbers, and the governing rotation when
+                                               one did. The durable archive + rebuild
+                                               source.
 GUILD#<guild_id>            AGG#SERVER         overall server streak (points scored in ANY
                                                game that day): current_streak, best_streak,
                                                last_played_day
@@ -110,9 +117,16 @@ registrar and the handler.
 | `sticky_enabled` | `sticky enabled` | `true` | Whether the sticky is maintained |
 | `sticky_games` | `sticky games` | `0` | Game shortcut buttons on the sticky's second row (0–3); 0 skips the ranking pass entirely |
 | `suppress_embeds` | `embeds suppress` | `true` | Whether link previews are stripped off counted results |
+| `rotation_enabled` | `rotation enabled` | `true` | Score only a rotating subset of the enabled games each day |
+| `rotation_count` | `rotation games` | `3` | Games in the daily rotation (1–10) |
+| `rotation_mode` | `rotation mode` | `swap` | `swap` replaces under-played members, `random` re-draws daily |
+| `rotation_min_players` | `rotation min_players` | `3` | Membership threshold: games under it rotate out, outsiders reaching it rotate in |
+| `rotation_off_mode` | `rotation off_rotation` | `hidden` | Off-rotation results: `hidden`, `shown` for 0 pts, or `skipped` |
 | `game_overrides` | `games` | `{}` | Explicit per-guild flips of each game's default state |
 | `last_finalized_day` | — | — | Written at finalize; records how far aggregates are folded |
 | `last_posted_day` | — | — | Written after a real post; the post gate |
+| `rotation_day` | — | — | The day the stored rotation governs (set_rotation, real posts only) |
+| `rotation_games` | — | — | The rotation drawn for that day, as game keys |
 
 A guild with no stored item resolves to these defaults with both channels unset, which
 posts nothing anywhere.
@@ -157,6 +171,66 @@ afterwards; every reply from them says so.
   declaration): the `/setup games` menu is one option per spec, capped at 25; `/play` is one
   button per *enabled* game at 5 per row plus the Random row, capped at 20.
 
+## Daily rotation
+
+- On by default: each day only a drawn rotation of `rotation_count` games counts toward
+  the board — its points summary and scores section. Scoring inside the rotation is
+  unchanged (`compute_points`, the `minimum_players` display gate). A day is governed
+  only when `rotation_enabled` is on and `rotation_day` names it exactly with a
+  non-empty list; feature off, state absent, stale, or empty all mean **unrestricted**
+  — every surface behaves as if the feature did not exist. The first run after a gap
+  (deploy day included) therefore scores unrestricted and starts the rotation from that
+  morning. Before the board posts, `rotation_day` still names yesterday, so the
+  pre-post-hour window is unrestricted too — zero-width on default configs, where
+  post hour equals the day-start hour.
+- **Lifecycle** (`store.current_rotation` / `game_parser.next_rotation`). The daily
+  lambda draws day D's rotation right after scoring D−1. `swap` mode treats membership
+  as earned by participation (distinct posters on the scored day, poops included — the
+  same count the archive stores), one threshold both ways: members that drew at least
+  `rotation_min_players` stay, off-rotation games that drew them **join**.
+  `rotation_count` is a hard cap — more qualifiers than slots keeps the most played,
+  with an exact tie favoring the sitting member (stable sort) — and the bot fills any
+  remaining slots at random from the enabled remainder, never a key that just fell
+  out, unless nothing else is left to keep the board from shrinking. (`skipped` tracks
+  nothing off-rotation, so nothing can earn its way in under it; earn-in is a
+  swap-mode rule.) `random` mode re-draws the whole set. Yesterday's list seeds the swap only when it actually governed the scored day.
+  Disabled games are never in the pool, and every consumer intersects the stored
+  rotation with the built game list, so a mid-day `/setup games` disable drops a game
+  everywhere at once.
+- **Off-rotation results** (`rotation_off_mode`): `hidden` (default) and `shown` parse,
+  archive, and finalize **everything** — real points are frozen for off-rotation games,
+  so per-game, per-player, and overall streaks stay alive off-rotation — and only the
+  render narrows: the points summary sums rotation games alone, and `shown` also lists
+  the others as a separate zero-point section. `skipped` disables off-rotation games
+  for the day via a merged overrides map (`game_parser.rotation_overrides`), so parse,
+  archive, finalize, and render all narrow through the existing `build_games` path and
+  streaks go stale exactly as a disabled game's do. The `DAY#` item records the
+  governing rotation in every mode, so future rollups can exclude off-rotation frozen
+  points — the per-player `points_sum` aggregate still includes them, and the day
+  record stays the rollup source of truth.
+- **The announcement.** Right under the board the daily lambda posts "Today's games":
+  a bare header over the new rotation as link-button rows — the buttons carry the
+  emoji-title labels, the content repeats none of them. Deliberately a plain message, not
+  Components V2 — `is_scoreboard_message` keys on that flag, so a V2 follow-up would
+  hijack the sticky's Yesterday link and the posted-today dedup scan — and none of its
+  buttons is the sticky Play button, so the sticky pass never matches it. Silent,
+  embeds suppressed, never pinned, skipped entirely when unrestricted.
+- **Ordering and healing.** The real-run tail is post board → announce → pin →
+  `set_rotation` → `set_last_posted`. The already-posted heal path draws fresh
+  (random), persists **first**, then announces: a stale `rotation_day` there means the
+  crashed run never reached its announce, and the flipped order turns the loss window
+  into a duplicate announcement — the cheaper mistake. `set_rotation` is the
+  conditional-monotonic run-marker idiom carrying the list, so double fires keep the
+  first draw. Test runs post board + announcement to the test channel but never call
+  `set_rotation`; like `last_posted_day`, rotation state advances only on a real post,
+  so repeated test runs draw fresh sets by design.
+- **Consumers.** Bare `/play` and the sticky's Play button list rotation games only
+  (`/play all:true` lists every enabled game; an exhausted rotation points at it). The
+  sticky's shortcut row is rotation-only in every off mode, and the sticky counts what
+  the board renders — off-rotation plays are excluded under `hidden`. The Scores
+  button narrows exactly like the board. Rotation rides the daily post: with
+  `daily_enabled` off nothing draws, state goes stale, and everything is unrestricted.
+
 ## Streak semantics
 
 - A "day" is the existing `reference_date`, already timezone- and
@@ -190,7 +264,8 @@ After parsing yesterday's results:
 
 1. Write the `DAY#` item — plain overwrite, idempotent. Points are computed via
    `compute_points` and **frozen into the item**, so historical rollups survive future
-   scoring-rule changes.
+   scoring-rule changes; the governing rotation is archived alongside them (see Daily
+   rotation).
 2. Update `AGG#SERVER`, each `AGG#GAME#*`, and each player's `AGG#SERVER` and `AGG#GAME#*`
    via conditional writes guarded per item on `finalized_through` (the last day folded into
    that item). A double-fire cannot double-increment, and a run that crashes halfway resumes
@@ -249,7 +324,9 @@ retroactively.
   `show` · `channel` (both sides at once) · `time` · `limits` · `games` · `daily on|off` ·
   `sticky on|off` (off also deletes the existing sticky; carries the optional `games`
   shortcut-row size, a `ConfigField` in the `sticky` group that `toggle_sub` appends the
-  same way `field_sub` builds a whole subcommand) · `embeds suppress:on|off` ·
+  same way `field_sub` builds a whole subcommand) · `rotation on|off` (carries the four
+  `rotation`-group fields the same way; the mode fields register fixed choice menus off
+  `ConfigField.choices`) · `embeds suppress:on|off` ·
   `input`/`output` (override one side of `channel`, so they sit last). `limits` carries
   the display minimum and the message volume only — the Wordle bot is a code constant, not
   a per-server option. That array is
@@ -259,8 +336,10 @@ retroactively.
   escape hatch for channels the picker can't show, or no arguments at all — the reply is
   then an ephemeral channel-select menu. Every path validates that the bot can see the
   channel and errors with instructions when it can't.
-- **`/play`** — ephemeral list of today's enabled games as link buttons, in `game_sort_key`
-  order, with streak suffixes, plus a Random row.
+- **`/play`** — ephemeral list of today's games as link buttons, in `game_sort_key`
+  order, with streak suffixes, plus a Random row. Under a rotation it lists the games
+  that score today; the optional `all:true` lists every enabled game (see Daily
+  rotation).
 - **`/suggest`** — open to everyone, no permission gate: a modal (Discord's only multi-line
   input) taking a game name, an optional link, and a pasted result, posted to the
   `DEV_CHANNEL_ID` channel as a candidate `GAME_SPECS` entry. The paste goes in a code

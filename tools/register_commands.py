@@ -46,6 +46,8 @@ def field_option(field):
         option['min_value'] = field.minimum
     if field.maximum is not None:
         option['max_value'] = field.maximum
+    if field.choices:
+        option['choices'] = [{'name': n, 'value': v} for n, v in field.choices]
     return option
 
 
@@ -90,6 +92,11 @@ COMMANDS = [
         'name': 'play',
         'description': 'Play daily games',
         'type': CHAT_INPUT,
+        'options': [
+            {'type': OPT_BOOLEAN, 'name': 'all',
+             'description': "List every tracked game, not just today's rotation",
+             'required': False},
+        ],
     },
     {
         # No permission gate and no options: anyone can suggest, and the reply is
@@ -123,6 +130,8 @@ COMMANDS = [
             toggle_sub('sticky', 'Turn the Now Playing sticky on or off',
                        'Keep a sticky pinned to the bottom of the input channel?',
                        group='sticky'),
+            toggle_sub('rotation', 'Score a rotating subset of games each day',
+                       'Rotate which games are scored each day?', group='rotation'),
             toggle_sub('embeds', 'Strip link previews off posted game results',
                        'Suppress link previews on game results?', option='suppress'),
             channel_sub('input'),

@@ -1,0 +1,8 @@
+{
+  "type": 2,
+  "channel_id": "${TEST_CHANNEL_ID}",
+  "data": {
+    "name": "play",
+    "options": [{"name": "all", "type": 5, "value": true}]
+  }
+}

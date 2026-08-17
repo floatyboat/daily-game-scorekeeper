@@ -73,6 +73,7 @@ class ConfigField:
         describe  option description shown in Discord's picker
         minimum   option bounds Discord enforces before the interaction is sent
         maximum
+        choices   (label, value) pairs registered as the option's fixed menu
 
     Same bargain as GameSpec in game_parser.py: adding a setting is one entry
     here, not four coordinated edits across three files that silently no-op when
@@ -89,6 +90,7 @@ class ConfigField:
     describe: str = ''
     minimum: int = None
     maximum: int = None
+    choices: tuple = None
 
     @property
     def option_name(self):
@@ -100,6 +102,35 @@ def _overrides(value):
     default, so a newly added game reaches every guild with its own default
     rather than a frozen snapshot of an old /setup games submission."""
     return {k: bool(v) for k, v in (value or {}).items()}
+
+
+# How the next day's rotation is picked, and what happens to games outside it.
+# (label, value) pairs: the label is what Discord's choice menu shows.
+ROTATION_MODES = (
+    ('swap — replace under-played games, keep the rest', 'swap'),
+    ('random — fresh draw every day', 'random'),
+)
+OFF_ROTATION_MODES = (
+    ('hidden — archived but off the board', 'hidden'),
+    ('shown — on the board for zero points', 'shown'),
+    ('skipped — not tracked at all that day', 'skipped'),
+)
+
+
+def _choice(choices, default):
+    """Enum coercion: anything outside the declared values snaps to the
+    default, so a bad manual write can't leak an unknown mode into callers."""
+    values = {v for _, v in choices}
+
+    def coerce(value):
+        v = str(value)
+        return v if v in values else default
+    return coerce
+
+
+def _keys(value):
+    """rotation_games: stored list -> fresh list of str keys (never aliased)."""
+    return [str(k) for k in (value or ())]
 
 
 CONFIG_FIELDS = [
@@ -137,11 +168,36 @@ CONFIG_FIELDS = [
     ConfigField('suppress_embeds', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     ConfigField('game_overrides', default={}, coerce=_overrides),
 
+    # /setup rotation: score only a rotating subset of the enabled games each
+    # day. The four shape fields ride along on the toggle the same way
+    # sticky_games rides on /setup sticky. rotation_min_players is the swap
+    # signal, deliberately separate from the minimum_players display gate.
+    ConfigField('rotation_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
+    ConfigField('rotation_count', default=3, coerce=int, group='rotation',
+                option='games', minimum=1, maximum=10,
+                describe='How many games are scored each day (default 3)'),
+    ConfigField('rotation_mode', default='swap', coerce=_choice(ROTATION_MODES, 'swap'),
+                group='rotation', option='mode', opt_type=OPT_STRING,
+                choices=ROTATION_MODES,
+                describe="How the next day's games are picked (default swap)"),
+    ConfigField('rotation_min_players', default=3, coerce=int, group='rotation',
+                option='min_players', minimum=1,
+                describe='Games under this many players rotate out; outsiders reaching it rotate in (default 3)'),
+    ConfigField('rotation_off_mode', default='hidden',
+                coerce=_choice(OFF_ROTATION_MODES, 'hidden'), group='rotation',
+                option='off_rotation', opt_type=OPT_STRING, choices=OFF_ROTATION_MODES,
+                describe='Games outside the rotation: hidden, shown for 0 pts, or skipped'),
+
     # Run markers, written by the daily lambda. last_posted_day is the post
     # gate; last_finalized_day is diagnostic only -- nothing reads it, it just
     # records how far aggregates have been folded (see set_last_finalized).
     ConfigField('last_finalized_day'),
     ConfigField('last_posted_day'),
+
+    # Rotation state, written only by the daily lambda (set_rotation), like
+    # the run markers: rotation_games is the key list scored on rotation_day.
+    ConfigField('rotation_day'),
+    ConfigField('rotation_games', default=(), coerce=_keys),
 ]
 
 CONFIG_DEFAULTS = {f.name: f.default for f in CONFIG_FIELDS}
@@ -214,6 +270,16 @@ def post_hour(cfg):
     used to spell out the fallback.
     """
     return cfg['hours_after_midnight'] if cfg['post_hour'] is None else cfg['post_hour']
+
+
+def current_rotation(cfg, day):
+    """The rotation governing `day` (list of game keys), or None when the day
+    is unrestricted: feature off, state absent or empty, or state drawn for a
+    different day. None means every surface behaves exactly as if the feature
+    did not exist -- the stale-state fallback SPEC.md documents."""
+    if cfg['rotation_enabled'] and cfg['rotation_day'] == day and cfg['rotation_games']:
+        return cfg['rotation_games']
+    return None
 
 
 _resource = None
@@ -499,11 +565,14 @@ def update_config(guild_id, updates):
     )
 
 
-def write_day(guild_id, day, results, points_by_game, puzzle_numbers):
+def write_day(guild_id, day, results, points_by_game, puzzle_numbers, rotation=None):
     """Freeze one day's parsed results as the durable archive item.
 
     Points are stored per player per game so historical rollups survive future
     scoring-rule changes. Returns False (and writes nothing) on a no-play day.
+    rotation is the key list that governed the day, archived so rollups can
+    tell scored results from off-rotation ones; None (feature off, stale
+    state, backfilled history) archives an unrestricted day.
     """
     games = {}
     for game_key, scores in results.items():
@@ -515,10 +584,13 @@ def write_day(guild_id, day, results, points_by_game, puzzle_numbers):
     if not games:
         return False
     players = {uid for scores in games.values() for uid in scores}
+    data = {'games': games, 'puzzles': puzzle_numbers}
+    if rotation is not None:
+        data['rotation'] = sorted(rotation)
     table().put_item(Item={
         'PK': guild_pk(guild_id), 'SK': day_sk(day), 'day': day,
         'player_count': len(players),
-        'data': json.dumps({'games': games, 'puzzles': puzzle_numbers}, default=str),
+        'data': json.dumps(data, default=str),
     })
     return True
 
@@ -671,6 +743,27 @@ def set_last_posted(guild_id, day):
     """Advance the post marker (last day whose scoreboard went out for real).
     The hourly daily lambda gates on this, so test posts never touch it."""
     _advance_marker(guild_id, 'last_posted_day', day)
+
+
+def set_rotation(guild_id, day, game_keys):
+    """Persist the rotation drawn for `day` (the day it will govern).
+
+    The _advance_marker idiom, extended to carry the list: monotonic on
+    rotation_day, so a double-fired run keeps the first draw. Test runs never
+    call this -- rotation state, like last_posted_day, only advances on a
+    real post.
+    """
+    try:
+        table().update_item(
+            Key={'PK': GUILDS_PK, 'SK': config_sk(guild_id)},
+            UpdateExpression='SET rotation_day = :d, rotation_games = :g',
+            ConditionExpression='attribute_exists(SK) AND '
+                                '(attribute_not_exists(rotation_day) OR rotation_day < :d)',
+            ExpressionAttributeValues={':d': day, ':g': [str(k) for k in game_keys]},
+        )
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
+            raise
 
 
 def rebuild_aggregates(guild_id, through_day):

@@ -1,0 +1,17 @@
+{
+  "type": 2,
+  "guild_id": "${TEST_GUILD_ID}",
+  "channel_id": "${TEST_CHANNEL_ID}",
+  "member": {
+    "permissions": "32",
+    "user": {"id": "1"}
+  },
+  "data": {
+    "name": "setup",
+    "options": [{"name": "rotation", "type": 1, "options": [
+      {"name": "enabled", "type": 5, "value": true},
+      {"name": "games", "type": 4, "value": 3},
+      {"name": "mode", "type": 3, "value": "swap"}
+    ]}]
+  }
+}

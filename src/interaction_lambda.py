@@ -17,6 +17,7 @@ from game_parser import (
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
     build_avatar_pool, safe_guild_id, gather_streaks, is_sticky_message,
+    rotation_context,
     PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     TEXT_CHANNEL_TYPES, PERM_ADMINISTRATOR, PERM_MANAGE_GUILD, MAX_BUTTONS_PER_ROW,
     MAX_MESSAGE_LENGTH,
@@ -89,19 +90,23 @@ def fetch_today_results(channel_id, cfg):
     under Discord's 3-second interaction-response budget; the daily summary
     lambda is the source of truth for the full archive, this is a live preview.
 
-    Returns (results, puzzle_numbers, today).
+    Returns (results, puzzle_numbers, today, rotation_ctx) -- rotation_ctx is
+    scoreboard.rotation_context's (parse_overrides, rotation, off_mode) for
+    today: the overrides the parse actually ran with, so callers render with
+    the same universe.
     """
     tz = ZoneInfo(cfg['timezone'])
     today = reference_date(datetime.now(tz), tz, cfg['hours_after_midnight'])
+    ctx = rotation_context(cfg, store.day_str(today))
     messages = fetch_messages(_session, channel_id, limit=100)
     checker = make_timestamp_checker(today, tz, cfg['hours_after_midnight'],
                                      cfg['time_window_hours'])
     avatar_pool = build_avatar_pool(_session, messages, checker, cfg['guild_id'])
     results, puzzle_numbers = parse_results(
         messages, today, tz, cfg['hours_after_midnight'], cfg['time_window_hours'],
-        avatar_hashes=avatar_pool, game_overrides=cfg['game_overrides'],
+        avatar_hashes=avatar_pool, game_overrides=ctx[0],
     )
-    return results, puzzle_numbers, today
+    return results, puzzle_numbers, today, ctx
 
 
 def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
@@ -112,15 +117,16 @@ def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
     someone plays.
     """
     cfg = cfg or guild_cfg(guild_id)
-    results, puzzle_numbers, today = fetch_today_results(channel_id, cfg)
+    results, puzzle_numbers, today, (overrides, rotation, off_mode) = \
+        fetch_today_results(channel_id, cfg)
 
     streaks = gather_streaks(guild_id, today, results,
-                             build_games(puzzle_numbers, cfg['game_overrides']),
+                             build_games(puzzle_numbers, overrides),
                              cfg['minimum_players'])
     components = format_scoreboard_components(
         results, today, puzzle_numbers,
         title="Today's Scores", minimum_players=cfg['minimum_players'], streaks=streaks,
-        game_overrides=cfg['game_overrides'],
+        game_overrides=overrides, rotation=rotation, rotation_off=off_mode,
     )
 
     # 64 (EPHEMERAL) | 1<<15 (IS_COMPONENTS_V2). V2 messages can't have a
@@ -146,6 +152,13 @@ def interaction_user_id(body):
     return (member.get('user') or body.get('user') or {}).get('id')
 
 
+def _wants_all(body):
+    """True when a /play carried all:true. Component presses (the sticky's
+    Play button) have no options and stay narrowed to the rotation."""
+    options = (body.get('data') or {}).get('options') or []
+    return any(o.get('name') == 'all' and o.get('value') for o in options)
+
+
 def interaction_guild_id(body):
     """guild_id of the interaction, for config and streak lookups.
 
@@ -166,13 +179,18 @@ def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
     user_id (an unidentifiable presser) every game is returned. results and
     the gather_streaks() bundle (or None) cover ALL games, so counts and
     streak numbers reflect the whole server, not just the presser's remainder.
+    games always spans the full enabled list (the /play all:true view); the
+    returned rotation (key list or None) is how the caller narrows it.
     """
     today = None
+    rotation = None
     try:
-        results, puzzle_numbers, today = fetch_today_results(channel_id, cfg)
+        results, puzzle_numbers, today, (_, rotation, _) = \
+            fetch_today_results(channel_id, cfg)
     except Exception:
         # Counts are a nice-to-have; never let a fetch/parse hiccup block the
-        # core action. Fall back to today's games with no counts or streaks.
+        # core action. Fall back to today's games with no counts or streaks --
+        # and no rotation filter, the same fail-open the rest of this takes.
         results, puzzle_numbers = {}, compute_puzzle_numbers(datetime.utcnow())
 
     games = build_games(puzzle_numbers, cfg['game_overrides'])
@@ -185,20 +203,24 @@ def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
     if user_id is not None:
         games = [g for g in games if user_id not in results.get(g.key, {})]
 
-    return games, results, streaks
+    return games, results, streaks, rotation
 
 
 ALL_PLAYED_MESSAGE = "\U0001F389 You've played every tracked game today!"
+ROTATION_PLAYED_MESSAGE = ("\U0001F389 You've played all of today's games! "
+                           "`/play all:true` lists every tracked game.")
 
 
-def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None):
+def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_all=False):
     """Build an ephemeral message with link buttons for tracked games.
 
     When user_id is known, only games that user hasn't logged today are shown,
-    so the Play list is personal to whoever pressed the button. Buttons follow
-    the app-wide game ordering (game_sort_key, same as scoreboard sections):
-    today's live count, then active server streak, then 30-day distinct
-    players, then all-time distinct players, then title. Labels
+    so the Play list is personal to whoever pressed the button. When a
+    rotation governs today it narrows the list to the games that score --
+    unless show_all (/play all:true) asks for every tracked game. Buttons
+    follow the app-wide game ordering (game_sort_key, same as scoreboard
+    sections): today's live count, then active server streak, then 30-day
+    distinct players, then all-time distinct players, then title. Labels
     (game_link_button) carry a fire-streak suffix
     while the game's server streak is alive; today's count orders the list but
     is not shown. With no user_id (an unidentifiable presser) every game is
@@ -206,8 +228,15 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None):
     title.
     """
     cfg = cfg or guild_cfg(guild_id)
-    games, results, streaks = unplayed_games(channel_id, cfg, user_id, guild_id)
+    games, results, streaks, rotation = unplayed_games(channel_id, cfg, user_id, guild_id)
     game_streaks = (streaks or {}).get('games', {})
+
+    restricted = rotation is not None and not show_all
+    more_games = False
+    if restricted:
+        rot = set(rotation)
+        more_games = any(g.key not in rot for g in games)
+        games = [g for g in games if g.key in rot]
 
     games.sort(key=lambda g: game_sort_key(g, results, streaks))
 
@@ -227,8 +256,15 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None):
             {"type": 2, "style": 5, "label": "\U0001F52E Random", "url": pick.url},
         ]})
 
-    # Filtering can empty the list once a user has logged everything today.
-    content = "Pick a game to play!" if action_rows else ALL_PLAYED_MESSAGE
+    # Filtering can empty the list once a user has logged everything today --
+    # everything in the rotation, when one narrows it; point at all:true only
+    # while it would actually show more.
+    if action_rows:
+        content = "Pick a game to play!"
+    elif restricted and more_games:
+        content = ROTATION_PLAYED_MESSAGE
+    else:
+        content = ALL_PLAYED_MESSAGE
 
     return {
         "type": 4,
@@ -293,7 +329,8 @@ def _invoke_self(work):
         return False
 
 
-def build_live_response(action, channel_id, user_id=None, guild_id=None, cfg=None):
+def build_live_response(action, channel_id, user_id=None, guild_id=None, cfg=None,
+                        show_all=False):
     """The reply for one live view, as a complete interaction response.
 
     Single entry point for both phases: phase two PATCHes its ['data'] over the
@@ -302,7 +339,7 @@ def build_live_response(action, channel_id, user_id=None, guild_id=None, cfg=Non
     cfg = cfg or guild_cfg(guild_id)
     if action == ACTION_SCORES:
         return build_scoreboard_response(channel_id, guild_id, cfg)
-    return build_play_response(channel_id, user_id, guild_id, cfg)
+    return build_play_response(channel_id, user_id, guild_id, cfg, show_all)
 
 
 def defer(action, body):
@@ -317,6 +354,7 @@ def defer(action, body):
         'action': action,
         'channel_id': body['channel_id'],
         'user_id': interaction_user_id(body),
+        'show_all': _wants_all(body),
         # A missing guild_id costs a Discord round trip to resolve, so leave that
         # to phase two, which has no deadline worth protecting.
         'guild_id': body.get('guild_id'),
@@ -330,7 +368,7 @@ def defer(action, body):
         return {'type': 5, 'data': {'flags': 64}}
     guild_id = interaction_guild_id(body)
     return build_live_response(action, body['channel_id'], interaction_user_id(body),
-                               guild_id, guild_cfg(guild_id))
+                               guild_id, guild_cfg(guild_id), work['show_all'])
 
 
 def run_deferred(work):
@@ -339,7 +377,8 @@ def run_deferred(work):
     guild_id = work.get('guild_id') or safe_guild_id(_session, channel_id)
     try:
         data = build_live_response(work['action'], channel_id,
-                                   work.get('user_id'), guild_id)['data']
+                                   work.get('user_id'), guild_id,
+                                   show_all=work.get('show_all'))['data']
     except Exception as e:
         traceback.print_exc()
         # The placeholder would otherwise sit on "thinking" until it expires, so
@@ -543,6 +582,10 @@ def config_summary(cfg):
         f"Sticky: **{onoff(cfg['sticky_enabled'])}** "
         f"({sticky_row_phrase(cfg['sticky_games'])}) · "
         f"Link previews: **{'stripped' if cfg['suppress_embeds'] else 'kept'}**",
+        f"Rotation: **{onoff(cfg['rotation_enabled'])}** — "
+        f"{cfg['rotation_count']} games/day, {cfg['rotation_mode']} mode, "
+        f"min {cfg['rotation_min_players']} players, "
+        f"off-rotation {cfg['rotation_off_mode']}",
         f"Timezone `{cfg['timezone']}` · day starts {cfg['hours_after_midnight']:02d}:00 · "
         f"posts {post_hour:02d}:00 · window {cfg['time_window_hours']}h",
         f"Minimum players {cfg['minimum_players']} · "
@@ -554,6 +597,15 @@ def config_summary(cfg):
                  if enabled else '⚠️ Tracking no games!')
     if disabled:
         lines.append(f'-# Off: {_game_list(disabled)}')
+    tz = ZoneInfo(cfg['timezone'])
+    today = store.day_str(reference_date(datetime.now(tz), tz,
+                                         cfg['hours_after_midnight']))
+    rotation = store.current_rotation(cfg, today)
+    if rotation:
+        by_key = {s.key: s for s in GAME_SPECS}
+        todays = [by_key[k] for k in rotation if k in by_key]
+        if todays:
+            lines.append(f"-# Today's games: {_game_list(todays)}")
     hint = go_live_hint(cfg)
     if hint:
         lines.append(hint)
@@ -617,6 +669,23 @@ def handle_setup(body, guild_id):
             except Exception:
                 pass
         return _ephemeral(f'⏸️ Sticky disabled{note}.')
+
+    if sub == 'rotation':
+        # The shape fields ride along on this toggle (group='rotation'), the
+        # same way sticky_games rides on /setup sticky: one call can switch
+        # rotation on and size, re-mode, or re-threshold it in one write.
+        # Options left out keep their stored values.
+        enabled = bool(args.get('enabled'))
+        updates = {'rotation_enabled': enabled, **collect_updates('rotation', args)}
+        store.update_config(guild_id, updates)
+        merged = {**cfg, **updates}
+        if enabled:
+            return _ephemeral(
+                f"\U0001F504 Rotation on — {merged['rotation_count']} games a day, "
+                f"{merged['rotation_mode']} mode, off-rotation games "
+                f"{merged['rotation_off_mode']}. The first draw is announced "
+                "with the next daily board.")
+        return _ephemeral('▶️ Rotation off — every enabled game scores daily.')
 
     if sub == 'embeds':
         suppress = bool(args.get('suppress'))

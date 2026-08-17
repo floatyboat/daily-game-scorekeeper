@@ -7,7 +7,7 @@ from collections import defaultdict
 
 import store
 from game_parser import (
-    compute_puzzle_numbers, build_games, scoring_players,
+    compute_puzzle_numbers, build_games, scoring_players, rotation_overrides,
     make_timestamp_checker, match_message, _avatar_ahash, WORDLE_BOT_ID,
 )
 
@@ -199,6 +199,24 @@ def gather_streaks(guild_id, ref_date, results, games, minimum_players=1,
         print(f'store: streak read failed, rendering without streaks -- '
               f'{type(e).__name__}: {e}')
         return None
+
+
+def rotation_context(cfg, day):
+    """(parse_overrides, rotation, off_mode) governing one day.
+
+    rotation is the day's key list or None. Off mode 'skipped'
+    restricts at the parse itself, by disabling off-rotation games for the
+    day; the other modes parse everything and leave narrowing to the render.
+    rotation is returned either way so the archive can record it and lists
+    can filter by it.
+    """
+    rotation = store.current_rotation(cfg, day)
+    if rotation is None:
+        return cfg['game_overrides'], None, None
+    off_mode = cfg['rotation_off_mode']
+    if off_mode == 'skipped':
+        return rotation_overrides(cfg['game_overrides'], rotation), rotation, off_mode
+    return cfg['game_overrides'], rotation, off_mode
 
 
 def fetch_messages(session, channel_id, limit=100):
