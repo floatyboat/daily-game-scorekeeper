@@ -748,25 +748,6 @@ def spec_enabled(spec, game_overrides=None):
     return not spec.disabled
 
 
-def rotation_overrides(game_overrides, rotation):
-    """game_overrides with every game outside `rotation` forced off -- how
-    off_rotation='skipped' makes a day parse exactly as if those games were
-    disabled, with no new plumbing anywhere downstream of build_games().
-
-    Force-off is written after the admin's map so it wins for non-rotation
-    keys (an admin-enable can't leak a game back in), while rotation members
-    keep their admin value (a rotation key an admin has since disabled stays
-    off -- consumers intersect the rotation with built games for the same
-    reason).
-    """
-    keep = set(rotation)
-    overrides = dict(game_overrides or {})
-    for spec in GAME_SPECS:
-        if spec.key not in keep:
-            overrides[spec.key] = False
-    return overrides
-
-
 def next_rotation(enabled_keys, count, mode, min_players, prev_rotation, results):
     """Draw the rotation for a new day: the game keys that will score on it.
 
@@ -780,9 +761,7 @@ def next_rotation(enabled_keys, count, mode, min_players, prev_rotation, results
     the most played, and the sort is stable, so an exact tie favors the
     sitting member over the newcomer. Remaining slots are filled at random
     from the enabled remainder -- never a key that just fell out, unless
-    nothing else is left to keep the board from shrinking. (Off mode
-    'skipped' never parses off-rotation games, so nothing can earn its way
-    in under it.)
+    nothing else is left to keep the board from shrinking.
     """
     target = min(count, len(enabled_keys))
     if target <= 0:
@@ -1318,7 +1297,7 @@ def _streak_break_lines(streaks, games_by_key):
     return lines
 
 
-def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None, rotation=None, rotation_off=None):
+def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None, rotation=None, rotation_off='shown'):
     """Format the scoreboard as Discord Components V2 (list of top-level components).
 
     streaks is an optional gather_streaks() bundle; it adds "streak ended"
@@ -1330,11 +1309,11 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     defaults to disabled would silently drop out of the render.
 
     rotation is the day's rotation (key list) or None for an unrestricted
-    board. It narrows the display only -- the points summary and the scores
-    section -- because for off modes 'hidden'/'shown' the caller still parses
-    and archives every enabled game; 'skipped' days arrive already narrowed
-    via game_overrides. rotation_off='shown' adds the off-rotation games that
-    were played as a separate zero-point section.
+    board. Scored games keep the points summary and the scores section to
+    themselves; off-rotation games that were played render below them as a
+    separate zero-point section -- unless rotation_off is 'hidden', which
+    drops that section and nothing else. This board is the only surface the
+    setting touches.
 
     Returns a list[dict] suitable for the 'components' field in a Discord message.
     """
@@ -1407,9 +1386,9 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
         components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": scores_children})
 
     # --- Off-rotation container ---
-    # 'shown' only: games outside the rotation that were played, rendered with
-    # scores but no points. 'hidden' omits them; 'skipped' never parsed them.
-    if rot is not None and rotation_off == 'shown':
+    # Games outside the rotation that were played: rendered with scores but no
+    # points, always below the scored games -- or not at all under 'hidden'.
+    if rot is not None and rotation_off != 'hidden':
         exhibition = [g for g in games if g.key not in rot and results.get(g.key)
                       and len(results[g.key]) >= minimum_players]
         if exhibition:

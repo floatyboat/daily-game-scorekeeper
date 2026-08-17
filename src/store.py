@@ -104,16 +104,16 @@ def _overrides(value):
     return {k: bool(v) for k, v in (value or {}).items()}
 
 
-# How the next day's rotation is picked, and what happens to games outside it.
-# (label, value) pairs: the label is what Discord's choice menu shows.
+# How the next day's rotation is picked, and whether the daily board shows
+# games outside it. (label, value) pairs: the label is what Discord's choice
+# menu shows.
 ROTATION_MODES = (
     ('swap — replace under-played games, keep the rest', 'swap'),
     ('random — fresh draw every day', 'random'),
 )
 OFF_ROTATION_MODES = (
-    ('hidden — archived but off the board', 'hidden'),
     ('shown — on the board for zero points', 'shown'),
-    ('skipped — not tracked at all that day', 'skipped'),
+    ('hidden — off the board entirely', 'hidden'),
 )
 
 
@@ -183,10 +183,10 @@ CONFIG_FIELDS = [
     ConfigField('rotation_min_players', default=3, coerce=int, group='rotation',
                 option='min_players', minimum=1,
                 describe='Games under this many players rotate out; outsiders reaching it rotate in (default 3)'),
-    ConfigField('rotation_off_mode', default='hidden',
-                coerce=_choice(OFF_ROTATION_MODES, 'hidden'), group='rotation',
+    ConfigField('rotation_off_mode', default='shown',
+                coerce=_choice(OFF_ROTATION_MODES, 'shown'), group='rotation',
                 option='off_rotation', opt_type=OPT_STRING, choices=OFF_ROTATION_MODES,
-                describe='Games outside the rotation: hidden, shown for 0 pts, or skipped'),
+                describe='Show off-rotation games on the board for zero points, or hide them (default shown)'),
 
     # Run markers, written by the daily lambda. last_posted_day is the post
     # gate; last_finalized_day is diagnostic only -- nothing reads it, it just

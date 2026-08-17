@@ -19,7 +19,7 @@ there is the whole onboarding — no redeploy, no config file.
 
 | Surface | What it is |
 |---|---|
-| **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and streak flair. |
+| **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and streak flair — off-rotation plays listed below the scored games for zero points. |
 | **Today's games** | Posted right under the board while rotation is on (the default): the rotating subset of games that scores today, as play links. |
 | **Now Playing sticky** | One message kept at the bottom of the input channel showing who has played what today, with **Play**, **Scores** and **Yesterday** buttons. |
 | **`/play`** | A private list of today's games as buttons, linking straight to each puzzle, ordered by what the server is actually playing. With rotation on it lists the games that score today; **`/play all:true`** lists every tracked game. |
@@ -124,15 +124,16 @@ Defaults in parentheses.
   channel sees.
 - **`/setup games`** — a multi-select of every supported game, pre-ticked to this
   server's current state.
-- **`/setup rotation enabled:<bool> games:<1-10> mode:<swap|random> min_players:<n> off_rotation:<hidden|shown|skipped>`**
-  (`true` / `3` / `swap` / `3` / `hidden`) — score only a rotating subset of games
+- **`/setup rotation enabled:<bool> games:<1-10> mode:<swap|random> min_players:<n> off_rotation:<shown|hidden>`**
+  (`true` / `3` / `swap` / `3` / `shown`) — score only a rotating subset of games
   each day. In `swap` mode a spot is earned by play, one threshold both ways: games
   that drew fewer than `min_players` players rotate out, games outside the set that
   reached it rotate in, and random picks fill the rest. `games` is a hard cap — when
   more games qualify than fit, the most-played keep the seats. `random` re-draws the
-  whole set daily. `off_rotation` decides
-  what happens to results for games outside the set: archived but off the board
-  (streaks keep running), shown for zero points, or not tracked at all that day. The
+  whole set daily. `off_rotation` only decides whether the daily board lists
+  off-rotation plays below the scored games for zero points, or leaves them off the
+  board — either way they're archived, keep streaks alive, and still count toward
+  rotating in. The
   day's set is announced under the board and is what `/play` and the sticky's Play
   button list — `/play all:true` shows everything. The rotation rides the daily post:
   it draws and announces when the board goes out.

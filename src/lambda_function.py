@@ -12,7 +12,7 @@ from game_parser import (format_scoreboard_components, make_timestamp_checker,
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date,
     parse_results, build_avatar_pool, is_scoreboard_message, gather_streaks,
-    rotation_context, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
+    FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
     MAX_BUTTONS_PER_ROW, MAX_ACTION_ROWS,
 )
 import store
@@ -149,7 +149,7 @@ def process_guild(cfg, is_test, test_channel_id):
     # The rotation that governed the day being scored (or None: unrestricted).
     # Before the first draw ever lands, and after any gap, this is None -- the
     # board scores everything and the rotation starts from today instead.
-    overrides, rotation, off_mode = rotation_context(cfg, day)
+    rotation = store.current_rotation(cfg, day)
 
     if not is_test:
         post_hour = store.post_hour(cfg)
@@ -191,19 +191,20 @@ def process_guild(cfg, is_test, test_channel_id):
 
     results, puzzle_numbers = parse_results(
         messages, yesterday, tz, cfg['hours_after_midnight'], cfg['time_window_hours'],
-        avatar_hashes=avatar_pool, game_overrides=overrides,
+        avatar_hashes=avatar_pool, game_overrides=cfg['game_overrides'],
     )
     note(f'parsed {sum(len(v) for v in results.values())} game results')
 
-    games = build_games(puzzle_numbers, overrides)
+    games = build_games(puzzle_numbers, cfg['game_overrides'])
     note(persist_results(cfg, results, puzzle_numbers, yesterday, games, rotation))
 
     streaks = gather_streaks(gid, yesterday, results, games, cfg['minimum_players'])
     components = format_scoreboard_components(results, yesterday, puzzle_numbers,
                                               minimum_players=cfg['minimum_players'],
                                               streaks=streaks,
-                                              game_overrides=overrides,
-                                              rotation=rotation, rotation_off=off_mode)
+                                              game_overrides=cfg['game_overrides'],
+                                              rotation=rotation,
+                                              rotation_off=cfg['rotation_off_mode'])
 
     # Draw the new day's rotation before posting, so its announcement can ride
     # directly under the board. Yesterday's list seeds the swap only when it
@@ -225,11 +226,7 @@ def process_guild(cfg, is_test, test_channel_id):
     response = send_message(channel, components=components)
     note('posted scoreboard')
     if next_rot:
-        # Buttons need the full enabled list -- under off mode 'skipped' the
-        # parse universe (games) was narrowed to yesterday's rotation.
-        announce_games = (games if off_mode != 'skipped'
-                          else build_games(puzzle_numbers, cfg['game_overrides']))
-        announce_rotation(channel, next_rot, announce_games, streaks)
+        announce_rotation(channel, next_rot, games, streaks)
         note('announced rotation')
 
     if is_test:

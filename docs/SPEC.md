@@ -121,7 +121,7 @@ registrar and the handler.
 | `rotation_count` | `rotation games` | `3` | Games in the daily rotation (1–10) |
 | `rotation_mode` | `rotation mode` | `swap` | `swap` replaces under-played members, `random` re-draws daily |
 | `rotation_min_players` | `rotation min_players` | `3` | Membership threshold: games under it rotate out, outsiders reaching it rotate in |
-| `rotation_off_mode` | `rotation off_rotation` | `hidden` | Off-rotation results: `hidden`, `shown` for 0 pts, or `skipped` |
+| `rotation_off_mode` | `rotation off_rotation` | `shown` | Board display of off-rotation plays: `shown` below the scored games, or `hidden` |
 | `game_overrides` | `games` | `{}` | Explicit per-guild flips of each game's default state |
 | `last_finalized_day` | — | — | Written at finalize; records how far aggregates are folded |
 | `last_posted_day` | — | — | Written after a real post; the post gate |
@@ -191,23 +191,23 @@ afterwards; every reply from them says so.
   `rotation_count` is a hard cap — more qualifiers than slots keeps the most played,
   with an exact tie favoring the sitting member (stable sort) — and the bot fills any
   remaining slots at random from the enabled remainder, never a key that just fell
-  out, unless nothing else is left to keep the board from shrinking. (`skipped` tracks
-  nothing off-rotation, so nothing can earn its way in under it; earn-in is a
-  swap-mode rule.) `random` mode re-draws the whole set. Yesterday's list seeds the swap only when it actually governed the scored day.
+  out, unless nothing else is left to keep the board from shrinking. (Earn-in is a
+  swap-mode rule.) `random` mode re-draws the whole set. Yesterday's list seeds the
+  swap only when it actually governed the scored day.
   Disabled games are never in the pool, and every consumer intersects the stored
   rotation with the built game list, so a mid-day `/setup games` disable drops a game
   everywhere at once.
-- **Off-rotation results** (`rotation_off_mode`): `hidden` (default) and `shown` parse,
-  archive, and finalize **everything** — real points are frozen for off-rotation games,
-  so per-game, per-player, and overall streaks stay alive off-rotation — and only the
-  render narrows: the points summary sums rotation games alone, and `shown` also lists
-  the others as a separate zero-point section. `skipped` disables off-rotation games
-  for the day via a merged overrides map (`game_parser.rotation_overrides`), so parse,
-  archive, finalize, and render all narrow through the existing `build_games` path and
-  streaks go stale exactly as a disabled game's do. The `DAY#` item records the
-  governing rotation in every mode, so future rollups can exclude off-rotation frozen
-  points — the per-player `points_sum` aggregate still includes them, and the day
-  record stays the rollup source of truth.
+- **Off-rotation results.** Every enabled game is parsed, archived, and finalized on
+  every day, rotation or not — real points are frozen for off-rotation games, so
+  per-game, per-player, and overall streaks stay alive off-rotation, and their play
+  counts still drive earn-in. The rotation narrows only the scoring: the points
+  summary sums rotation games alone. `rotation_off_mode` is purely a **daily-board
+  display** switch — `shown` (default) renders the played off-rotation games as a
+  separate zero-point section below the scored ones, `hidden` omits that section and
+  changes nothing else (not the archive, not the sticky counts, not `/play all`). The
+  `DAY#` item records the governing rotation, so future rollups can exclude
+  off-rotation frozen points — the per-player `points_sum` aggregate still includes
+  them, and the day record stays the rollup source of truth.
 - **The announcement.** Right under the board the daily lambda posts "Today's games":
   a bare header over the new rotation as link-button rows — the buttons carry the
   emoji-title labels, the content repeats none of them. Deliberately a plain message, not
@@ -225,11 +225,11 @@ afterwards; every reply from them says so.
   `set_rotation`; like `last_posted_day`, rotation state advances only on a real post,
   so repeated test runs draw fresh sets by design.
 - **Consumers.** Bare `/play` and the sticky's Play button list rotation games only
-  (`/play all:true` lists every enabled game; an exhausted rotation points at it). The
-  sticky's shortcut row is rotation-only in every off mode, and the sticky counts what
-  the board renders — off-rotation plays are excluded under `hidden`. The Scores
-  button narrows exactly like the board. Rotation rides the daily post: with
-  `daily_enabled` off nothing draws, state goes stale, and everything is unrestricted.
+  (`/play all:true` lists every enabled game, scored games sorted above off-rotation
+  ones; an exhausted rotation points at it). The sticky's shortcut row is
+  rotation-only, while its content counts every play, on or off rotation. The Scores
+  button renders exactly like the board, `rotation_off_mode` included. Rotation rides the daily post: with `daily_enabled` off nothing
+  draws, state goes stale, and everything is unrestricted.
 
 ## Streak semantics
 
@@ -338,8 +338,8 @@ retroactively.
   channel and errors with instructions when it can't.
 - **`/play`** — ephemeral list of today's games as link buttons, in `game_sort_key`
   order, with streak suffixes, plus a Random row. Under a rotation it lists the games
-  that score today; the optional `all:true` lists every enabled game (see Daily
-  rotation).
+  that score today; the optional `all:true` lists every enabled game, scored games
+  sorted above off-rotation ones (see Daily rotation).
 - **`/suggest`** — open to everyone, no permission gate: a modal (Discord's only multi-line
   input) taking a game name, an optional link, and a pasted result, posted to the
   `DEV_CHANNEL_ID` channel as a candidate `GAME_SPECS` entry. The paste goes in a code

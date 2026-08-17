@@ -17,7 +17,6 @@ from game_parser import (
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
     build_avatar_pool, safe_guild_id, gather_streaks, is_sticky_message,
-    rotation_context,
     PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     TEXT_CHANNEL_TYPES, PERM_ADMINISTRATOR, PERM_MANAGE_GUILD, MAX_BUTTONS_PER_ROW,
     MAX_MESSAGE_LENGTH,
@@ -90,23 +89,22 @@ def fetch_today_results(channel_id, cfg):
     under Discord's 3-second interaction-response budget; the daily summary
     lambda is the source of truth for the full archive, this is a live preview.
 
-    Returns (results, puzzle_numbers, today, rotation_ctx) -- rotation_ctx is
-    scoreboard.rotation_context's (parse_overrides, rotation, off_mode) for
-    today: the overrides the parse actually ran with, so callers render with
-    the same universe.
+    Returns (results, puzzle_numbers, today, rotation) -- rotation is
+    store.current_rotation's key list for today, or None when the day is
+    unrestricted.
     """
     tz = ZoneInfo(cfg['timezone'])
     today = reference_date(datetime.now(tz), tz, cfg['hours_after_midnight'])
-    ctx = rotation_context(cfg, store.day_str(today))
+    rotation = store.current_rotation(cfg, store.day_str(today))
     messages = fetch_messages(_session, channel_id, limit=100)
     checker = make_timestamp_checker(today, tz, cfg['hours_after_midnight'],
                                      cfg['time_window_hours'])
     avatar_pool = build_avatar_pool(_session, messages, checker, cfg['guild_id'])
     results, puzzle_numbers = parse_results(
         messages, today, tz, cfg['hours_after_midnight'], cfg['time_window_hours'],
-        avatar_hashes=avatar_pool, game_overrides=ctx[0],
+        avatar_hashes=avatar_pool, game_overrides=cfg['game_overrides'],
     )
-    return results, puzzle_numbers, today, ctx
+    return results, puzzle_numbers, today, rotation
 
 
 def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
@@ -117,16 +115,16 @@ def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
     someone plays.
     """
     cfg = cfg or guild_cfg(guild_id)
-    results, puzzle_numbers, today, (overrides, rotation, off_mode) = \
-        fetch_today_results(channel_id, cfg)
+    results, puzzle_numbers, today, rotation = fetch_today_results(channel_id, cfg)
 
     streaks = gather_streaks(guild_id, today, results,
-                             build_games(puzzle_numbers, overrides),
+                             build_games(puzzle_numbers, cfg['game_overrides']),
                              cfg['minimum_players'])
     components = format_scoreboard_components(
         results, today, puzzle_numbers,
         title="Today's Scores", minimum_players=cfg['minimum_players'], streaks=streaks,
-        game_overrides=overrides, rotation=rotation, rotation_off=off_mode,
+        game_overrides=cfg['game_overrides'], rotation=rotation,
+        rotation_off=cfg['rotation_off_mode'],
     )
 
     # 64 (EPHEMERAL) | 1<<15 (IS_COMPONENTS_V2). V2 messages can't have a
@@ -185,8 +183,7 @@ def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
     today = None
     rotation = None
     try:
-        results, puzzle_numbers, today, (_, rotation, _) = \
-            fetch_today_results(channel_id, cfg)
+        results, puzzle_numbers, today, rotation = fetch_today_results(channel_id, cfg)
     except Exception:
         # Counts are a nice-to-have; never let a fetch/parse hiccup block the
         # core action. Fall back to today's games with no counts or streaks --
@@ -231,14 +228,18 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_
     games, results, streaks, rotation = unplayed_games(channel_id, cfg, user_id, guild_id)
     game_streaks = (streaks or {}).get('games', {})
 
-    restricted = rotation is not None and not show_all
+    rot = set(rotation) if rotation is not None else None
+    restricted = rot is not None and not show_all
     more_games = False
     if restricted:
-        rot = set(rotation)
         more_games = any(g.key not in rot for g in games)
         games = [g for g in games if g.key in rot]
 
-    games.sort(key=lambda g: game_sort_key(g, results, streaks))
+    # Scored games always sort above off-rotation ones -- the split only bites
+    # on all:true, the one list that mixes both; the app-wide play-count
+    # ordering applies within each block.
+    games.sort(key=lambda g: (rot is not None and g.key not in rot,)
+               + game_sort_key(g, results, streaks))
 
     buttons = [game_link_button(g, game_streaks.get(g.key, 0)) for g in games]
 

@@ -13,7 +13,6 @@ from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
     make_session, fetch_messages, reference_date, is_scoreboard_message,
     is_sticky_message, build_avatar_pool, safe_guild_id, gather_streaks,
-    rotation_context,
     PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID, STICKY_HEADING,
 )
 import store
@@ -213,9 +212,9 @@ def run_guild(cfg, force=False):
         return 'outside active window'
 
     today = reference_date(now_local, tz, cfg['hours_after_midnight'])
-    overrides, rotation, off_mode = rotation_context(cfg, store.day_str(today))
+    rotation = store.current_rotation(cfg, store.day_str(today))
     puzzle_numbers = compute_puzzle_numbers(today)
-    games = build_games(puzzle_numbers, overrides)
+    games = build_games(puzzle_numbers, cfg['game_overrides'])
     checker = make_timestamp_checker(today, tz, cfg['hours_after_midnight'],
                                      cfg['time_window_hours'])
 
@@ -242,24 +241,18 @@ def run_guild(cfg, force=False):
                              cfg['minimum_players'], include_players=False)
     server_streak = (streaks or {}).get('server', 0)
 
-    # The sticky counts what the board will render: off mode 'hidden' archives
-    # off-rotation plays but keeps them off every display, this one included
-    # ('skipped' arrives already narrowed at the parse; 'shown' counts all).
-    rot = set(rotation) if rotation is not None else None
-    count_results = results
-    if rot is not None and off_mode == 'hidden':
-        count_results = {k: v for k, v in results.items() if k in rot}
-
     # Shortcut row: the head of the Play list, same ordering and labels. Off by
     # default (sticky_games 0), and then the ordering pass never runs -- a
     # guild that doesn't want the row pays nothing to rank games for it. Only
-    # rotation games, in every off mode: the row mirrors what Play lists.
+    # rotation games: the row mirrors what Play lists. The content counts stay
+    # unfiltered -- every play counts, on or off rotation.
+    rot = set(rotation) if rotation is not None else None
     game_buttons = ()
     if cfg['sticky_games']:
         row_games = games if rot is None else [g for g in games if g.key in rot]
         game_buttons = top_game_buttons(row_games, results, streaks, cfg['sticky_games'])
 
-    action = update_sticky(channel_id, messages, count_results, server_streak,
+    action = update_sticky(channel_id, messages, results, server_streak,
                            link_yesterday=cfg['daily_enabled'],
                            game_buttons=game_buttons)
     note = f' (embeds suppressed: {suppressed})' if cfg['suppress_embeds'] else ''
