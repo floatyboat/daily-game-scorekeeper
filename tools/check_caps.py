@@ -207,7 +207,7 @@ def main():
     text_rungs = [f'{field}={value}' for field, value, cap in gp._REDUCTIONS
                   if cap == 'text']
     if args.report:
-        print(f'\nbeyond the envelope (must degrade fully and say so)')
+        print('\nbeyond the envelope (must degrade fully and say so)')
     for n_games, n_players in ((n_specs, 30), (40, 20), (60, 20)):
         board, rungs, exhausted = build(n_games, n_players)
         missing = [r for r in text_rungs if r not in rungs]

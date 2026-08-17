@@ -2,7 +2,6 @@ import os
 import random
 import re
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 from dateutil import parser as dateutil_parser
 from collections import defaultdict, Counter, namedtuple
 from dataclasses import dataclass
@@ -99,15 +98,6 @@ def _classify_cell(px):
     return closest if distances[closest] < 40 else 'unknown'
 
 
-def _is_tile_color(px, tol=5):
-    """True for GRAY/GREEN/YELLOW pixels. Excludes EMPTY (aliases background)."""
-    return min(
-        _color_distance(px, _WORDLE_GREEN),
-        _color_distance(px, _WORDLE_YELLOW),
-        _color_distance(px, _WORDLE_GRAY),
-    ) < tol
-
-
 def _detect_grids(img):
     """Detect Wordle grid positions in a preview image.
 
@@ -124,7 +114,8 @@ def _detect_grids(img):
     w, h = img.size
     pixels = img.load()
 
-    # Inline tile check — 3 squared distances under a tolerance. Hoisting the
+    # Inline tile check — 3 squared distances (GREEN/YELLOW/GRAY; EMPTY is
+    # excluded, it aliases the background) under a tolerance. Hoisting the
     # color constants into locals avoids repeated global lookups in the hot loop.
     gR, gG, gB = _WORDLE_GREEN
     yR, yG, yB = _WORDLE_YELLOW
@@ -191,7 +182,6 @@ def _detect_grids(img):
                 break
 
     # Phase 2: full scan of each candidate row; keep best
-    best_y = None
     best_bands = []
     for y in candidate_ys:
         runs = cell_runs_on_row(y)
@@ -200,7 +190,6 @@ def _detect_grids(img):
         bands = group_by_player(runs)
         if len(bands) > len(best_bands):
             best_bands = bands
-            best_y = y
 
     if not best_bands:
         return []
@@ -342,8 +331,6 @@ def _match_avatar(img, grid, candidate_hashes, max_distance=18, margin=4):
 
     scored = []
     for uid, hashes in candidate_hashes.items():
-        if isinstance(hashes, int):   # single-hash pool (older callers)
-            hashes = (hashes,)
         if not hashes:
             continue
         scored.append((uid, min(_hamming(crop_hash, ah) for ah in hashes)))
@@ -972,7 +959,7 @@ def compute_points(results, games, minimum_players=1):
         if game_key not in results or not results[game_key] or len(results[game_key]) < minimum_players:
             continue
 
-        # Sort players using the same keys as format_scoreboard
+        # Sort players using the same keys as _format_game_players
         if metric == 'connections':
             players = sorted(results[game_key].items(), key=lambda x: (x[1][0], -x[1][1]))
         elif metric == 'score':
@@ -1228,7 +1215,7 @@ def _format_game_players(game_scores, metric, total, player_streaks=None,
             tied_players.append(mention(players[j][0], rank))
             j += 1
 
-        medal = f"{medals[rank - 1]} " if rank <= len(medals) else f""
+        medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
 
         if metric == 'time':
             score_str = _mmss(current_score)
@@ -1310,30 +1297,6 @@ def _puzzle_label(puzzle, reference_date):
     if type(puzzle) == int:
         return f'#{puzzle}'
     return f'#{reference_date.month}{reference_date.day:02d}'
-
-
-def format_scoreboard(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1):
-    """Format the scoreboard message. Parameterized version of format_message()."""
-    games = build_games(puzzle_numbers)
-    message = f"🧮 **{title}**"
-    if not results:
-        message += "\n\nNo results found!"
-    else:
-        message += f" - {reference_date.strftime('%B %d, %Y')}\n\n"
-        points = compute_points(results, games, minimum_players)
-        points_section = format_points_summary(points)
-        if points_section:
-            message += points_section
-        games.sort(key=lambda g: game_sort_key(g, results, None))
-        for game in games:
-            if game.key not in results or not results[game.key] or len(results[game.key]) < minimum_players:
-                continue
-
-            title_link = f"[{game.title}]({game.url})"
-            message += f'**{title_link} {game.emoji} {_puzzle_label(game.puzzle, reference_date)}**\n'
-            message += _format_game_players(results[game.key], game.metric, game.total)
-            message += "\n"
-    return message
 
 
 # Minimum streak length to display, everywhere streaks appear: game title

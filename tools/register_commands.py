@@ -124,7 +124,7 @@ COMMANDS = [
             field_sub('time', 'Timezone and daily schedule'),
             {'type': OPT_SUB_COMMAND, 'name': 'games',
                          'description': 'Choose which games are tracked in this server'},
-            field_sub('limits', 'Display minimum, message volume, and the Wordle bot'),
+            field_sub('limits', 'Display minimum and message volume'),
             toggle_sub('daily', 'Turn the daily scoreboard post on or off',
                        'Post the daily scoreboard?'),
             toggle_sub('sticky', 'Turn the Now Playing sticky on or off',

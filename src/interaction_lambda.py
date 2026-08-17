@@ -7,7 +7,6 @@ import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from nacl.signing import VerifyKey
-from nacl.exceptions import BadSignatureError
 
 from game_parser import (
     build_games, compute_puzzle_numbers, format_scoreboard_components,
@@ -19,7 +18,7 @@ from scoreboard import (
     build_avatar_pool, build_name_map, safe_guild_id, gather_streaks, is_sticky_message,
     PLAY_BUTTON_CUSTOM_ID, MORE_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     TEXT_CHANNEL_TYPES, PERM_ADMINISTRATOR, PERM_MANAGE_GUILD, MAX_BUTTONS_PER_ROW,
-    MAX_MESSAGE_LENGTH,
+    MAX_MESSAGE_LENGTH, FLAG_EPHEMERAL, FLAG_IS_COMPONENTS_V2,
 )
 import store
 
@@ -128,12 +127,12 @@ def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
         rotation_off=cfg['rotation_off_mode'], names=names,
     )
 
-    # 64 (EPHEMERAL) | 1<<15 (IS_COMPONENTS_V2). V2 messages can't have a
-    # content field, so the builder's output goes directly into components.
+    # V2 messages can't have a content field, so the builder's output goes
+    # directly into components.
     return {
         "type": 4,
         "data": {
-            "flags": 32832,
+            "flags": FLAG_EPHEMERAL | FLAG_IS_COMPONENTS_V2,
             "components": components,
         },
     }
@@ -277,7 +276,7 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_
     return {
         "type": 4,
         "data": {
-            "flags": 64,
+            "flags": FLAG_EPHEMERAL,
             "content": content,
             "components": action_rows,
         },
@@ -373,7 +372,7 @@ def defer(action, body):
         # DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE. EPHEMERAL is the only flag
         # Discord accepts on a defer, so the Scores board sets IS_COMPONENTS_V2
         # on the follow-up edit -- which is where Discord wants it anyway.
-        return {'type': 5, 'data': {'flags': 64}}
+        return {'type': 5, 'data': {'flags': FLAG_EPHEMERAL}}
     guild_id = interaction_guild_id(body)
     return build_live_response(action, body['channel_id'], interaction_user_id(body),
                                guild_id, guild_cfg(guild_id), work['show_all'])
@@ -405,7 +404,7 @@ def run_deferred(work):
 
 def _ephemeral(content, components=None):
     """CHANNEL_MESSAGE_WITH_SOURCE, visible only to the invoker."""
-    data = {'flags': 64, 'content': content}
+    data = {'flags': FLAG_EPHEMERAL, 'content': content}
     if components is not None:
         data['components'] = components
     return {'type': 4, 'data': data}
@@ -513,7 +512,7 @@ def set_channel(guild_id, sub, channel_id, cfg=None):
 
 
 def games_select_row(game_overrides):
-    # One option per GameSpec, 18 of scoreboard.MAX_SELECT_OPTIONS today; see
+    # One option per GameSpec, 19 of scoreboard.MAX_SELECT_OPTIONS today; see
     # the split-across-two-messages note on that constant for when it runs out.
     options = [{
         'label': spec.title,
@@ -956,7 +955,7 @@ def lambda_handler(event, context):
         raw_body = get_body(event)
         try:
             verify_signature(raw_body, event)
-        except (BadSignatureError, ValueError, Exception):
+        except Exception:
             return {'statusCode': 401, 'body': 'Invalid request signature'}
         body = json.loads(raw_body)
 

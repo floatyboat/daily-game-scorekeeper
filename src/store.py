@@ -804,7 +804,7 @@ def rebuild_aggregates(guild_id, through_day):
     recorded. Writes are unconditional overwrites -- don't run concurrently
     with a daily finalize. Returns a summary for display.
     """
-    days = [d for d in fetch_days(guild_id, '0000-00-00', through_day)]
+    days = fetch_days(guild_id, '0000-00-00', through_day)
 
     server = blank_agg()
     game_aggs, game_players = {}, {}

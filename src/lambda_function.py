@@ -14,7 +14,7 @@ from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date,
     parse_results, build_avatar_pool, build_name_map, is_scoreboard_message,
     gather_streaks,
-    FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
+    FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS, FLAG_IS_COMPONENTS_V2,
     MAX_BUTTONS_PER_ROW, MAX_ACTION_ROWS,
 )
 import store
@@ -26,18 +26,13 @@ DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 _session = make_session(DISCORD_BOT_TOKEN)
 
 
-def send_message(channel_id, message=None, components=None):
+def send_message(channel_id, components):
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages'
-
-    if components is not None:
-        payload = {
-            'components': components,
-            'flags': 32768,
-            'allowed_mentions': {'parse': ['users']},
-        }
-    else:
-        payload = {'content': message, 'allowed_mentions': {'parse': ['users']}, 'flags': 4}
-
+    payload = {
+        'components': components,
+        'flags': FLAG_IS_COMPONENTS_V2,
+        'allowed_mentions': {'parse': ['users']},
+    }
     response = _session.post(url, json=payload)
     response.raise_for_status()
 
