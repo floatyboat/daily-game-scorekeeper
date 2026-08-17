@@ -1499,10 +1499,11 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
 
     rotation is the day's rotation (key list) or None for an unrestricted
     board. Scored games keep the points summary and the scores section to
-    themselves; off-rotation games that were played render below them as a
-    separate zero-point section -- unless rotation_off is 'hidden', which
-    drops that section and nothing else. This board is the only surface the
-    setting touches.
+    themselves, under a "Scored Games" heading; off-rotation games that were
+    played render below them as a separate "Other Games" zero-point section -- unless
+    rotation_off is 'hidden', which drops that section and nothing else. This
+    board is the only surface the setting touches. Both headings appear only on
+    a rotation board: without one there is no split to label.
 
     Returns a list[dict] suitable for the 'components' field in a Discord message.
     """
@@ -1603,6 +1604,16 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
     # --- Scores container ---
     scores_children = game_sections(qualified)
 
+    # Heading only when a rotation governs the day and there are scored games to
+    # head: it exists to pair with the off-rotation heading below, and an
+    # unrestricted board has nothing to contrast with. Keyed on `qualified`, not
+    # on scores_children, so a container holding only streak-break callouts is
+    # not labelled as scores.
+    # No separator under either heading: it reads as a label on the games below,
+    # not as a section of its own, and the container edge already divides them.
+    if rot is not None and qualified:
+        scores_children = [{"type": 10, "content": "**Scored Games**"}] + scores_children
+
     if break_child:
         if scores_children and style.separators:
             scores_children.append({"type": 14, "spacing": 1})  # Separator
@@ -1618,9 +1629,7 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
         exhibition = [g for g in games if g.key not in rot and results.get(g.key)
                       and len(results[g.key]) >= minimum_players]
         if exhibition:
-            heading = [{"type": 10, "content": "**Off rotation** — no points today"}]
-            if style.separators:
-                heading.append({"type": 14, "spacing": 1})
+            heading = [{"type": 10, "content": "**Other Games**"}]
             components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR,
                                "components": heading + game_sections(exhibition)})
 
