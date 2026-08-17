@@ -321,6 +321,17 @@ def table():
     return _table
 
 
+# On Lambda, pre-build the resource during INIT, which runs at boosted CPU, so
+# a cold container's first call doesn't pay client construction at invoke-phase
+# speed. Guarded and best-effort: importing this module locally still requires
+# no AWS credentials, and any failure here falls back to the lazy path above.
+if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+    try:
+        table()
+    except Exception:
+        pass
+
+
 # --- Keys and day arithmetic ---------------------------------------------------
 
 def guild_pk(guild_id):

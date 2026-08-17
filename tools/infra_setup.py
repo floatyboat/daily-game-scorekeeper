@@ -8,7 +8,7 @@ functions need; AWS credentials come from the usual boto3 chain:
     dotenv run -- python3 tools/infra_setup.py --prune  # also remove what isn't declared
 
 `FUNCTIONS` and the constants above it are the definition of the stack: table,
-one IAM role per lambda, the three functions, their log retention, the two
+one IAM role per lambda, the three functions, their log retention, the three
 EventBridge schedules, and the interaction lambda's Function URL. Every step
 reads the live state first and writes only the difference, so a run against a
 healthy install prints all-ok and touches nothing, and a run against an empty
@@ -142,8 +142,20 @@ FUNCTIONS = [
         # Discord's own deadline is 3s and the handler defers past it by
         # re-invoking itself; 30s bounds that second, asynchronous half.
         timeout=30,
-        memory=512,
+        # 1769MB buys a full vCPU during the invoke phase (512MB was ~0.3): the
+        # residual cold-ACK work inside Discord's 3s window and the phase-two
+        # render (history parse, streak math, the occasional Pillow decode) are
+        # CPU-bound, and at a couple dozen clicks a day the extra GB-seconds
+        # stay far inside the free tier.
+        memory=1769,
         env=COMMON_ENV + ('DISCORD_PUBLIC_KEY', 'DEV_CHANNEL_ID'),
+        # Keep-warm: the buttons fire a couple dozen times a day, so without a
+        # ping roughly half of all clicks paid a ~3.7s cold start -- past
+        # Discord's 3s interaction deadline. One always-warm environment turns
+        # those into the ~300ms warm path; interaction_lambda answers the ping
+        # (source == 'aws.events') before touching any interaction handling.
+        rule='daily-game-play',
+        schedule='rate(5 minutes)',
         function_url=True,
         self_invoke=True,
     ),

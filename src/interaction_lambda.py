@@ -286,15 +286,18 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_
 # --- Deferred replies for the live views ---------------------------------------
 # /play and the sticky's three buttons all read a page of channel history and the
 # streak store before they can answer. Warm that is ~300ms, with room to spare
-# inside Discord's 3-second ACK deadline -- but these surfaces are used a couple
-# of dozen times a day, so the container is rarely still warm and roughly half of
-# all clicks pay a cold start. Cold, the same work has measured 3.7s end to end,
-# and Discord renders anything past 3s as "This interaction failed".
+# inside Discord's 3-second ACK deadline -- but cold the same work has measured
+# 3.7s end to end, and Discord renders anything past 3s as "This interaction
+# failed". Two defences:
 #
-# So ACK first and do the work in a second, asynchronous invocation of this same
-# function, which answers by editing the placeholder. That takes the deadline off
-# the work entirely: the ACK is a bare type-5 with no I/O behind it, and the
-# follow-up has the interaction token's full 15 minutes.
+# - ACK first and do the work in a second, asynchronous invocation of this same
+#   function, which answers by editing the placeholder. That takes the deadline
+#   off the work entirely: the ACK is a bare type-5 with no I/O behind it, and
+#   the follow-up has the interaction token's full 15 minutes.
+# - A keep-warm EventBridge ping (rule daily-game-play, every 5 minutes) holds
+#   one environment warm. At a couple dozen clicks a day, that turns cold ACKs
+#   from roughly every other click into a rarity; the deferral above stays as
+#   the backstop for the colds that remain (a deploy, a concurrent overlap).
 
 ACTION_PLAY, ACTION_SCORES = 'play', 'scores'
 
@@ -334,6 +337,18 @@ def _invoke_self(work):
     except Exception as e:
         print(f'defer: self-invoke failed, answering inline -- {type(e).__name__}: {e}')
         return False
+
+
+# Build the self-invoke client during INIT, which runs at boosted CPU on every
+# fresh environment -- including the ones the keep-warm ping creates -- so a
+# cold click's ACK doesn't pay client construction inside the 3-second window.
+# Local runs (no function name) skip it; a failure falls back to the lazy path.
+if os.getenv('AWS_LAMBDA_FUNCTION_NAME'):
+    try:
+        _lambda()
+    except Exception as _e:
+        print(f'init: lambda client prebuild failed, will retry lazily -- '
+              f'{type(_e).__name__}: {_e}')
 
 
 def build_live_response(action, channel_id, user_id=None, guild_id=None, cfg=None,
@@ -944,6 +959,16 @@ def lambda_handler(event, context):
     is_direct = 'requestContext' not in event
 
     if is_direct:
+        # Keep-warm ping (EventBridge rule daily-game-play, every 5 minutes).
+        # Answered before any interaction handling: the value of the ping is the
+        # INIT that already ran, importing everything and prebuilding the
+        # self-invoke client, so real clicks land on a warm environment.
+        if event.get('source') == 'aws.events':
+            try:
+                _lambda()   # normally a no-op: prebuilt during INIT
+            except Exception:
+                pass
+            return {'statusCode': 200, 'body': 'warm'}
         body = event
         # Phase two of a deferred reply, queued by the ACK invocation. Read only
         # here, on the direct (IAM-authenticated) path -- a Function URL request

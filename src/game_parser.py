@@ -870,6 +870,15 @@ def match_suggestion(name='', url='', text=''):
     return None
 
 
+# Compiled patterns per (game, reference date). The pattern/search lambdas are
+# pure functions of (ref, puzzle) and puzzle itself derives from ref, so the
+# compiled pair can be reused across the several build_games calls one render
+# makes. Totals are deliberately not cached: total_key values are discovered
+# during parsing and must be re-resolved on every call. reference_date is
+# midnight-aligned, so a warm container gains one small batch per calendar day.
+_pattern_cache = {}
+
+
 def build_games(puzzle_numbers, game_overrides=None):
     """Resolve GAME_SPECS into concrete Game descriptors for one reference date.
 
@@ -885,12 +894,17 @@ def build_games(puzzle_numbers, game_overrides=None):
             continue
         puzzle = spec.puzzle(ref)
         total = puzzle_numbers.get(spec.total_key, spec.total) if spec.total_key else spec.total
+        patterns = _pattern_cache.get((spec.key, ref))
+        if patterns is None:
+            patterns = _pattern_cache[(spec.key, ref)] = (
+                spec.pattern(ref, puzzle),
+                spec.search(ref, puzzle) if spec.search else None)
         games.append(Game(
             key=spec.key, emoji=spec.emoji, title=spec.title, metric=spec.metric,
             total=total, puzzle=puzzle, url=spec.url,
-            pattern=spec.pattern(ref, puzzle),
+            pattern=patterns[0],
             needs_timestamp=spec.needs_timestamp,
-            search_pattern=spec.search(ref, puzzle) if spec.search else None,
+            search_pattern=patterns[1],
             parse=spec.parse,
         ))
     return games
