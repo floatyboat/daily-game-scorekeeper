@@ -4,6 +4,7 @@ import time
 import requests
 from datetime import timedelta
 from collections import defaultdict
+from urllib3.util.retry import Retry
 
 import store
 from game_parser import (
@@ -77,8 +78,20 @@ def make_session(token, pool_connections=4, pool_maxsize=32):
         'Authorization': f'Bot {token}',
         'Content-Type': 'application/json',
     })
+    # Retry 429s only, honouring Retry-After: a rate-limited call was rejected
+    # unprocessed, so replaying it is safe for every method, POST included --
+    # where before the guild simply lost that tick. Connection/read failures
+    # stay non-retried: a timed-out POST may have landed, and replaying it
+    # could double-post. raise_on_status=False keeps the old contract of
+    # handing an exhausted 429 back as a response rather than introducing a
+    # new exception class at every call site.
+    retries = Retry(total=2, connect=0, read=0, other=0, status=2,
+                    status_forcelist=[429], allowed_methods=None,
+                    backoff_factor=0.5, raise_on_status=False,
+                    respect_retry_after_header=True)
     s.mount('https://', requests.adapters.HTTPAdapter(
         pool_connections=pool_connections, pool_maxsize=pool_maxsize,
+        max_retries=retries,
     ))
     return s
 
@@ -109,6 +122,18 @@ def safe_guild_id(session, channel_id):
         return get_channel_guild_id(session, channel_id)
     except Exception:
         return None
+
+
+# Guild aggregates change once a day (store.finalize_day), yet gather_streaks
+# runs every minute per sticky guild and on every button click, so the
+# partition Query is cached briefly. Safe across the daily finalize because
+# store.display_streak folds the "played on ref_date" flag in at render time
+# (see the docstring below) -- both sides of the fold display the same
+# numbers; the only lag is cosmetic (players_30d), bounded by the TTL.
+# finalize_day itself reads through store.query_aggs directly and never sees
+# this cache.
+AGGS_TTL_SECONDS = 300
+_aggs_cache = {}   # guild_pk -> (expires, {SK: item})
 
 
 def gather_streaks(guild_id, ref_date, results, games, minimum_players=1,
@@ -153,7 +178,13 @@ def gather_streaks(guild_id, ref_date, results, games, minimum_players=1,
         # Poop scores earn 0 points and keep nothing alive; everything below
         # keys off who scored, never off who merely posted.
         scorers = scoring_players(results, games, minimum_players)
-        aggs = store.query_aggs(store.guild_pk(guild_id))
+        gpk = store.guild_pk(guild_id)
+        cached = _aggs_cache.get(gpk)
+        if cached and cached[0] > time.monotonic():
+            aggs = cached[1]
+        else:
+            aggs = store.query_aggs(gpk)
+            _aggs_cache[gpk] = (time.monotonic() + AGGS_TTL_SECONDS, aggs)
         game_items = {store.game_key_from_sk(sk): item for sk, item in aggs.items()
                       if sk.startswith(store.GAME_AGG_PREFIX)}
 

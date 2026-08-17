@@ -31,6 +31,7 @@ the retry updates exactly the items the first attempt didn't reach.
 """
 import json
 import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -505,12 +506,15 @@ def query_aggs(pk):
     return {it['SK']: it for it in items}
 
 
-def batch_get(keys):
+def batch_get(keys, strict=False):
     """Items for explicit {'PK','SK'} key dicts (caller must dedupe).
 
     Chunked to BatchGetItem's 100-key limit. Unprocessed keys are retried a
     few times, then dropped: display callers treat a missing item as a blank
     aggregate, so a throttled read degrades the view instead of erroring.
+    strict=True raises instead of dropping -- for read-modify-write callers
+    (finalize_day), where a key silently treated as blank would overwrite a
+    real aggregate with a reset one.
     """
     items = []
     for i in range(0, len(keys), 100):
@@ -521,6 +525,9 @@ def batch_get(keys):
             request = resp.get('UnprocessedKeys') or {}
             if not request.get(TABLE_NAME, {}).get('Keys'):
                 break
+        else:
+            if strict:
+                raise RuntimeError('batch_get: unprocessed keys after retries')
     return items
 
 
@@ -565,11 +572,26 @@ def get_config(guild_id):
     return _effective_config(item) if item else None
 
 
+CONFIGS_TTL_SECONDS = 120
+_configs_cache = None   # (expires, [configs])
+
+
 def all_configs():
     """Effective configs for every set-up guild -- one small Query. This is
-    the fan-out source for both scheduled lambdas."""
+    the fan-out source for both scheduled lambdas.
+
+    Cached briefly: the sticky schedule calls this every minute for data that
+    changes only through /setup, so a short TTL removes most of the reads at
+    the cost of a /setup change taking up to CONFIGS_TTL_SECONDS to reach the
+    sticky. Callers treat the returned configs as read-only.
+    """
+    global _configs_cache
+    if _configs_cache and _configs_cache[0] > time.monotonic():
+        return _configs_cache[1]
     items = _query_all(KeyConditionExpression=Key('PK').eq(GUILDS_PK))
-    return [_effective_config(it) for it in items]
+    configs = [_effective_config(it) for it in items]
+    _configs_cache = (time.monotonic() + CONFIGS_TTL_SECONDS, configs)
+    return configs
 
 
 # --- Writes ---------------------------------------------------------------------
@@ -684,15 +706,29 @@ def finalize_day(guild_id, day, results, points_by_game, game_keys):
     # a stale last_played_day as a broken streak, so their next scoring day
     # resets correctly without us touching every known player daily. (A pooped
     # game adds 0 points, so skipping it also costs points_sum nothing.)
-    for uid in {u for s in scorers.values() for u in s}:
+    # One batched read for the whole scoring cohort replaces a Query round trip
+    # per player: every needed key is exact (the overall aggregate plus one per
+    # game the player scored). strict -- a dropped key must fail the run (the
+    # next tick retries under the finalized_through guard) rather than be
+    # treated as a blank aggregate and reset a real streak.
+    scoring_uids = sorted({u for s in scorers.values() for u in s})
+    player_keys = []
+    for uid in scoring_uids:
         ppk = player_pk(guild_id, uid)
-        theirs = query_aggs(ppk)
+        player_keys.append({'PK': ppk, 'SK': SERVER_AGG_SK})
+        player_keys += [{'PK': ppk, 'SK': game_agg_sk(key)}
+                        for key in game_keys if uid in scorers[key]]
+    theirs_by_key = {(it['PK'], it['SK']): it
+                     for it in batch_get(player_keys, strict=True)}
+
+    for uid in scoring_uids:
+        ppk = player_pk(guild_id, uid)
 
         # Overall per-player streak: scoring in any game today keeps it alive.
         # This is the number the scoreboard's points summary shows, so it has to
         # be its own aggregate -- it is not derivable from the per-game ones (a
         # player alternating games has no per-game streak but a long overall one).
-        agg, _ = _agg_from_item(theirs.get(SERVER_AGG_SK))
+        agg, _ = _agg_from_item(theirs_by_key.get((ppk, SERVER_AGG_SK)))
         advance_streak(agg, day, prev_day, True)
         _put_guarded(_agg_to_item(ppk, SERVER_AGG_SK, agg, day), day, stats)
 
@@ -700,7 +736,7 @@ def finalize_day(guild_id, day, results, points_by_game, game_keys):
             if uid not in scorers[game_key]:
                 continue
             sk = game_agg_sk(game_key)
-            item = theirs.get(sk)
+            item = theirs_by_key.get((ppk, sk))
             agg, _ = _agg_from_item(item)
             advance_streak(agg, day, prev_day, True)
             points = int(points_by_game.get(game_key, {}).get(uid, 0))

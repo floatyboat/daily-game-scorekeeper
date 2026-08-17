@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -208,6 +209,18 @@ def update_sticky(channel_id, channel_messages, results, server_streak=0,
     return 'collapsed' if len(stickies) > 1 else 'reposted'
 
 
+# One entry per guild whose last pass ended settled; run_guild's probe uses it
+# to skip the full pass while nothing has moved. Process-lifetime state: the
+# every-minute schedule keeps this container warm, so entries usually survive
+# from one tick to the next and the common case collapses to one tiny fetch.
+_probe_state = {}   # guild_id -> {'fingerprint', 'newest_id', 'expires'}
+PROBE_MAX_AGE = 600
+
+# Don't start another guild with less than this left on the clock; a typical
+# pass is well under it, so the margin only ever trims the pathological runs.
+DEADLINE_MARGIN_MS = 8000
+
+
 def run_guild(cfg, force=False):
     """One guild's sticky pass: parse today's plays and settle the sticky.
 
@@ -224,6 +237,25 @@ def run_guild(cfg, force=False):
         return 'outside active window'
 
     today = reference_date(now_local, tz, cfg['hours_after_midnight'])
+
+    # Probe short-circuit: when the last full pass left the sticky settled and
+    # neither the date nor the config has moved, a single-message fetch proving
+    # "the newest message is still the settled sticky" also proves the parse
+    # could not have changed -- no new plays, same window, same games -- so the
+    # 200-message fetch, the regex pass, and the streak read are all skipped.
+    # Bounded by PROBE_MAX_AGE so what a head probe can't see (an edit or
+    # deletion of an older message, a changed avatar) still heals within
+    # minutes rather than waiting on the next new message.
+    gid = cfg['guild_id']
+    fingerprint = f"{store.day_str(today)} {json.dumps(cfg, sort_keys=True, default=str)}"
+    state = None if force else _probe_state.get(gid)
+    if state and state['fingerprint'] == fingerprint \
+            and state['expires'] > time.monotonic():
+        probe = fetch_messages(_session, channel_id, limit=1)
+        if probe and probe[0]['id'] == state['newest_id']:
+            return 'unchanged (probe)'
+    _probe_state.pop(gid, None)
+
     rotation = store.current_rotation(cfg, store.day_str(today))
     puzzle_numbers = compute_puzzle_numbers(today)
     games = build_games(puzzle_numbers, cfg['game_overrides'])
@@ -270,6 +302,11 @@ def run_guild(cfg, force=False):
     action = update_sticky(channel_id, messages, results, server_streak,
                            link_yesterday=cfg['daily_enabled'],
                            game_buttons=game_buttons, show_more=show_more)
+    if action == 'unchanged' and not force:
+        # 'unchanged' guarantees messages[0] is the single, settled sticky.
+        _probe_state[gid] = {'fingerprint': fingerprint,
+                             'newest_id': messages[0]['id'],
+                             'expires': time.monotonic() + PROBE_MAX_AGE}
     note = f' (embeds suppressed: {suppressed})' if cfg['suppress_embeds'] else ''
     return f'{action}{note}'
 
@@ -301,11 +338,26 @@ def lambda_handler(event, context):
         result = run_guild(cfg, force=True)
         return {'statusCode': 200, 'body': json.dumps(f'Sticky (test): {result}')}
 
+    configs = [cfg for cfg in store.all_configs()
+               if cfg['sticky_enabled'] and cfg['input_channel_id']]
+    # A different starting guild each minute: if a run ever runs out of time,
+    # the deferral below lands on different guilds each tick instead of
+    # deterministically starving the tail of the partition order.
+    if len(configs) > 1:
+        offset = int(time.time() // 60) % len(configs)
+        configs = configs[offset:] + configs[:offset]
+
     summary = {}
-    for cfg in store.all_configs():
+    for i, cfg in enumerate(configs):
         gid = cfg['guild_id']
-        if not cfg['sticky_enabled'] or not cfg['input_channel_id']:
-            continue
+        if context is not None \
+                and context.get_remaining_time_in_millis() < DEADLINE_MARGIN_MS:
+            # Stop cleanly rather than letting Lambda kill the run mid-guild;
+            # the start-offset rotation above spreads the deferral around.
+            print(f'sticky: out of time, deferring {len(configs) - i} guild(s)')
+            for later in configs[i:]:
+                summary[later['guild_id']] = 'deferred: out of time'
+            break
         try:
             summary[gid] = run_guild(cfg)
         except Exception as e:

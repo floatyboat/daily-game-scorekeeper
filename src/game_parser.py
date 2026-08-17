@@ -407,6 +407,17 @@ def _get_wordle_fetch_session():
 WORDLE_BOT_ID = '1211781489931452447'
 
 
+# Parsed results per attachment. Attachments are immutable, so a decoded grid
+# never changes; the avatar-hash pool rides in the key because multi-player
+# attribution depends on it, and a changed pool (a member's new avatar) must
+# recompute. Without this, the sticky's one-minute tick re-downloaded and
+# re-decoded every in-window image on every pass. Only a completed download is
+# cached -- a transient CDN failure stays retryable -- and callers must treat
+# the returned list as read-only. Cleared wholesale if it somehow outgrows any
+# plausible in-window population.
+_wordle_result_cache = {}
+
+
 def parse_wordle_attachment(attachment, candidate_hashes=None):
     """Download and parse a Wordle bot image attachment.
 
@@ -419,12 +430,23 @@ def parse_wordle_attachment(attachment, candidate_hashes=None):
     desc = attachment.get('description', '')
     if 'finished' not in desc:
         return []
+    cache_key = (attachment.get('id') or attachment['url'].split('?', 1)[0],
+                 tuple(sorted((candidate_hashes or {}).items())))
+    if cache_key in _wordle_result_cache:
+        return _wordle_result_cache[cache_key]
     try:
         img_response = _get_wordle_fetch_session().get(attachment['url'], timeout=4)
         img_response.raise_for_status()
-        return parse_wordle_image(img_response.content, candidate_hashes)
     except Exception:
         return []
+    try:
+        result = parse_wordle_image(img_response.content, candidate_hashes)
+    except Exception:
+        result = []
+    if len(_wordle_result_cache) > 128:
+        _wordle_result_cache.clear()
+    _wordle_result_cache[cache_key] = result
+    return result
 
 
 def get_connections_results(content):

@@ -114,7 +114,10 @@ FUNCTIONS = [
         runtime='python3.13',
         # The hourly tick loops every guild and re-parses each one's history.
         timeout=120,
-        memory=128,
+        # Same Pillow reasoning as the sticky below, on up to 8 pages of
+        # history: this function decodes Wordle grids and avatars too, and at
+        # 128MB its measured peak was 104MB -- one large image from an OOM.
+        memory=512,
         env=COMMON_ENV + ('TEST_CHANNEL_ID',),
         # Named 'time' for historical reasons. EventBridge cannot rename a rule
         # in place, so correcting it means create-new/delete-old plus a fresh
@@ -128,7 +131,10 @@ FUNCTIONS = [
         name='daily-game-sticky',
         handler='sticky_lambda.lambda_handler',
         runtime='python3.14',
-        timeout=30,
+        # The handler checks its own deadline and defers leftover guilds, so a
+        # longer wall just means fewer deferrals; 55s keeps a full run under
+        # the every-minute schedule period so runs can never overlap.
+        timeout=55,
         # Pillow decodes Wordle result images; 128MB leaves no headroom for it.
         memory=512,
         env=COMMON_ENV + ('TEST_CHANNEL_ID',),
