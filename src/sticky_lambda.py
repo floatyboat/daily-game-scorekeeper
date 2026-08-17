@@ -36,20 +36,19 @@ def build_sticky_components(yesterday_url=None, game_buttons=(), show_more=False
     the row; Discord rejects an action row with no components.
 
     show_more adds the More button (the `/play all:true` view, everything
-    tracked rather than today's draw) directly after Play. Only worth a slot
-    while a rotation is actually narrowing Play -- unrestricted, the two
-    buttons would open the same list -- so run_guild gates it on that.
+    tracked rather than today's draw) last, after the everyday buttons. Only
+    worth a slot while a rotation is actually narrowing Play -- unrestricted,
+    the two buttons would open the same list -- so run_guild gates it on that.
     """
     buttons = [
         {'type': 2, 'style': 1, 'label': 'Play', 'custom_id': PLAY_BUTTON_CUSTOM_ID},
+        {'type': 2, 'style': 2, 'label': 'Scores', 'custom_id': SCORES_BUTTON_CUSTOM_ID},
     ]
+    if yesterday_url:
+        buttons.append({'type': 2, 'style': 5, 'label': 'Yesterday', 'url': yesterday_url})
     if show_more:
         buttons.append({'type': 2, 'style': 2, 'label': 'More',
                         'custom_id': MORE_BUTTON_CUSTOM_ID})
-    buttons.append(
-        {'type': 2, 'style': 2, 'label': 'Scores', 'custom_id': SCORES_BUTTON_CUSTOM_ID})
-    if yesterday_url:
-        buttons.append({'type': 2, 'style': 5, 'label': 'Yesterday', 'url': yesterday_url})
     rows = [{'type': 1, 'components': buttons}]
     if game_buttons:
         rows.append({'type': 1, 'components': list(game_buttons)})

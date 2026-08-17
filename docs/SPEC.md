@@ -336,9 +336,9 @@ retroactively.
   in the points summary (`_overall_streak_tag()`). Per-game player streaks repeat on every
   score line of every game and stay a plain `(xN)` (`_streak_tag()`).
 - **Sticky**: the content line ends with the server-wide streak (points scored in any game,
-  live-adjusted) as a bare `🔥N`. One row of buttons always — Play · [More] · Scores ·
-  Yesterday, with the grey More (the `/play all:true` view) present only while a rotation
-  is narrowing Play —
+  live-adjusted) as a bare `🔥N`. One row of buttons always — Play · Scores · Yesterday ·
+  [More], with the grey More (the `/play all:true` view) trailing the everyday buttons and
+  present only while a rotation is narrowing Play —
   and an optional second: a shortcut row of the first `sticky_games` games in
   `game_sort_key` order, the head of the Play list one tap earlier. `sticky_games` is 0 by
   default, and at 0 the ranking pass is skipped rather than run and thrown away. The sticky
