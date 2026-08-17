@@ -12,7 +12,7 @@ all per-server configuration lives in the table.
 |---|---|---|---|
 | `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Two stages per tick: draws and announces the rotation at each guild's day start, and posts and pins yesterday's scoreboard at its post hour; the only writer of day and aggregate items |
 | `daily-game-sticky` | `src/sticky_lambda.py` | EventBridge rule `daily-game-sticky`, `cron(* * * * ? *)` | Maintains the one sticky ("Now Playing") at the bottom of the input channel |
-| `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, `/setup`, `/suggest`, sticky Play/Scores buttons; live ephemeral views |
+| `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, `/setup`, `/suggest`, sticky Play/More/Scores buttons; live ephemeral views |
 
 Shared modules: `game_parser.py` (game specs, parsing, scoring, render), `scoreboard.py`
 (Discord fetch/format helpers), `store.py` (all DynamoDB I/O and the config schema).
@@ -249,8 +249,10 @@ afterwards; every reply from them says so.
   advances only on a real run, so repeated test runs leave it untouched — over a day
   already drawn they announce that live set, and otherwise draw a throwaway one.
 - **Consumers.** Bare `/play` and the sticky's Play button list rotation games only
-  (`/play all:true` lists every enabled game, scored games sorted above off-rotation
-  ones; an exhausted rotation points at it). The sticky's shortcut row is
+  (`/play all:true` and the sticky's More button list every enabled game, scored games
+  sorted above off-rotation ones; an exhausted rotation points at them). More is the
+  one surface that exists *because* of the rotation: the sticky carries it only while a
+  rotation governs the day, since unrestricted it would just repeat Play. The sticky's shortcut row is
   rotation-only, while its content counts every play, on or off rotation. The Scores
   button renders exactly like the board, `rotation_off_mode` included. All of them see
   the new set from day start, including the pre-post-hour window that used to read
@@ -334,7 +336,9 @@ retroactively.
   in the points summary (`_overall_streak_tag()`). Per-game player streaks repeat on every
   score line of every game and stay a plain `(xN)` (`_streak_tag()`).
 - **Sticky**: the content line ends with the server-wide streak (points scored in any game,
-  live-adjusted) as a bare `🔥N`. One row of buttons always — Play · Scores · Yesterday —
+  live-adjusted) as a bare `🔥N`. One row of buttons always — Play · [More] · Scores ·
+  Yesterday, with the grey More (the `/play all:true` view) present only while a rotation
+  is narrowing Play —
   and an optional second: a shortcut row of the first `sticky_games` games in
   `game_sort_key` order, the head of the Play list one tap earlier. `sticky_games` is 0 by
   default, and at 0 the ranking pass is skipped rather than run and thrown away. The sticky

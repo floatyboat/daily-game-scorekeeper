@@ -23,6 +23,7 @@ FLAG_IS_COMPONENTS_V2        = 1 << 15   # 32768
 # (sticky_lambda) and the consumers (interaction_lambda) share one source of
 # truth instead of duplicating the literal strings and silently drifting apart.
 PLAY_BUTTON_CUSTOM_ID = 'sticky_play'
+MORE_BUTTON_CUSTOM_ID = 'sticky_more'
 SCORES_BUTTON_CUSTOM_ID = 'sticky_scores'
 STICKY_HEADING = "\U0001F47E **Now Playing**"
 

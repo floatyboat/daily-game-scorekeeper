@@ -13,7 +13,8 @@ from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
     make_session, fetch_messages, reference_date, is_scoreboard_message,
     is_sticky_message, build_avatar_pool, safe_guild_id, gather_streaks,
-    PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID, STICKY_HEADING,
+    PLAY_BUTTON_CUSTOM_ID, MORE_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
+    STICKY_HEADING,
 )
 import store
 
@@ -25,18 +26,27 @@ DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 _session = make_session(DISCORD_BOT_TOKEN)
 
 
-def build_sticky_components(yesterday_url=None, game_buttons=()):
+def build_sticky_components(yesterday_url=None, game_buttons=(), show_more=False):
     """The sticky's rows: the action row, then the top-games shortcut row.
 
     game_buttons are the leading games in the app-wide order, so the row is the
     head of the Play list surfaced a tap earlier. Empty -- the guild's
     sticky_games is 0 (the default), or it has no games enabled -- just drops
     the row; Discord rejects an action row with no components.
+
+    show_more adds the More button (the `/play all:true` view, everything
+    tracked rather than today's draw) directly after Play. Only worth a slot
+    while a rotation is actually narrowing Play -- unrestricted, the two
+    buttons would open the same list -- so run_guild gates it on that.
     """
     buttons = [
         {'type': 2, 'style': 1, 'label': 'Play', 'custom_id': PLAY_BUTTON_CUSTOM_ID},
-        {'type': 2, 'style': 2, 'label': 'Scores', 'custom_id': SCORES_BUTTON_CUSTOM_ID},
     ]
+    if show_more:
+        buttons.append({'type': 2, 'style': 2, 'label': 'More',
+                        'custom_id': MORE_BUTTON_CUSTOM_ID})
+    buttons.append(
+        {'type': 2, 'style': 2, 'label': 'Scores', 'custom_id': SCORES_BUTTON_CUSTOM_ID})
     if yesterday_url:
         buttons.append({'type': 2, 'style': 5, 'label': 'Yesterday', 'url': yesterday_url})
     rows = [{'type': 1, 'components': buttons}]
@@ -117,7 +127,9 @@ def _sticky_is_current(sticky, content, components):
 
     Content plus every button, so a stale Yesterday link, a reshuffled or
     restreaked shortcut row, a row an admin has just resized or switched off,
-    and a sticky posted before either button existed all force a repost.
+    a More button today's rotation has just introduced (or a lapsed rotation
+    has dropped), and a sticky posted before any of these buttons existed all
+    force a repost.
     """
     if sticky.get('content', '') != content:
         return False
@@ -140,7 +152,7 @@ def build_sticky_content(results, server_streak=0):
 
 
 def update_sticky(channel_id, channel_messages, results, server_streak=0,
-                  link_yesterday=True, game_buttons=()):
+                  link_yesterday=True, game_buttons=(), show_more=False):
     """Maintain exactly one sticky at the bottom of channel_id.
 
     No-op only when a single sticky is already the most recent message AND both
@@ -171,7 +183,7 @@ def update_sticky(channel_id, channel_messages, results, server_streak=0,
             # Discord's client routes by channel_id/message_id; the guild slot
             # accepts @me even for guild messages.
             yesterday_url = f'https://discord.com/channels/@me/{channel_id}/{scoreboard_id}'
-    components = build_sticky_components(yesterday_url, game_buttons)
+    components = build_sticky_components(yesterday_url, game_buttons, show_more)
 
     if (len(stickies) == 1 and channel_messages
             and channel_messages[0]['id'] == stickies[0]['id']
@@ -247,6 +259,9 @@ def run_guild(cfg, force=False):
     # rotation games: the row mirrors what Play lists. The content counts stay
     # unfiltered -- every play counts, on or off rotation.
     rot = set(rotation) if rotation is not None else None
+    # More is the way back out to the games today's draw left behind, so it
+    # rides on the same condition that narrows Play in the first place.
+    show_more = rot is not None
     game_buttons = ()
     if cfg['sticky_games']:
         row_games = games if rot is None else [g for g in games if g.key in rot]
@@ -254,7 +269,7 @@ def run_guild(cfg, force=False):
 
     action = update_sticky(channel_id, messages, results, server_streak,
                            link_yesterday=cfg['daily_enabled'],
-                           game_buttons=game_buttons)
+                           game_buttons=game_buttons, show_more=show_more)
     note = f' (embeds suppressed: {suppressed})' if cfg['suppress_embeds'] else ''
     return f'{action}{note}'
 

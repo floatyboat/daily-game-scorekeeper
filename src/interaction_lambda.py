@@ -17,7 +17,7 @@ from game_parser import (
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
     build_avatar_pool, build_name_map, safe_guild_id, gather_streaks, is_sticky_message,
-    PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
+    PLAY_BUTTON_CUSTOM_ID, MORE_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     TEXT_CHANNEL_TYPES, PERM_ADMINISTRATOR, PERM_MANAGE_GUILD, MAX_BUTTONS_PER_ROW,
     MAX_MESSAGE_LENGTH,
 )
@@ -152,10 +152,15 @@ def interaction_user_id(body):
 
 
 def _wants_all(body):
-    """True when a /play carried all:true. Component presses (the sticky's
-    Play button) have no options and stay narrowed to the rotation."""
-    options = (body.get('data') or {}).get('options') or []
-    return any(o.get('name') == 'all' and o.get('value') for o in options)
+    """True when the caller asked for every tracked game rather than today's
+    rotation: a /play carrying all:true, or the sticky's More button, which is
+    that same view one tap from the channel. The sticky's Play button carries
+    no options and stays narrowed to the rotation."""
+    data = body.get('data') or {}
+    if data.get('custom_id') == MORE_BUTTON_CUSTOM_ID:
+        return True
+    return any(o.get('name') == 'all' and o.get('value')
+               for o in data.get('options') or [])
 
 
 def interaction_guild_id(body):
@@ -206,7 +211,8 @@ def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
 
 ALL_PLAYED_MESSAGE = "\U0001F389 You've played every tracked game today!"
 ROTATION_PLAYED_MESSAGE = ("\U0001F389 You've played all of today's games! "
-                           "`/play all:true` lists every tracked game.")
+                           "**More** on the sticky — or `/play all:true` — "
+                           "lists every tracked game.")
 
 
 def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_all=False):
@@ -215,7 +221,8 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_
     When user_id is known, only games that user hasn't logged today are shown,
     so the Play list is personal to whoever pressed the button. When a
     rotation governs today it narrows the list to the games that score --
-    unless show_all (/play all:true) asks for every tracked game. Buttons
+    unless show_all (`/play all:true`, or the sticky's More button) asks for
+    every tracked game, off-rotation ones included. Buttons
     follow the app-wide game ordering (game_sort_key, same as scoreboard
     sections): today's live count, then active server streak, then 30-day
     distinct players, then all-time distinct players, then title. Labels
@@ -279,7 +286,7 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_
 
 
 # --- Deferred replies for the live views ---------------------------------------
-# /play and the sticky's two buttons all read a page of channel history and the
+# /play and the sticky's three buttons all read a page of channel history and the
 # streak store before they can answer. Warm that is ~300ms, with room to spare
 # inside Discord's 3-second ACK deadline -- but these surfaces are used a couple
 # of dozen times a day, so the container is rarely still warm and roughly half of
@@ -973,7 +980,9 @@ def lambda_handler(event, context):
     # MESSAGE_COMPONENT (type 3) — sticky buttons + setup selects
     if body.get('type') == 3:
         custom_id = body.get('data', {}).get('custom_id', '')
-        if custom_id == PLAY_BUTTON_CUSTOM_ID:
+        # Both open the Play list; _wants_all reads the custom_id to decide
+        # whether it stays narrowed to today's rotation.
+        if custom_id in (PLAY_BUTTON_CUSTOM_ID, MORE_BUTTON_CUSTOM_ID):
             return _http(defer(ACTION_PLAY, body))
         if custom_id == SCORES_BUTTON_CUSTOM_ID:
             return _http(defer(ACTION_SCORES, body))
