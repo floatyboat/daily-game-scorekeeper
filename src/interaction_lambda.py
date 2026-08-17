@@ -211,8 +211,7 @@ def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
 
 ALL_PLAYED_MESSAGE = "\U0001F389 You've played every tracked game today!"
 ROTATION_PLAYED_MESSAGE = ("\U0001F389 You've played all of today's games! "
-                           "**More** on the sticky — or `/play all:true` — "
-                           "lists every tracked game.")
+                           "**More** on the sticky — or `/play all:true`")
 
 
 def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_all=False):
