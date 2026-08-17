@@ -10,7 +10,7 @@ all per-server configuration lives in the table.
 
 | Lambda | Module | Trigger | Role |
 |---|---|---|---|
-| `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Posts and pins yesterday's scoreboard and announces today's rotation; the only writer of day and aggregate items |
+| `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Two stages per tick: draws and announces the rotation at each guild's day start, and posts and pins yesterday's scoreboard at its post hour; the only writer of day and aggregate items |
 | `daily-game-sticky` | `src/sticky_lambda.py` | EventBridge rule `daily-game-sticky`, `cron(* * * * ? *)` | Maintains the one sticky ("Now Playing") at the bottom of the input channel |
 | `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, `/setup`, `/suggest`, sticky Play/Scores buttons; live ephemeral views |
 
@@ -53,6 +53,9 @@ GUILDS                      GUILD#<guild_id>   per-server config: input_channel_
                                                last_finalized_day, last_posted_day,
                                                rotation_day + rotation_games (the
                                                drawn rotation and the day it governs)
+                                               and rotation_prev_day +
+                                               rotation_prev_games (the pair it
+                                               displaced, still needed by the board)
 GUILD#<guild_id>            DAY#<YYYY-MM-DD>   full parsed results for the day:
                                                {game: {user_id: {score, points}}}, puzzle
                                                numbers, and the governing rotation when
@@ -125,8 +128,10 @@ registrar and the handler.
 | `game_overrides` | `games` | `{}` | Explicit per-guild flips of each game's default state |
 | `last_finalized_day` | — | — | Written at finalize; records how far aggregates are folded |
 | `last_posted_day` | — | — | Written after a real post; the post gate |
-| `rotation_day` | — | — | The day the stored rotation governs (set_rotation, real posts only) |
+| `rotation_day` | — | — | The day the stored rotation governs (set_rotation, real runs only) |
 | `rotation_games` | — | — | The rotation drawn for that day, as game keys |
+| `rotation_prev_day` | — | — | The day the displaced rotation governed — the board scores that day hours after the new draw lands |
+| `rotation_prev_games` | — | — | The rotation drawn for *that* day, as game keys |
 
 A guild with no stored item resolves to these defaults with both channels unset, which
 posts nothing anywhere.
@@ -176,15 +181,25 @@ afterwards; every reply from them says so.
 - On by default: each day only a drawn rotation of `rotation_count` games counts toward
   the board — its points summary and scores section. Scoring inside the rotation is
   unchanged (`compute_points`, the `minimum_players` display gate). A day is governed
-  only when `rotation_enabled` is on and `rotation_day` names it exactly with a
-  non-empty list; feature off, state absent, stale, or empty all mean **unrestricted**
-  — every surface behaves as if the feature did not exist. The first run after a gap
-  (deploy day included) therefore scores unrestricted and starts the rotation from that
-  morning. Before the board posts, `rotation_day` still names yesterday, so the
-  pre-post-hour window is unrestricted too — zero-width on default configs, where
-  post hour equals the day-start hour.
+  only when `rotation_enabled` is on and one of the two stored slots names it exactly
+  with a non-empty list; feature off, state absent, stale, or empty all mean
+  **unrestricted** — every surface behaves as if the feature did not exist. The first
+  run after a gap (deploy day included) therefore scores unrestricted and starts the
+  rotation from that morning.
+- **Two slots** (`rotation_day`/`rotation_games` and `rotation_prev_day`/`rotation_prev_games`).
+  Day D's draw lands at D's **start**, while the board scoring D−1 posts later that
+  morning at `post_hour`, so the draw shifts the pair it displaces into the previous
+  slot and `store.current_rotation` matches either one. Without that the board would
+  find only D and score D−1 unrestricted. The board is never more than one day behind
+  the draw, so two slots are all it needs; anything older matches neither and reads
+  unrestricted, the stale-state fallback above.
 - **Lifecycle** (`store.current_rotation` / `game_parser.next_rotation`). The daily
-  lambda draws day D's rotation right after scoring D−1. `swap` mode treats membership
+  lambda draws day D's rotation on the first tick at or after D's start
+  (`lambda_function.settle_rotation`), independently of the board: it parses D−1 for
+  the participation counts when swap mode needs them, and needs no message data at all
+  in `random` mode or on a fresh draw. When day start and post hour are the same hour
+  — the default, since `post_hour` falls back to `hours_after_midnight` — both stages
+  run on the same tick and share one parse. `swap` mode treats membership
   as earned by participation (distinct posters on the scored day, poops included — the
   same count the archive stores), one threshold both ways: members that drew at least
   `rotation_min_players` stay, off-rotation games that drew them **join**.
@@ -208,28 +223,39 @@ afterwards; every reply from them says so.
   `DAY#` item records the governing rotation, so future rollups can exclude
   off-rotation frozen points — the per-player `points_sum` aggregate still includes
   them, and the day record stays the rollup source of truth.
-- **The announcement.** Right under the board the daily lambda posts "Today's games":
-  a bare header over the new rotation as link-button rows — the buttons carry the
-  emoji-title labels, the content repeats none of them. Deliberately a plain message, not
-  Components V2 — `is_scoreboard_message` keys on that flag, so a V2 follow-up would
-  hijack the sticky's Yesterday link and the posted-today dedup scan — and none of its
-  buttons is the sticky Play button, so the sticky pass never matches it. Silent,
-  embeds suppressed, never pinned, skipped entirely when unrestricted.
-- **Ordering and healing.** The real-run tail is post board → announce → pin →
-  `set_rotation` → `set_last_posted`. The already-posted heal path draws fresh
-  (random), persists **first**, then announces: a stale `rotation_day` there means the
-  crashed run never reached its announce, and the flipped order turns the loss window
-  into a duplicate announcement — the cheaper mistake. `set_rotation` is the
-  conditional-monotonic run-marker idiom carrying the list, so double fires keep the
-  first draw. Test runs post board + announcement to the test channel but never call
-  `set_rotation`; like `last_posted_day`, rotation state advances only on a real post,
-  so repeated test runs draw fresh sets by design.
+- **The announcement.** With the draw, the daily lambda posts "Today's games": a bare
+  header over the new rotation as link-button rows — the buttons carry the emoji-title
+  labels, the content repeats none of them. It goes to the output channel (input
+  channel if that is unset, so a guild with the board off still gets it) at day start,
+  which on a default config is the same tick as the board and so lands directly under
+  it; a guild with a later post hour gets this in the morning and the board later.
+  Deliberately a plain message, not Components V2 — `is_scoreboard_message` keys on
+  that flag, so a V2 follow-up would hijack the sticky's Yesterday link and the
+  posted-today dedup scan — and none of its buttons is the sticky Play button, so the
+  sticky pass never matches it. Silent, embeds suppressed, never pinned, skipped
+  entirely when unrestricted.
+- **Ordering.** The rotation stage persists **first**, then announces: a crash between
+  the two costs one announcement, where the reverse would let the next hourly tick draw
+  a *different* set into a day whose games have already been listed. A tick that runs
+  both stages orders them post board → `set_rotation` → announce → pin →
+  `set_last_posted`, so the announcement still sits directly under the board, ahead of
+  Discord's "pinned a message" notice. `set_rotation` is the conditional-monotonic
+  run-marker idiom carrying the lists, so double fires keep the first draw and cannot
+  shift a good previous slot out from under the board; `settle_rotation` applies the
+  same monotonic test before drawing, so a stored draw that already names today (or a
+  later day, after a timezone or day-start edit moved the boundary) is left alone
+  rather than re-announced hourly. Test runs post board + announcement to the test
+  channel but never call `set_rotation`; like `last_posted_day`, rotation state
+  advances only on a real run, so repeated test runs leave it untouched — over a day
+  already drawn they announce that live set, and otherwise draw a throwaway one.
 - **Consumers.** Bare `/play` and the sticky's Play button list rotation games only
   (`/play all:true` lists every enabled game, scored games sorted above off-rotation
   ones; an exhausted rotation points at it). The sticky's shortcut row is
   rotation-only, while its content counts every play, on or off rotation. The Scores
-  button renders exactly like the board, `rotation_off_mode` included. Rotation rides the daily post: with `daily_enabled` off nothing
-  draws, state goes stale, and everything is unrestricted.
+  button renders exactly like the board, `rotation_off_mode` included. All of them see
+  the new set from day start, including the pre-post-hour window that used to read
+  unrestricted, and `daily_enabled` off stops only the board — the rotation still draws
+  and announces.
 
 ## Streak semantics
 
@@ -352,11 +378,14 @@ retroactively.
 
 ## Scheduling
 
-- The daily rule is **hourly**. Each tick loads all configs and posts for any guild whose
-  local hour has reached its `post_hour` and whose `last_posted_day` is stale, with a
-  scoreboard-already-in-output-channel check as belt and braces. Posting and finalizing are
-  decoupled: test runs finalize, idempotently, but never post for real and never advance
-  `last_posted_day`.
+- The daily rule is **hourly**, and carries two independently gated stages so one rule
+  covers every guild's own clock. Each tick loads all configs and, per guild, posts the
+  board when the local hour has reached its `post_hour` and `last_posted_day` is stale
+  (with a scoreboard-already-in-output-channel check as belt and braces), and draws the
+  rotation when the scoring day has rolled over past `rotation_day`, which lands it on the
+  first tick at or after the guild's day start. Posting and finalizing are decoupled: test
+  runs finalize, idempotently, but never post for real and never advance `last_posted_day`
+  or the rotation.
 - The sticky rule fires every minute, loops guilds the same way, and skips guilds outside
   their `[post_hour, midnight)` window.
 - Link-preview suppression rides on that pass: each message the sticky counts also gets its
@@ -364,7 +393,8 @@ retroactively.
   Messages, and does nothing in a guild with `sticky_enabled` off — that guild is skipped
   before anything is scanned. Turning it off stops future stripping; it never restores an
   already-stripped preview.
-- With `daily_enabled` off nothing posts, and the sticky drops its Yesterday link.
+- With `daily_enabled` off the board stops and the sticky drops its Yesterday link; the
+  rotation stage keeps running, so today's games are still drawn and announced.
 - Onboarding is automatic: `/setup` writes the config item and the next tick picks the guild
   up, with no deploy or schedule change.
 - **Test mode is event-driven.** `{'test': true}` on the daily posts every guild's board to

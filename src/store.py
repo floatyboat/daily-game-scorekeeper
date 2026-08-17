@@ -196,8 +196,14 @@ CONFIG_FIELDS = [
 
     # Rotation state, written only by the daily lambda (set_rotation), like
     # the run markers: rotation_games is the key list scored on rotation_day.
+    # Two slots, because the draw for a new day lands at that day's START while
+    # the board scoring the day before it posts LATER (post_hour): the outgoing
+    # pair shifts into rotation_prev_* so the board can still look up the
+    # rotation that governed the day it is scoring. See current_rotation.
     ConfigField('rotation_day'),
     ConfigField('rotation_games', default=(), coerce=_keys),
+    ConfigField('rotation_prev_day'),
+    ConfigField('rotation_prev_games', default=(), coerce=_keys),
 ]
 
 CONFIG_DEFAULTS = {f.name: f.default for f in CONFIG_FIELDS}
@@ -274,11 +280,21 @@ def post_hour(cfg):
 
 def current_rotation(cfg, day):
     """The rotation governing `day` (list of game keys), or None when the day
-    is unrestricted: feature off, state absent or empty, or state drawn for a
-    different day. None means every surface behaves exactly as if the feature
-    did not exist -- the stale-state fallback SPEC.md documents."""
-    if cfg['rotation_enabled'] and cfg['rotation_day'] == day and cfg['rotation_games']:
-        return cfg['rotation_games']
+    is unrestricted: feature off, state absent or empty, or no stored slot drawn
+    for that day. None means every surface behaves exactly as if the feature did
+    not exist -- the stale-state fallback SPEC.md documents.
+
+    Both slots are checked, newest first: today's draw lands at day start, hours
+    before the board that scores yesterday posts, so yesterday's rotation is
+    only still reachable in the previous slot. A day older than that (the bot
+    was down, a manual backfill) matches neither and reads unrestricted.
+    """
+    if not cfg['rotation_enabled']:
+        return None
+    for day_field, games_field in (('rotation_day', 'rotation_games'),
+                                   ('rotation_prev_day', 'rotation_prev_games')):
+        if cfg[day_field] == day and cfg[games_field]:
+            return cfg[games_field]
     return None
 
 
@@ -745,21 +761,34 @@ def set_last_posted(guild_id, day):
     _advance_marker(guild_id, 'last_posted_day', day)
 
 
-def set_rotation(guild_id, day, game_keys):
-    """Persist the rotation drawn for `day` (the day it will govern).
+def set_rotation(guild_id, day, game_keys, prev_day=None, prev_games=()):
+    """Persist the rotation drawn for `day` (the day it will govern), shifting
+    the outgoing pair into the previous slot.
 
-    The _advance_marker idiom, extended to carry the list: monotonic on
-    rotation_day, so a double-fired run keeps the first draw. Test runs never
-    call this -- rotation state, like last_posted_day, only advances on a
-    real post.
+    The caller passes the outgoing day and list straight off the config it
+    already read -- DynamoDB update expressions cannot copy one attribute onto
+    another. That is safe because this lambda is the only writer and the
+    condition below rejects a stale day outright.
+
+    The _advance_marker idiom, extended to carry the lists: monotonic on
+    rotation_day, so a double-fired run keeps the first draw and cannot shift a
+    good previous slot out from under the board. Test runs never call this --
+    rotation state, like last_posted_day, only advances on a real run.
     """
     try:
         table().update_item(
             Key={'PK': GUILDS_PK, 'SK': config_sk(guild_id)},
-            UpdateExpression='SET rotation_day = :d, rotation_games = :g',
+            UpdateExpression='SET rotation_day = :d, rotation_games = :g, '
+                             'rotation_prev_day = :pd, rotation_prev_games = :pg',
             ConditionExpression='attribute_exists(SK) AND '
                                 '(attribute_not_exists(rotation_day) OR rotation_day < :d)',
-            ExpressionAttributeValues={':d': day, ':g': [str(k) for k in game_keys]},
+            ExpressionAttributeValues={
+                ':d': day, ':g': [str(k) for k in game_keys],
+                # No outgoing draw (first ever, or a gap) stores NULL, which
+                # reads back as the field default and matches no day.
+                ':pd': prev_day or None,
+                ':pg': [str(k) for k in prev_games or ()],
+            },
         )
     except ClientError as e:
         if e.response['Error']['Code'] != 'ConditionalCheckFailedException':

@@ -20,7 +20,7 @@ there is the whole onboarding — no redeploy, no config file.
 | Surface | What it is |
 |---|---|
 | **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and streak flair — off-rotation plays listed below the scored games for zero points. |
-| **Today's games** | Posted right under the board while rotation is on (the default): the rotating subset of games that scores today, as play links. |
+| **Today's games** | Posted at the server's day start while rotation is on (the default): the rotating subset of games that scores today, as play links. Lands right under the board when the board posts at that same hour. |
 | **Now Playing sticky** | One message kept at the bottom of the input channel showing who has played what today, with **Play**, **Scores** and **Yesterday** buttons. |
 | **`/play`** | A private list of today's games as buttons, linking straight to each puzzle, ordered by what the server is actually playing. With rotation on it lists the games that score today; **`/play all:true`** lists every tracked game. |
 | **`/suggest`** | Anyone can propose a game the bot doesn't track yet. |
@@ -134,11 +134,14 @@ Defaults in parentheses.
   off-rotation plays below the scored games for zero points, or leaves them off the
   board — either way they're archived, keep streaks alive, and still count toward
   rotating in. The
-  day's set is announced under the board and is what `/play` and the sticky's Play
-  button list — `/play all:true` shows everything. The rotation rides the daily post:
-  it draws and announces when the board goes out.
+  day's set is what `/play` and the sticky's Play button list — `/play all:true` shows
+  everything. It is drawn and announced at the server's **day start**, so a server that
+  posts its board later still gets today's games first thing; when the two hours match
+  (the default) the announcement lands right under the board.
 - **`/setup daily enabled:false`** — pause the daily post. The sticky drops its
   Yesterday link while paused, since whatever board is still in the channel is stale.
+  Today's games keep being drawn and announced — pausing the board doesn't pause the
+  rotation.
 - **`/setup sticky enabled:false`** — remove the sticky.
 - **`/setup embeds suppress:false`** — stop stripping link previews off posted results
   (`true` by default). Stripping happens as the sticky counts each result, so it needs
@@ -192,8 +195,9 @@ Plus one DynamoDB table (`daily-game-tracker`, provisioned 5/5), an IAM role and
 per function, 30-day log retention, and the interaction lambda's Function URL. All in
 `us-east-1`, all inside the AWS always-free tier. Full design: [`docs/SPEC.md`](docs/SPEC.md).
 
-The daily rule is **hourly**, not daily — each server posts when its own local
-`post_hour` comes around, and the handler decides who is due on each tick.
+The daily rule is **hourly**, not daily — the handler decides who is due on each tick, so
+each server draws today's games when its own day start comes around and posts its board
+when its own `post_hour` does.
 
 ## 0. Prerequisites
 
