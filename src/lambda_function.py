@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from game_parser import (format_scoreboard_components, make_timestamp_checker,
                          build_games, points_per_game, compute_puzzle_numbers,
                          next_rotation, game_sort_key, game_link_button,
-                         GAME_SPECS, spec_enabled)
+                         scoring_players, GAME_SPECS, spec_enabled)
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date,
     parse_results, build_avatar_pool, build_name_map, is_scoreboard_message,
@@ -247,12 +247,13 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
     # boundary, a later day) is left alone rather than re-announced hourly.
     rotation_due = (cfg['rotation_enabled']
                     and (is_test or today_day > (cfg['rotation_day'] or '')))
-    # Swap mode earns membership from the closed day's participation, so that
-    # stage wants the same parse the board does -- but only when a rotation it
-    # can seed from actually governed that day; any other draw is a fresh
-    # sample and needs no message data at all.
-    needs_counts = (rotation_due and cfg['rotation_mode'] == 'swap'
-                    and cfg['rotation_day'] == day and bool(cfg['rotation_games']))
+    # The rotation stage wants the same parse the board does, for two reasons.
+    # Swap mode earns membership from the closed day's participation -- but only
+    # when a rotation it can seed from actually governed that day. Every mode
+    # needs it for the announcement's streak ordering: the aggregates are not
+    # folded through the closed day until the board runs at post hour, which is
+    # hours after this tick, so the parse is the only record of that day here.
+    needs_counts = rotation_due
     if not board_due and not rotation_due:
         return blocked
 
@@ -322,11 +323,26 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
                    else cfg['output_channel_id'] or cfg['input_channel_id'])
         todays_games = build_games(compute_puzzle_numbers(today), cfg['game_overrides'])
         if streaks is None:
-            # No board this tick, so no streak bundle to reuse. display_streak
-            # folds the played flag itself, so gathering for today with no plays
-            # yet prints the same flair the board's bundle would.
-            streaks = gather_streaks(gid, today, {}, todays_games,
+            # No board this tick, so no bundle to reuse: build the one the board
+            # will build at post hour. It has to be the CLOSED day's bundle, not
+            # today's. The fold runs at post hour, hours after this, so the
+            # aggregates here still stop at the day before the closed one --
+            # gathering for today would ask display_streak "alive through
+            # yesterday?" of a table that has never seen yesterday and get 0 for
+            # every game, collapsing the streak tier of the ordering below.
+            # Gathering for `scored` lets it fold that day in from the parse.
+            streaks = gather_streaks(gid, scored, results, todays_games,
                                      cfg['minimum_players'], include_players=False)
+            if streaks:
+                # ...then re-base that bundle from the closed day onto today. A
+                # streak alive through the day BEFORE it still reads live there
+                # (it was still extendable then), but nothing that went unscored
+                # on the closed day carries a streak into this one.
+                scorers = scoring_players(results, todays_games, cfg['minimum_players'])
+                streaks['games'] = {k: (v if scorers.get(k) else 0)
+                                    for k, v in streaks['games'].items()}
+                if not any(scorers.values()):
+                    streaks['server'] = 0
         rotation_note = settle_rotation(cfg, is_test, channel, day, today_day,
                                         results, todays_games, streaks)
         if rotation_note:
