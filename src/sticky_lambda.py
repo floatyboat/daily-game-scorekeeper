@@ -162,7 +162,8 @@ def update_sticky(channel_id, channel_messages, results, server_streak=0,
     stale behind a freshly posted scoreboard, or a shortcut row the day's plays
     have since reordered (or an admin has resized via /setup sticky).
 
-    link_yesterday=False (guild has the daily scoreboard disabled) drops the
+    link_yesterday=False (the guild has the daily scoreboard disabled, or the
+    board covering the day before this one has not posted yet) drops the
     Yesterday button even when an old board is still in the channel — the
     freshest link would only ever point at a stale day.
 
@@ -223,17 +224,17 @@ DEADLINE_MARGIN_MS = 8000
 def run_guild(cfg, force=False):
     """One guild's sticky pass: parse today's plays and settle the sticky.
 
-    Active window: [post hour, midnight) guild-local. The daily scoreboard
-    posts at the guild's post hour and summarizes yesterday; before that point
-    we'd be tracking the previous day's already-finalized leaders, so stay
-    dormant until it has had its chance. force (test runs) bypasses the guard.
+    Runs around the clock. The day it tracks is whichever one reference_date
+    says is open, so the sticky rolls over at the guild's DAY START -- back to
+    "No scores yet today", then counting the new day live -- rather than
+    waiting for the board hours later at post hour. A guild whose post hour is
+    later therefore has a window each morning where the day has rolled but
+    yesterday's board has not posted yet; the only thing in the sticky that
+    depends on the board is the Yesterday link, and it gates itself below.
     """
     channel_id = cfg['input_channel_id']
     tz = ZoneInfo(cfg['timezone'])
     now_local = datetime.now(tz)
-
-    if not force and now_local.hour < store.post_hour(cfg):
-        return 'outside active window'
 
     today = reference_date(now_local, tz, cfg['hours_after_midnight'])
 
@@ -246,7 +247,8 @@ def run_guild(cfg, force=False):
     # deletion of an older message, a changed avatar) still heals within
     # minutes rather than waiting on the next new message.
     gid = cfg['guild_id']
-    fingerprint = f"{store.day_str(today)} {json.dumps(cfg, sort_keys=True, default=str)}"
+    today_day = store.day_str(today)
+    fingerprint = f"{today_day} {json.dumps(cfg, sort_keys=True, default=str)}"
     state = None if force else _probe_state.get(gid)
     if state and state['fingerprint'] == fingerprint \
             and state['expires'] > time.monotonic():
@@ -255,7 +257,7 @@ def run_guild(cfg, force=False):
             return 'unchanged (probe)'
     _probe_state.pop(gid, None)
 
-    rotation = store.current_rotation(cfg, store.day_str(today))
+    rotation = store.current_rotation(cfg, today_day)
     puzzle_numbers = compute_puzzle_numbers(today)
     games = build_games(puzzle_numbers, cfg['game_overrides'])
     checker = make_timestamp_checker(today, tz, cfg['hours_after_midnight'],
@@ -298,8 +300,16 @@ def run_guild(cfg, force=False):
         row_games = games if rot is None else [g for g in games if g.key in rot]
         game_buttons = top_game_buttons(row_games, results, streaks, cfg['sticky_games'])
 
+    # Yesterday links the newest board in the channel, which only covers the
+    # day before this one once today's board has posted -- between day start
+    # and post hour it is still the board for the day before THAT. Drop the
+    # button rather than mislabel it; the next pass picks it up, since
+    # last_posted_day rides in the probe fingerprint. force (test runs) skips
+    # the check like every other timing gate.
+    posted_yesterday = (cfg['last_posted_day'] or '') >= store.prev_day_str(today_day)
+    link_yesterday = cfg['daily_enabled'] and (force or posted_yesterday)
     action = update_sticky(channel_id, messages, results, server_streak,
-                           link_yesterday=cfg['daily_enabled'],
+                           link_yesterday=link_yesterday,
                            game_buttons=game_buttons, show_more=show_more)
     if action == 'unchanged' and not force:
         # 'unchanged' guarantees messages[0] is the single, settled sticky.

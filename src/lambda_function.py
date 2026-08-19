@@ -85,10 +85,12 @@ def announce_rotation(channel_id, rotation, games, streaks):
     in the app-wide order. The buttons carry the emoji-title labels themselves,
     so the content repeats none of them.
 
-    Goes out at the guild's day start, which on a default config is the same
-    tick as the board and so lands directly under it; a guild whose post hour is
-    later gets this in the morning and the board later, and a guild with the
-    board off gets only this.
+    Goes out on any tick that draws the rotation, and on any tick that posts
+    the board -- the post that notifies the channel, so the list stands next to
+    it rather than being hours stale by the time anyone is looking. A guild
+    whose post hour is later than its day start therefore gets it twice a day;
+    one posting at day start (the default, post_hour falling back to
+    hours_after_midnight) has both on one tick and gets it once.
 
     Deliberately a plain message, NOT flag 32768: is_scoreboard_message() keys
     on that flag, so a components-v2 follow-up would hijack the sticky's
@@ -158,56 +160,64 @@ def post_blocked(cfg, is_test, now_local, day):
     return None
 
 
-def settle_rotation(cfg, is_test, channel, day, today_day, results, games, streaks):
-    """Draw, persist and announce today's rotation if it is due. Summary string,
-    empty when there was nothing to do.
+def draw_rotation(cfg, is_test, day, today_day, results):
+    """Draw and persist today's rotation. The list, or None with nothing to
+    draw from.
 
     The day-start stage, deliberately independent of the board: it is due as
     soon as the scoring day has rolled over past the stored draw, so the hourly
     tick lands it at each guild's own day start -- hours before the board for a
     guild whose post hour is later, and at all for a guild that has the board
-    switched off. `day` (the closed day) seeds swap mode: its participation is
-    the earn-in signal, and its list seeds the swap only when that list actually
-    governed it.
+    switched off. On a tick carrying both stages it runs FIRST, so the day's
+    games are settled whatever then happens to the post.
 
-    Persist first, then announce. A crash between the two costs an
-    announcement; the reverse order would let the next tick draw a DIFFERENT
-    set an hour into a day whose games have already been listed, which is the
-    worse failure. Test runs announce but never persist, so repeated test runs
-    leave real rotation state alone (like last_posted_day, it only advances on
-    a real run).
+    `day` (the closed day) seeds swap mode: its participation is the earn-in
+    signal, and its list seeds the swap only when that list actually governed
+    it.
+
+    Persists here; the announcement follows in process_guild, after the board.
+    A crash between the two costs that announcement -- recoverable, since any
+    later tick that posts the board announces the stored list -- where the
+    reverse order would let the next tick draw a DIFFERENT set an hour into a
+    day whose games have already been listed. Test runs never persist, so
+    repeated test runs leave real rotation state alone (like last_posted_day,
+    it only advances on a real run).
     """
-    if not cfg['rotation_enabled']:
-        return ''
-    drawn = cfg['rotation_day'] == today_day
-    if drawn and not is_test:
-        return ''
-
     enabled_keys = [s.key for s in GAME_SPECS if spec_enabled(s, cfg['game_overrides'])]
-    if drawn:
-        # Test run over a day already drawn for real: show the live set rather
-        # than inventing one, and (below) never write it back.
-        rotation = [k for k in cfg['rotation_games'] if k in set(enabled_keys)]
-    else:
-        prev = cfg['rotation_games'] if cfg['rotation_day'] == day else None
-        rotation = next_rotation(enabled_keys, cfg['rotation_count'], cfg['rotation_mode'],
-                                 cfg['rotation_min_players'], prev, results or {})
+    prev = cfg['rotation_games'] if cfg['rotation_day'] == day else None
+    rotation = next_rotation(enabled_keys, cfg['rotation_count'], cfg['rotation_mode'],
+                             cfg['rotation_min_players'], prev, results or {})
     if not rotation:
-        return 'rotation: no games to draw from'
-
+        return None
     if not is_test:
         store.set_rotation(cfg['guild_id'], today_day, rotation,
                            cfg['rotation_day'], cfg['rotation_games'])
-    announce_rotation(channel, rotation, games, streaks)
-    return f'rotation {today_day}: {", ".join(rotation)}'
+    return rotation
+
+
+def stored_rotation(cfg, today_day):
+    """Today's already-drawn list, filtered to the games still enabled, or None
+    when the stored draw is not today's (or has nothing left in it).
+
+    What a tick that did not draw announces: the board's tick at a later post
+    hour, and a test run over a day already drawn for real -- the live set
+    rather than an invented one.
+    """
+    if cfg['rotation_day'] != today_day:
+        return None
+    enabled = {s.key for s in GAME_SPECS if spec_enabled(s, cfg['game_overrides'])}
+    return [k for k in cfg['rotation_games'] if k in enabled] or None
 
 
 def process_guild(cfg, is_test, test_channel_id, days_back=1):
     """Post one guild's daily scoreboard if it is due, then settle its rotation.
 
     Two stages on one hourly tick, sharing a single parse of the closed day:
-    the board (post_blocked: post hour, last_posted_day) and the rotation draw
-    (settle_rotation: day start, independent of the board). Test runs skip the
+    the rotation draw (draw_rotation: day start, independent of the board) and
+    the board (post_blocked: post hour, last_posted_day). The draw goes first,
+    and "Today's games" is announced after both -- on any tick that drew, and
+    on any tick that posted the board, so a guild whose post hour is later gets
+    it at day start and again under the scoreboard. Test runs skip the
     board's timing gates, post to the test channel, never pin, and write
     nothing at all: not last_posted_day, not the rotation, not the day archive.
     They read the real table and parse the real input channel, so what they
@@ -244,9 +254,11 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
     board_due = blocked is None
     # Monotonic in the day, exactly like set_rotation's condition: a stored draw
     # that already names today (or, after a timezone or day-start edit moved the
-    # boundary, a later day) is left alone rather than re-announced hourly.
-    rotation_due = (cfg['rotation_enabled']
-                    and (is_test or today_day > (cfg['rotation_day'] or '')))
+    # boundary, a later day) is left alone rather than redrawn hourly.
+    draw_due = cfg['rotation_enabled'] and today_day > (cfg['rotation_day'] or '')
+    # Test runs settle the rotation whatever the clock says: a throwaway draw on
+    # a fresh day, the live set otherwise, and neither is ever written.
+    rotation_due = draw_due or (cfg['rotation_enabled'] and is_test)
     # The rotation stage wants the same parse the board does, for two reasons.
     # Swap mode earns membership from the closed day's participation -- but only
     # when a rotation it can seed from actually governed that day. Every mode
@@ -289,6 +301,19 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
         note(f'parsed {sum(len(v) for v in results.values())} game results')
 
     parts, response = [], None
+
+    # Day start first: the draw lands and persists before the board goes out,
+    # so a post that fails can never cost the day its rotation. Announcing is a
+    # separate step below -- it has to sit UNDER the board in the channel, and
+    # it wants the board's streak bundle when there is one.
+    rotation_today = None
+    if draw_due:
+        rotation_today = draw_rotation(cfg, is_test, day, today_day, results)
+        drew = (f'rotation {today_day}: {", ".join(rotation_today)}' if rotation_today
+                else 'rotation: no games to draw from')
+        note(drew)
+        parts.append(drew)
+
     if board_due:
         games = build_games(puzzle_numbers, cfg['game_overrides'])
         # Two independent reasons to hold the write back: a test run must leave
@@ -314,7 +339,18 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
     else:
         parts.append(blocked)
 
-    if rotation_due:
+    # Two triggers, one per thing worth standing next to: the draw itself, and
+    # the board -- the post that actually notifies the channel. A default config
+    # puts both on one tick and so gets one post; a later post hour gets the
+    # list at day start and again under the board. A board that never posts
+    # (empty input channel, a marker healed from a manual post) costs only the
+    # second, never the day-start one.
+    announce_due = (cfg['rotation_enabled']
+                    and (draw_due or response is not None or is_test))
+    todays_rotation = (rotation_today or stored_rotation(cfg, today_day)) \
+        if announce_due else None
+
+    if todays_rotation:
         # Today's games, built for today: only the emoji, title and (static)
         # URL reach the buttons, but the day the header is about is this one.
         # Falls back to the input channel so a guild with the board off still
@@ -333,21 +369,27 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
             # Gathering for `scored` lets it fold that day in from the parse.
             streaks = gather_streaks(gid, scored, results, todays_games,
                                      cfg['minimum_players'], include_players=False)
-            if streaks:
-                # ...then re-base that bundle from the closed day onto today. A
-                # streak alive through the day BEFORE it still reads live there
-                # (it was still extendable then), but nothing that went unscored
-                # on the closed day carries a streak into this one.
-                scorers = scoring_players(results, todays_games, cfg['minimum_players'])
-                streaks['games'] = {k: (v if scorers.get(k) else 0)
-                                    for k, v in streaks['games'].items()}
-                if not any(scorers.values()):
-                    streaks['server'] = 0
-        rotation_note = settle_rotation(cfg, is_test, channel, day, today_day,
-                                        results, todays_games, streaks)
-        if rotation_note:
-            note(rotation_note)
-            parts.append(rotation_note)
+        if streaks:
+            # ...then re-base that bundle from the closed day onto today. A
+            # streak alive through the day BEFORE it still reads live there
+            # (it was still extendable then), but nothing that went unscored
+            # on the closed day carries a streak into this one. The board's own
+            # bundle, on a tick that posted one, is gathered for that same
+            # closed day, so it needs the identical re-basing -- hence a copy
+            # here rather than a branch above.
+            scorers = scoring_players(results, todays_games, cfg['minimum_players'])
+            streaks = dict(streaks)
+            streaks['games'] = {k: (v if scorers.get(k) else 0)
+                                for k, v in streaks['games'].items()}
+            if not any(scorers.values()):
+                streaks['server'] = 0
+        announce_rotation(channel, todays_rotation, todays_games, streaks)
+        # The draw line above already lists the games on a tick that drew them.
+        announced = f'announced {today_day}'
+        if not draw_due:
+            announced += f': {", ".join(todays_rotation)}'
+        note(announced)
+        parts.append(announced)
 
     # Pinning last keeps Discord's "pinned a message" notice below the
     # announcement, so the board and today's games stay adjacent.

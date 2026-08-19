@@ -270,11 +270,11 @@ def setup_options(group):
 
 
 def post_hour(cfg):
-    """Guild-local hour the daily board posts and the sticky wakes.
+    """Guild-local hour the daily board posts, and with it "Today's games".
 
     Unset means "as soon as the scoring day has rolled over", i.e. the day-start
-    hour -- written down here once instead of in each of the four callers that
-    used to spell out the fallback.
+    hour -- written down here once instead of in each of the callers that used
+    to spell out the fallback.
     """
     return cfg['hours_after_midnight'] if cfg['post_hour'] is None else cfg['post_hour']
 
