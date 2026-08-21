@@ -40,6 +40,11 @@ from boto3.dynamodb.conditions import Key
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+# game_parser imports nothing local, so this stays a leaf-ward dependency --
+# scoreboard already pulls in both. Only the game count is needed here, to
+# bound the rotation size against the games that actually exist.
+from game_parser import GAME_SPECS
+
 TABLE_NAME = os.getenv('TABLE_NAME') or 'daily-game-tracker'
 AWS_REGION = os.getenv('AWS_REGION') or 'us-east-1'
 
@@ -54,6 +59,17 @@ GAME_AGG_PREFIX = 'AGG#GAME#'
 #
 # Discord option types, for the fields /setup exposes as slash-command options.
 OPT_SUB_COMMAND, OPT_STRING, OPT_INTEGER, OPT_BOOLEAN, OPT_USER, OPT_CHANNEL = 1, 3, 4, 5, 6, 7
+
+# Discord's per-channel pin ceiling, and the page the pins endpoint hands back.
+# A pin past the ceiling is refused with 400 / code 30003. Declared here, the
+# root module, so the daily lambda's cap arithmetic and the pin_keep_days bound
+# below cannot drift apart.
+#
+# Keep the two distinct: the legacy GET /channels/{id}/pins truncates its
+# response at PIN_PAGE and sends no has_more, so it reports a channel of any
+# size as holding exactly 50 pins.
+PIN_CAP = 250
+PIN_PAGE = 50
 
 
 @dataclass(frozen=True)
@@ -72,8 +88,10 @@ class ConfigField:
         option    slash-command option name when it differs from `name`
         opt_type  Discord option type
         describe  option description shown in Discord's picker
-        minimum   option bounds Discord enforces before the interaction is sent
-        maximum
+        minimum   value bounds: registered as Discord's min_value/max_value so
+        maximum   its picker rejects out-of-range input, and re-applied by
+                  apply() so nothing outside them can reach the table whatever
+                  the picker let through
         choices   (label, value) pairs registered as the option's fixed menu
 
     Same bargain as GameSpec in game_parser.py: adding a setting is one entry
@@ -96,6 +114,29 @@ class ConfigField:
     @property
     def option_name(self):
         return self.option or self.name
+
+    def apply(self, value):
+        """Incoming value -> what callers get: coerced, then held inside any
+        declared bounds.
+
+        register_commands turns minimum/maximum into Discord's min_value and
+        max_value, but that only constrains the registration currently live.
+        A bound tightened since register_commands last ran, a client holding a
+        cached command, or a value written straight to the table all arrive
+        unchecked -- so the bound is enforced where it is declared rather than
+        trusted to whatever produced the value. Both the /setup write path and
+        the config read path go through here, which also repairs an
+        out-of-range value already sitting in the table.
+        """
+        if value is None:
+            return None
+        if self.coerce:
+            value = self.coerce(value)
+        if self.minimum is not None and value < self.minimum:
+            return self.minimum
+        if self.maximum is not None and value > self.maximum:
+            return self.maximum
+        return value
 
 
 def _overrides(value):
@@ -157,6 +198,12 @@ CONFIG_FIELDS = [
     ConfigField('hundreds_of_messages', default=1, coerce=int, group='limits',
                 option='message_volume', minimum=1, maximum=8,
                 describe='Hundreds of messages/day in the input channel (default 1)'),
+    # The channel's pin ceiling is shared with every other pin in it, so the
+    # daily board needs a window rather than an ever-growing stack. Bounded by
+    # PIN_CAP because a window wider than the channel can hold is meaningless.
+    ConfigField('pin_keep_days', default=30, coerce=int, group='limits',
+                option='pin_days', minimum=1, maximum=PIN_CAP,
+                describe=f'Days of scoreboards kept pinned, 1-{PIN_CAP} (default 30)'),
 
     # Toggles (/setup daily, /setup sticky, /setup embeds) and the game menu
     # (/setup games). sticky_games rides along on the sticky toggle as an
@@ -174,9 +221,12 @@ CONFIG_FIELDS = [
     # sticky_games rides on /setup sticky. rotation_min_players is the swap
     # signal, deliberately separate from the minimum_players display gate.
     ConfigField('rotation_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
+    # Bounded by the game table itself rather than a fixed number: adding a
+    # GameSpec widens the option with it, and a rotation wider than the roster
+    # is unaskable (next_rotation would only min() it back down anyway).
     ConfigField('rotation_count', default=3, coerce=int, group='rotation',
-                option='games', minimum=1, maximum=10,
-                describe='How many games are scored each day (default 3)'),
+                option='games', minimum=1, maximum=len(GAME_SPECS),
+                describe=f'How many games are scored each day, 1-{len(GAME_SPECS)} (default 3)'),
     ConfigField('rotation_mode', default='swap', coerce=_choice(ROTATION_MODES, 'swap'),
                 group='rotation', option='mode', opt_type=OPT_STRING,
                 choices=ROTATION_MODES,
@@ -553,7 +603,7 @@ def _effective_config(item):
         value = item.get(f.name)
         if value is None:
             value = f.default
-        cfg[f.name] = f.coerce(value) if (f.coerce and value is not None) else value
+        cfg[f.name] = f.apply(value)
     cfg['guild_id'] = str(item.get('guild_id') or '') or None
     return cfg
 

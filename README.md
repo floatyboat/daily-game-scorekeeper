@@ -1,4 +1,4 @@
-### ➕ [Add the bot to your Discord server](https://discord.com/oauth2/authorize?client_id=1425892168471548006&scope=bot+applications.commands&permissions=76800)
+### ➕ [Add the bot to your Discord server](https://discord.com/oauth2/authorize?client_id=1425892168471548006&scope=bot+applications.commands&permissions=2251799813762048)
 
 Then run `/setup channel` in the server — that's the whole setup.
 
@@ -66,8 +66,8 @@ as *images* are ignored until a server opts in — see
 
 ## 1. Invite it
 
-Open the [invite link](https://discord.com/oauth2/authorize?client_id=1425892168471548006&scope=bot+applications.commands&permissions=76800),
-choose your server (you need **Manage Server** there) and authorize. It asks for four
+Open the [invite link](https://discord.com/oauth2/authorize?client_id=1425892168471548006&scope=bot+applications.commands&permissions=2251799813762048),
+choose your server (you need **Manage Server** there) and authorize. It asks for five
 permissions and nothing else:
 
 | Permission | What it's for |
@@ -75,15 +75,20 @@ permissions and nothing else:
 | View Channel | Seeing the input and output channels |
 | Read Message History | Parsing results posted while it wasn't looking |
 | Send Messages | Posting the scoreboard and the sticky |
-| Manage Messages | Pinning the daily board, stripping link previews off the sticky |
+| Manage Messages | Stripping link previews off the sticky, collapsing duplicate stickies |
+| Pin Messages | Pinning the daily board, and unpinning it once it ages out |
+
+Pin Messages is its own permission, not part of Manage Messages: Discord split it out
+with the current pins API, so a server invited on the older four-permission integer
+(`76800`) posts its board fine and then fails the pin with `403 / 50013`.
 
 Running your own instance? Build the link from your own application on the **OAuth2**
 tab of the [Developer Portal](https://discord.com/developers/applications) — scopes
-`bot` and `applications.commands`, the four permissions above, which is the integer
-`76800`:
+`bot` and `applications.commands`, the five permissions above, which is the integer
+`2251799813762048`:
 
 ```
-https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot+applications.commands&permissions=76800
+https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot+applications.commands&permissions=2251799813762048
 ```
 
 The bot has to be running somewhere before its slash commands do anything — see

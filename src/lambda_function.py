@@ -22,6 +22,7 @@ import store
 # Global bot identity only -- every per-server setting (channels, timezone,
 # schedule, games) lives in the guild's config item and is managed by /setup.
 DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
 
 _session = make_session(DISCORD_BOT_TOKEN)
 
@@ -39,9 +40,92 @@ def send_message(channel_id, components):
     return response.json()
 
 
+def list_pins(channel_id):
+    """Every pinned message in the channel, newest first.
+
+    Follows has_more: the endpoint pages at PIN_PAGE, a fifth of what a full
+    channel holds, so stopping at the first page reports 50 pins for a channel
+    of any size -- and the cap arithmetic in rotate_pin is only as good as this
+    count. Paged on pinned_at, which is what `before` takes here; it is not a
+    message snowflake.
+
+    Bounded rather than while-True: a has_more that never clears would
+    otherwise spin against the API for the whole invocation.
+    """
+    pins, before = [], None
+    for _ in range(store.PIN_CAP // store.PIN_PAGE + 2):
+        params = {'limit': store.PIN_PAGE}
+        if before:
+            params['before'] = before
+        response = _session.get(
+            f'{DISCORD_API_BASE}/channels/{channel_id}/messages/pins',
+            params=params)
+        response.raise_for_status()
+        page = response.json()
+        items = page.get('items', [])
+        pins += [item['message'] for item in items]
+        if not items or not page.get('has_more'):
+            break
+        before = items[-1]['pinned_at']
+    return pins
+
+
 def pin_message(channel_id, message_id):
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages/pins/{message_id}'
-    _session.put(url)
+    _session.put(url).raise_for_status()
+
+
+def unpin_message(channel_id, message_id):
+    url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages/pins/{message_id}'
+    _session.delete(url).raise_for_status()
+
+
+def _pin_error(e):
+    """Discord puts the useful part (e.g. 30003 max pins, 50013 missing
+    Pin Messages) in the body, not the status line."""
+    body = getattr(getattr(e, 'response', None), 'text', '') or ''
+    return f'{type(e).__name__}: {e} {body[:160]}'.strip()
+
+
+def rotate_pin(channel_id, message_id, keep, bot_id=None):
+    """Pin the new board, keeping at most `keep` of the bot's boards pinned.
+
+    An unmanaged daily pin works until the channel reaches PIN_CAP and then
+    fails for good, so the stale end is pruned BEFORE the pin -- the slot has
+    to be free already, since Discord refuses the pin rather than evicting
+    anything. Note the channel's ceiling is shared with every other pin in it,
+    so the bot's own boards are never the whole story.
+
+    Only this bot's own scoreboards are ever unpinned. Anyone else's pin is
+    left alone and merely counted against the cap, so a channel carrying
+    foreign pins gives up window rather than having them deleted; if they fill
+    it outright there is no slot to free and the pin below fails loudly.
+
+    Never raises, like persist_results: a pin is cosmetic, and letting it
+    propagate would skip the set_last_posted marker the caller writes next --
+    turning a missing pin into a re-posted board on the following tick.
+    """
+    pruned = 0
+    try:
+        pins = list_pins(channel_id)
+        ours = [m for m in pins if is_scoreboard_message(m, bot_id or DISCORD_BOT_ID)]
+        # Room for the incoming pin under both limits: the guild's window, and
+        # what the hard cap leaves once foreign pins have taken their share.
+        room = min(keep - 1, store.PIN_CAP - 1 - (len(pins) - len(ours)))
+        for msg in (ours[room:] if room >= 0 else []):
+            unpin_message(channel_id, msg['id'])
+            pruned += 1
+        prune = f'{pruned} unpinned, {min(len(ours), max(room, 0)) + 1}/{keep} kept'
+    except Exception as e:
+        # Pruning is maintenance; the pin below is the point. Report the
+        # failure but still make the attempt -- it succeeds whenever the
+        # channel had room anyway, and next run retries the prune.
+        prune = f'prune FAILED after {pruned}: {_pin_error(e)}'
+    try:
+        pin_message(channel_id, message_id)
+        return f'pinned ({prune})'
+    except Exception as e:
+        return f'pin: FAILED {_pin_error(e)} ({prune})'
 
 
 def persist_results(cfg, results, puzzle_numbers, ref_date, games, rotation=None,
@@ -398,7 +482,8 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
     # Pinning last keeps Discord's "pinned a message" notice below the
     # announcement, so the board and today's games stay adjacent.
     if response and not is_test:
-        pin_message(cfg['output_channel_id'], response['id'])
+        note(rotate_pin(cfg['output_channel_id'], response['id'],
+                        cfg['pin_keep_days']))
         store.set_last_posted(gid, day)
     return '; '.join(parts)
 

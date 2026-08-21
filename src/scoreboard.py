@@ -332,14 +332,24 @@ def build_avatar_pool(session, messages, checker, guild_id=None):
     return pool
 
 
-def is_scoreboard_message(msg):
+def is_scoreboard_message(msg, bot_id=None):
     """True for posted scoreboards (v2 components flag set).
 
     Daily uses this for double-fire dedup. The sticky's posts don't set the
     v2 flag, so they don't get confused with prior scoreboards.
+
+    bot_id narrows the match to this bot's own boards, the same way
+    is_sticky_message does. The pin pruner needs that stricter test because it
+    unpins what it matches: another app's v2 post in the channel must not
+    qualify. The dedup callers pass nothing and keep the flag-only behaviour --
+    a board is a board there, whoever posted it.
     """
     flags = msg.get('flags') or 0
-    return bool(flags & FLAG_IS_COMPONENTS_V2)
+    if not flags & FLAG_IS_COMPONENTS_V2:
+        return False
+    if bot_id:
+        return (msg.get('author') or {}).get('id') == str(bot_id)
+    return True
 
 
 def is_sticky_message(msg, bot_id=None):

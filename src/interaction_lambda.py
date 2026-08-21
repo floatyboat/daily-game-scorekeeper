@@ -611,7 +611,8 @@ def config_summary(cfg):
         f"Timezone `{cfg['timezone']}` · day starts {cfg['hours_after_midnight']:02d}:00 · "
         f"posts {post_hour:02d}:00 · window {cfg['time_window_hours']}h",
         f"Minimum players {cfg['minimum_players']} · "
-        f"volume ~{cfg['hundreds_of_messages'] * 100} msgs/day",
+        f"volume ~{cfg['hundreds_of_messages'] * 100} msgs/day · "
+        f"pins {cfg['pin_keep_days']} days",
     ]
     enabled = [s for s in GAME_SPECS if spec_enabled(s, cfg['game_overrides'])]
     disabled = [s for s in GAME_SPECS if not spec_enabled(s, cfg['game_overrides'])]
@@ -641,12 +642,16 @@ def collect_updates(group, args):
     registers the options from, so an option name cannot exist on one side only
     -- the old hand-written mapping silently ignored anything that drifted.
     Absent options are left out, so a subcommand only writes what was passed.
+
+    field.apply, not field.coerce: it also holds the value inside the field's
+    declared bounds, which Discord's picker enforces only for the registration
+    currently live.
     """
     updates = {}
     for field in store.setup_options(group):
         value = args.get(field.option_name)
         if value is not None:
-            updates[field.name] = field.coerce(value) if field.coerce else value
+            updates[field.name] = field.apply(value)
     return updates
 
 
@@ -757,7 +762,8 @@ def handle_setup(body, guild_id):
         store.update_config(guild_id, updates)
         merged = {**cfg, **updates}
         return _ephemeral(f"✅ Limits updated: minimum players {merged['minimum_players']}, "
-                          f"volume ~{merged['hundreds_of_messages'] * 100} msgs/day.")
+                          f"volume ~{merged['hundreds_of_messages'] * 100} msgs/day, "
+                          f"pinning {merged['pin_keep_days']} days of scoreboards.")
 
     # 'show' and anything unrecognized fall back to the summary.
     return _ephemeral(config_summary(cfg))
