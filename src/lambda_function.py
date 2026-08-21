@@ -64,9 +64,13 @@ def persist_results(cfg, results, puzzle_numbers, ref_date, games, rotation=None
     """
     try:
         day = store.day_str(ref_date)
-        # Doubles as the streak-eligibility signal: finalize_day counts a play
-        # only where points landed.
-        points_by_game = points_per_game(results, games, cfg['minimum_players'])
+        # Every enabled game is scored and frozen, off-rotation ones included
+        # -- the rotation narrows the board, not the archive. It does set the
+        # scale its own games freeze on, so what the item stores for them is
+        # what the board printed. Doubles as the streak-eligibility signal:
+        # finalize_day counts a play only where points landed.
+        points_by_game = points_per_game(results, games, cfg['minimum_players'],
+                                         rotation)
         if not write:
             n_scored = sum(1 for pts in points_by_game.values() if pts)
             return f'store: dry run, would write day={day} ({n_scored} scored games)'

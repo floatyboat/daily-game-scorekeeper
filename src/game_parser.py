@@ -972,7 +972,7 @@ def match_message(msg, games, timestamp_checker, avatar_hashes=None):
     return []
 
 
-def compute_points(results, games, minimum_players=1):
+def compute_points(results, games, minimum_players=1, first_place_points=None):
     """Compute total points per user across all games.
 
     Takes the already-built games list (from build_games) rather than rebuilding
@@ -985,6 +985,18 @@ def compute_points(results, games, minimum_players=1):
     place below earns one fewer); ties differ -- tied players only get credit
     for those they actually beat, not each other. Poop scores (failed games)
     earn 0 points.
+
+    first_place_points switches to the rotation scale, which is pure
+    PLACEMENT: first place is worth first_place_points, each place below earns
+    one fewer, and the single game's turnout doesn't enter into it. Ties take
+    the best place in the group and cost the group nothing -- three players
+    tied behind the winner are all 2nd and all earn one less than the winner --
+    while the next player down skips the places the tie consumed (1,2,2,2,5),
+    so a tie is worth more here than on the per-game scale, where it pays what
+    the group's LAST place would. Every place still lands at
+    first_place_points - place + 1 >= 1 as long as first_place_points is at
+    least the field size, which rotation_points_base guarantees. Pass that for
+    it; None keeps the per-game scale.
 
     Returns {user_id: int}.
     """
@@ -1040,9 +1052,17 @@ def compute_points(results, games, minimum_players=1):
                 j += 1
 
             if not is_poop:
-                # 1 point + 1 for each player strictly below (players[j:]); tied
-                # players (players[i:j]) don't count as beaten.
-                player_points = 1 + (n - j)
+                if first_place_points is None:
+                    # Per-game scale: 1 point + 1 for each player strictly below
+                    # (players[j:]); tied players (players[i:j]) don't count as
+                    # beaten, so a tie pays what its last place would.
+                    player_points = 1 + (n - j)
+                else:
+                    # Rotation scale: placement alone. The group's place is i+1
+                    # -- the best in the tie, not the last -- and the walk
+                    # resumes at j, so the next player skips the places the tie
+                    # consumed. Poops hold their places too; they just earn 0.
+                    player_points = first_place_points - i
                 for k in range(i, j):
                     points[players[k][0]] += player_points
 
@@ -1051,14 +1071,49 @@ def compute_points(results, games, minimum_players=1):
     return dict(points)
 
 
-def points_per_game(results, games, minimum_players=1):
+def rotation_points_base(results, games, minimum_players=1):
+    """What first place is worth on a rotation day: how many players it drew.
+
+    Counts the distinct players across `games` -- pass the rotation's games --
+    so a win rides on everyone who showed up anywhere in the rotation rather
+    than on the turnout of the one game being scored. A 4-player day pays 4 for
+    first in its 2-player game just as it does in its 4-player one.
+
+    Games below minimum_players score nobody, so their players are not in the
+    pool either -- the same games the board leaves off. That also keeps the
+    pool at least as big as any scoring game's field, so no place can fall
+    below 1 point.
+
+    Poops count. A failed result is participation, the same way it already
+    counts in the per-game field it pads out (and in swap-mode earn-in).
+    """
+    players = set()
+    for game in games:
+        scores = results.get(game.key) or {}
+        if len(scores) >= minimum_players:
+            players.update(scores)
+    return len(players)
+
+
+def points_per_game(results, games, minimum_players=1, rotation=None):
     """{game_key: {user_id: points}} for every game in `games`.
 
     compute_points scores each game independently, so scoring them one at a
     time sums to exactly the totals the posted points summary shows. One helper
     so the archive, the streak fold and the live views all agree on who scored.
+
+    rotation (the day's key list, or None on an unrestricted day) puts the
+    games inside it on the rotation scale, one rotation_points_base shared
+    across them so the per-game split still sums to the board's single call.
+    Games outside it keep the per-game scale: they earn no board points at all,
+    so the day's pool is not the yardstick their frozen points belong on.
     """
-    return {g.key: compute_points(results, [g], minimum_players) for g in games}
+    rot = set(rotation) if rotation else None
+    base = (rotation_points_base(results, [g for g in games if g.key in rot],
+                                 minimum_players) if rot else None)
+    return {g.key: compute_points(results, [g], minimum_players,
+                                  base if rot and g.key in rot else None)
+            for g in games}
 
 
 def scoring_players(results, games, minimum_players=1):
@@ -1071,7 +1126,9 @@ def scoring_players(results, games, minimum_players=1):
     same games the board leaves off.
 
     The single definition of streak eligibility, shared by the finalize fold
-    (via the points it already stores) and every live view.
+    (via the points it already stores) and every live view. Which scale scored
+    the day makes no difference here: every non-poop result is worth at least 1
+    point on either, so eligibility is the same set of players either way.
     """
     return {key: {uid for uid, pts in scores.items() if pts > 0}
             for key, scores in points_per_game(results, games, minimum_players).items()}
@@ -1557,9 +1614,14 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
 
     # --- Points container (gold accent) ---
     # The one rotation-restricted compute_points call site: off-rotation games
-    # earn no points on the board, whatever the archive froze for them.
+    # earn no points on the board, whatever the archive froze for them. A
+    # rotation day also pays on its own scale -- first place in any of its
+    # games is worth the whole day's turnout -- so the games it drew are worth
+    # the same whether four players showed up for one or two.
     scored_games = games if rot is None else [g for g in games if g.key in rot]
-    points = compute_points(results, scored_games, minimum_players)
+    base = (None if rot is None
+            else rotation_points_base(results, scored_games, minimum_players))
+    points = compute_points(results, scored_games, minimum_players, base)
     points_section = format_points_summary(points, (streaks or {}).get('players_overall'))
     if points_section:
         header_children.append({"type": 10, "content": points_section.rstrip('\n')})

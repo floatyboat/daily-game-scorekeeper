@@ -179,13 +179,29 @@ afterwards; every reply from them says so.
 ## Daily rotation
 
 - On by default: each day only a drawn rotation of `rotation_count` games counts toward
-  the board — its points summary and scores section. Scoring inside the rotation is
-  unchanged (`compute_points`, the `minimum_players` display gate). A day is governed
+  the board — its points summary and scores section. A day is governed
   only when `rotation_enabled` is on and one of the two stored slots names it exactly
   with a non-empty list; feature off, state absent, stale, or empty all mean
   **unrestricted** — every surface behaves as if the feature did not exist. The first
   run after a gap (deploy day included) therefore scores unrestricted and starts the
   rotation from that morning.
+- **The rotation scale** (`game_parser.rotation_points_base`). A governed day pays out
+  on the day's turnout instead of each game's, and on **placement alone**: first place
+  in *any* rotation game is worth the number of distinct players who showed up in the
+  rotation at all, and each place below earns one fewer. A 4-player day pays 4 for a
+  win in its 2-player game exactly as in its 4-player one, so playing the quiet game
+  costs nothing. **Ties take the best place in the group** and the next player skips
+  the places it consumed — standard competition ranking (1,2,2,2,5). On a 4-pool day a
+  winner with three players tied behind them scores 4, and all three score 3; add a
+  fifth player behind them on a 5-pool day and it reads 5 / 4,4,4 / 1. This is the one
+  place the two scales disagree beyond the top value: the per-game scale pays a tie
+  what its LAST place would (credit only for players actually beaten), which is why
+  those three would score 1 there. Poops still earn 0 and still hold their places.
+  Games below `minimum_players` still score nobody and are out of the pool as well,
+  which keeps the pool ≥ any scoring game's field, so no place can drop below 1 point.
+  Poops are *in* the pool — a failed result is participation, the same rule swap-mode
+  earn-in uses. An ungoverned day keeps the per-game scale (`compute_points` with no
+  `first_place_points`), unchanged in every respect.
 - **Two slots** (`rotation_day`/`rotation_games` and `rotation_prev_day`/`rotation_prev_games`).
   Day D's draw lands at D's **start**, while the board scoring D−1 posts later that
   morning at `post_hour`, so the draw shifts the pair it displaces into the previous
@@ -216,8 +232,8 @@ afterwards; every reply from them says so.
 - **Off-rotation results.** Every enabled game is parsed, archived, and finalized on
   every day, rotation or not — real points are frozen for off-rotation games, so
   per-game, per-player, and overall streaks stay alive off-rotation, and their play
-  counts still drive earn-in. The rotation narrows only the scoring: the points
-  summary sums rotation games alone. `rotation_off_mode` is purely a **daily-board
+  counts still drive earn-in. The rotation narrows the scoring to its own games: the
+  points summary sums rotation games alone, on the rotation scale below. `rotation_off_mode` is purely a **daily-board
   display** switch — `shown` (default) renders the played off-rotation games as a
   separate zero-point section below the scored ones, `hidden` omits that section and
   changes nothing else (not the archive, not the sticky counts, not `/play all`). The
@@ -302,9 +318,12 @@ afterwards; every reply from them says so.
 After parsing yesterday's results:
 
 1. Write the `DAY#` item — plain overwrite, idempotent. Points are computed via
-   `compute_points` and **frozen into the item**, so historical rollups survive future
+   `points_per_game` and **frozen into the item**, so historical rollups survive future
    scoring-rule changes; the governing rotation is archived alongside them (see Daily
-   rotation).
+   rotation). The rotation sets the scale its own games freeze on — what the item
+   stores for them is what the board printed — while off-rotation games freeze on the
+   per-game scale, the yardstick their zero-point board section never put them on.
+   `tools/backfill.py` archives no rotation and so replays every day per-game.
 2. Update `AGG#SERVER`, each `AGG#GAME#*`, and each player's `AGG#SERVER` and `AGG#GAME#*`
    via conditional writes guarded per item on `finalized_through` (the last day folded into
    that item). A double-fire cannot double-increment, and a run that crashes halfway resumes
