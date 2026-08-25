@@ -46,8 +46,9 @@ def compute_puzzle_numbers(reference_date):
 
     Each game computes its own puzzle number from reference_date, so this only
     carries the date plus default totals for games whose total can be overridden
-    by a parsed message (bandle). match_message returns those overrides in its
-    metadata dict, which callers merge back via puzzle_numbers.update(metadata).
+    by a parsed message (bandle, minute cryptic). match_message returns those
+    overrides in its metadata dict, which callers merge back via
+    puzzle_numbers.update(metadata).
     """
     pn = {'reference_date': reference_date}
     for spec in GAME_SPECS:
@@ -488,8 +489,9 @@ class GameSpec:
     Optional:
       search    cheap pre-filter regex builder (same signature as pattern); if set,
                 it must match before the full pattern is attempted
-      total_key puzzle_numbers slot whose value overrides `total` (bandle's total
-                comes off the message); parse must emit it in its metadata
+      total_key puzzle_numbers slot whose value overrides `total` (bandle and
+                minute cryptic read their total off the message); parse must
+                emit it in its metadata
       disabled  the game's DEFAULT state: guilds start with it untracked. Admins
                 flip any game either way per guild via /setup games
                 (game_overrides in the guild config); this flag only decides
@@ -530,6 +532,25 @@ def _parse_pips(m, content):
     minutes = int(pips_match.group(1))
     seconds = int(pips_match.group(2))
     return minutes * 60 + seconds, {}
+
+
+# The hint tray the share text draws above its result line: one circle per hint
+# the puzzle offered, a pale one for each hint taken. Any colored-circle emoji
+# counts, so a change of palette doesn't cost us the count.
+_MINUTECRYPTIC_HINT = re.compile('[\u26aa\u26ab\U0001F534\U0001F535\U0001F7E0-\U0001F7E4]')
+
+
+def _parse_minutecryptic(m, content):
+    """(hints used, how many the puzzle offered) -- golf on hints, out of a per-day total.
+
+    Minute Cryptic sets its own hint count per puzzle, and the tray is the only
+    place the share text says what it was. A message without one (an older
+    share, or one retyped without the emoji) leaves the total to the spec's
+    default, the same fallback bandle takes.
+    """
+    hints = int(m.group(2))
+    available = len(_MINUTECRYPTIC_HINT.findall(m.group(1)))
+    return hints, ({'minutecryptic_total': available} if available else {})
 
 
 def _parse_gerrymandle(m, content):
@@ -767,11 +788,13 @@ GAME_SPECS = [
     ),
     GameSpec(
         key='minutecryptic', emoji='🧩', title='Minute Cryptic', metric='guesses',
-        total=0, url='https://www.minutecryptic.com',
+        total=8, total_key='minutecryptic_total', url='https://www.minutecryptic.com',
         puzzle=lambda ref: (ref - datetime(2024, 6, 26)).days + 1,
         # Scored like golf on hints used, so fewer is better and 0 is a clean
-        # solve -- the same shape as the other total=0 'guesses' games. The
-        # leading emoji on the hint line varies with par (🏆 at or under, 🏋
+        # solve. How many hints were on offer changes from puzzle to puzzle, so
+        # like bandle the total comes off the message -- group 1 is everything
+        # between the date and the count, which is where the hint tray sits.
+        # The leading emoji on the hint line varies with par (🏆 at or under, 🏋
         # over), so match the count and not the emoji.
         # The share text heads on the date, not the puzzle number, so the
         # pattern derives its own '7 August, 2026' from ref and ignores n --
@@ -779,9 +802,9 @@ GAME_SPECS = [
         pattern=lambda ref, n: re.compile(
             r'Minute Cryptic\s*[-–—]\s*'
             + re.escape(f'{ref.day} {ref.strftime("%B")}, {ref.year}')
-            + r'.*?(\d+)\s+hints?\b',
+            + r'(.*?)(\d+)\s+hints?\b',
             re.IGNORECASE | re.DOTALL),
-        parse=lambda m, c: (int(m.group(1)), {}),
+        parse=_parse_minutecryptic,
     ),
     GameSpec(
         key='gerrymandle', emoji='🗳️', title='Gerrymandle', metric='timed_win',
@@ -1248,12 +1271,16 @@ def _mmss(seconds):
 
 
 def _format_game_players(game_scores, metric, total, player_streaks=None,
-                         names=None, mention_limit=None):
+                         names=None, mention_limit=None, show_totals=True):
     """Format ranked player lines for a single game.
 
     Returns a markdown string with medal emojis, player mentions, and scores.
     player_streaks ({user_id: streak}) appends an "(xN)" marker to players whose
     streak for this game has reached the display minimum.
+
+    show_totals=False is the scoreboard's first text-budget reduction (see
+    _REDUCTIONS): scores drop the "/N" they are out of. Only the scale goes --
+    the score, the medal and the poop still render, so no line loses its result.
 
     mention_limit is the scoreboard's text-budget reduction (see _REDUCTIONS):
     None mentions everyone, PODIUM mentions only the medal ranks, 0 mentions
@@ -1270,6 +1297,11 @@ def _format_game_players(game_scores, metric, total, player_streaks=None,
         if mention_limit is not None and rank > mention_limit and name:
             return f'{_plain_name(name)}{tag}'
         return f'<@{uid}>{tag}'
+
+    # The "/N" every score with a maximum carries, and the one place the
+    # show_totals rung is spent. Games scored on an open scale (total=0) never
+    # had one.
+    out_of = f'/{total}' if show_totals and total else ''
 
     medals = ['👑', '🥈', '🥉']
     lines = ''
@@ -1352,17 +1384,15 @@ def _format_game_players(game_scores, metric, total, player_streaks=None,
             if mistakes == -1:
                 score_str = "VERT 🧗"
             elif mistakes == total:
-                score_str = f"{mistakes}/{total} ({solved} solved)"
+                score_str = f"{mistakes}{out_of} ({solved} solved)"
                 if solved == 0:
                     medal = '💩 '
             else:
-                score_str = f"{mistakes}/{total}"
+                score_str = f"{mistakes}{out_of}"
         elif metric == 'score':
             if current_score == 0:
                 medal = '💩 '
-            score_str = f"{str(current_score)}"
-            if total > 0:
-                score_str = f"{score_str}/{total}"
+            score_str = f"{current_score}{out_of}"
         elif metric == 'travle':
             tier, eff_n, hints, neg_cm = current_score
             k = -neg_cm
@@ -1381,13 +1411,10 @@ def _format_game_players(game_scores, metric, total, player_streaks=None,
                 medal = '💩 '
                 score_str = f"{raw_n} away{extra}"
         else:  # guesses
-            if total == 0:
-                score_str = f"{str(current_score)}"
-            else:
-                if current_score > total:
-                    medal = '💩 '
-                    current_score = 'X'
-                score_str = f"{str(current_score)}/{total}"
+            if total and current_score > total:
+                medal = '💩 '
+                current_score = 'X'
+            score_str = f"{current_score}{out_of}"
 
         players_str = " ".join(reversed(tied_players))
         lines += f'{medal}'
@@ -1521,8 +1548,11 @@ def over_budget(components):
 
 # How a board is rendered. The full style is what every board has always used;
 # the ladder below relaxes one field at a time when a cap is exceeded.
-_Style = namedtuple('_Style', 'separators merge_games mention_limit urls')
-_FULL_STYLE = _Style(separators=True, merge_games=False, mention_limit=None, urls=True)
+_Style = namedtuple('_Style', 'separators merge_games totals player_streaks '
+                              'mention_limit urls game_streaks')
+_FULL_STYLE = _Style(separators=True, merge_games=False, totals=True,
+                     player_streaks=True, mention_limit=None, urls=True,
+                     game_streaks=True)
 
 # (field, relaxed value, the cap it relieves), least-lossy first.
 #
@@ -1532,9 +1562,12 @@ _FULL_STYLE = _Style(separators=True, merge_games=False, mention_limit=None, url
 # untouched. So each reduction is applied only when its own cap is the one over
 # budget -- a text-heavy board keeps its separators, and a game-heavy one keeps
 # every mention. Ordered so the board gives up decoration before it gives up
-# information: dividers, then per-game structure, then pings below the podium,
-# then links, then the last pings. No rung drops a game or a player, so the
-# board stays complete however far down the ladder it goes -- a board that
+# information: dividers, then per-game structure, then the scale each score is
+# out of, then the per-player streak markers, then pings below the podium, then
+# links, then the last pings, and only at the end the game streaks -- their fire
+# suffixes and the "streak ended" callouts, which are the one thing on the board
+# a player cannot read off their own line. No rung drops a game or a player, so
+# the board stays complete however far down the ladder it goes -- a board that
 # silently omits a game is indistinguishable from one an admin turned off.
 #
 # Past the last rung the text is irreducible: a line is down to a name, a score
@@ -1546,9 +1579,12 @@ _FULL_STYLE = _Style(separators=True, merge_games=False, mention_limit=None, url
 _REDUCTIONS = (
     ('separators', False, 'components'),
     ('merge_games', True, 'components'),
+    ('totals', False, 'text'),
+    ('player_streaks', False, 'text'),
     ('mention_limit', PODIUM, 'text'),
     ('urls', False, 'text'),
     ('mention_limit', 0, 'text'),
+    ('game_streaks', False, 'text'),
 )
 
 
@@ -1620,7 +1656,8 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
     # --- Header container ---
     header_text = f"### 🧮 {title} - {reference_date.strftime('%B %d, %Y')}"
     header_children = [{"type": 10, "content": header_text}]
-    break_lines = _streak_break_lines(streaks, {g.key: g for g in games})
+    break_lines = (_streak_break_lines(streaks, {g.key: g for g in games})
+                   if style.game_streaks else [])
     break_child = ([{"type": 10, "content": "\n".join(break_lines)}]
                    if break_lines else [])
 
@@ -1642,7 +1679,8 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
     base = (None if rot is None
             else rotation_points_base(results, scored_games, minimum_players))
     points = compute_points(results, scored_games, minimum_players, base)
-    points_section = format_points_summary(points, (streaks or {}).get('players_overall'))
+    points_section = format_points_summary(
+        points, (streaks or {}).get('players_overall') if style.player_streaks else None)
     if points_section:
         header_children.append({"type": 10, "content": points_section.rstrip('\n')})
         components.append({"type": 17, "accent_color": HEADER_COLOR, "components": header_children})
@@ -1656,8 +1694,8 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
                  and len(results[g.key]) >= minimum_players
                  and (rot is None or g.key in rot)]
 
-    game_streaks = streaks['games'] if streaks else {}
-    player_streaks = streaks['players'] if streaks else {}
+    game_streaks = streaks['games'] if streaks and style.game_streaks else {}
+    player_streaks = streaks['players'] if streaks and style.player_streaks else {}
 
     def game_text(game):
         puzzle_label = _puzzle_label(game.puzzle, reference_date)
@@ -1668,7 +1706,8 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
             score_text += f" \U0001F525{streak}"
         return score_text + "\n" + _format_game_players(
             results[game.key], game.metric, game.total,
-            player_streaks.get(game.key), names, style.mention_limit).rstrip('\n')
+            player_streaks.get(game.key), names, style.mention_limit,
+            show_totals=style.totals).rstrip('\n')
 
     def game_sections(game_list):
         # Merging folds every game into one Text Display: the games read the
