@@ -42,6 +42,7 @@ and the bot picks it up.
 | Flagle | https://flagle.org | no |
 | Gerrymandle | https://gerrymandle.com | yes |
 | Globle | https://globle.org | no |
+| Krillion | https://krillion.io | yes |
 | MapTap | https://maptap.gg | yes |
 | MapTap Challenge | https://maptap.gg/adventures?gametype=challenge | no |
 | Minute Cryptic | https://www.minutecryptic.com | yes |

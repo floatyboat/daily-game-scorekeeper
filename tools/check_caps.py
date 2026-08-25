@@ -4,7 +4,7 @@ Local-only tooling (never deployed). The daily post is a single API call that
 Discord rejects outright if the board breaks either cap, and the daily lambda
 does not advance last_posted_day on failure -- so an over-budget board posts
 nothing and retries-and-fails every hour until the day rolls over. This is the
-check that keeps the 19th GameSpec, or a busy Saturday, from finding that out
+check that keeps the next GameSpec, or a busy Saturday, from finding that out
 in production. Run from the repository root:
 
     python3 tools/check_caps.py            # assert; exit 1 on any breach

@@ -640,7 +640,7 @@ def _parse_travle(m, content):
 # surfaces have Discord payload caps this list now feeds (scoreboard.py holds
 # the constants): the /setup games menu is one option per spec and tops out
 # at 25, and /play is one button per ENABLED game at 5 per row plus the Random
-# row, so it tops out at 20. 19 specs today. Past either, the fix is to split
+# row, so it tops out at 20. 20 specs today. Past either, the fix is to split
 # the response across two messages -- see the FUTURE note in scoreboard.py.
 
 GAME_SPECS = [
@@ -796,6 +796,25 @@ GAME_SPECS = [
         pattern=lambda ref, n: re.compile(rf'Gerrymandle #{n}\s+(Won|Tied|Lost)\b([^\n]*)',
                                           re.IGNORECASE),
         parse=_parse_gerrymandle,
+    ),
+    GameSpec(
+        key='krillion', emoji='🦐', title='Krillion', metric='score',
+        total=700, url='https://krillion.io',
+        puzzle=lambda ref: (ref - datetime(2026, 7, 16)).days + 1,
+        # Seven rounds, each scored by how obscure the answer was (10 for one
+        # the whole school reaches for, up to 100 for the day's gem), so the
+        # score line is a sum out of 700 and higher is better.
+        #
+        # The share text puts the score alone on the line under the heading,
+        # which is why the pattern spans the newline to reach it. That heading
+        # is also what separates a real dive from a replay: the archive and
+        # unlimited modes build the same text with a marker wedged in front of
+        # the number ('Krillion ⟲ #41', 'Krillion ∞ #41'), so requiring the '#'
+        # to follow the name directly keeps a re-run of an old puzzle off
+        # today's board.
+        pattern=lambda ref, n: re.compile(rf'Krillion #{n} 🦐\s*\n\s*(\d+)',
+                                          re.IGNORECASE),
+        parse=lambda m, c: (int(m.group(1)), {}),
     ),
 ]
 
