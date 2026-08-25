@@ -752,7 +752,7 @@ GAME_SPECS = [
         parse=lambda m, c: (float(m.group(1)), {}),
     ),
     GameSpec(
-        key='dialed_color2', emoji='🎭', title='Pop Culture Colors', metric='score',
+        key='dialed_color2', emoji='🎭', title='Color-Toon', metric='score',
         total=50, url='https://dialed.gg/color2?d=1', needs_timestamp=True,
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         pattern=lambda ref, n: re.compile(r'dialed\.gg/color2\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
@@ -855,8 +855,8 @@ def next_rotation(enabled_keys, count, mode, min_players, prev_rotation, results
 
 
 def _alnum(text):
-    """Letters and digits only, lowercased -- 'Pop Culture Colors' and
-    'popcultureColors' are the same answer to "which game is this?"."""
+    """Letters and digits only, lowercased -- 'Color-Toon' and
+    'colorToon' are the same answer to "which game is this?"."""
     return re.sub(r'[^a-z0-9]', '', (text or '').lower())
 
 

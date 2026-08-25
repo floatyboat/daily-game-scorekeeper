@@ -36,6 +36,7 @@ and the bot picks it up.
 | Bandle | https://bandle.app/daily | yes |
 | Chronophoto | https://www.chronophoto.app/daily.html | yes |
 | Color | https://dialed.gg/color?d=1 | yes |
+| Color-Toon | https://dialed.gg/color2?d=1 | yes |
 | Connections | https://www.nytimes.com/games/connections | yes |
 | Enclose | https://enclose.horse | yes |
 | Flagle | https://flagle.org | no |
@@ -45,7 +46,6 @@ and the bot picks it up.
 | MapTap Challenge | https://maptap.gg/adventures?gametype=challenge | no |
 | Minute Cryptic | https://www.minutecryptic.com | yes |
 | Pips | https://www.nytimes.com/games/pips | yes |
-| Pop Culture Colors | https://dialed.gg/color2?d=1 | yes |
 | Quizl | https://quizl.io | yes |
 | Sound | https://dialed.gg/sound?d=1 | yes |
 | Sports Connections | https://www.nytimes.com/athletic/connections-sports-edition | yes |
