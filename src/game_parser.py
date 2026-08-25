@@ -738,9 +738,10 @@ GAME_SPECS = [
     ),
     GameSpec(
         key='dialed_color', emoji='🎨', title='Color', metric='score',
-        total=50, url='https://dialed.gg/?d=1', needs_timestamp=True,
+        total=50, url='https://dialed.gg/color?d=1', needs_timestamp=True,
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
-        pattern=lambda ref, n: re.compile(r'dialed\.gg/\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
+        pattern=lambda ref, n: re.compile(r'dialed\.gg/(?:color)?\?\S*&s=(\d+(?:\.\d+)?)',
+                                          re.IGNORECASE),
         parse=lambda m, c: (float(m.group(1)), {}),
     ),
     GameSpec(
