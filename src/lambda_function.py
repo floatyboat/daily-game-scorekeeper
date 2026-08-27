@@ -456,7 +456,7 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
             # every game, collapsing the streak tier of the ordering below.
             # Gathering for `scored` lets it fold that day in from the parse.
             streaks = gather_streaks(gid, scored, results, todays_games,
-                                     cfg['minimum_players'], include_players=False)
+                                     cfg['minimum_players'])
         if streaks:
             # ...then re-base that bundle from the closed day onto today. A
             # streak alive through the day BEFORE it still reads live there

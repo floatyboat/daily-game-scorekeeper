@@ -15,7 +15,8 @@ from game_parser import (
 )
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
-    build_avatar_pool, build_name_map, safe_guild_id, gather_streaks, is_sticky_message,
+    build_avatar_pool, build_name_map, safe_guild_id, gather_streaks,
+    gather_player_stats, is_sticky_message,
     PLAY_BUTTON_CUSTOM_ID, MORE_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     TEXT_CHANNEL_TYPES, PERM_ADMINISTRATOR, PERM_MANAGE_GUILD, MAX_BUTTONS_PER_ROW,
     MAX_MESSAGE_LENGTH, FLAG_EPHEMERAL, FLAG_IS_COMPONENTS_V2,
@@ -107,6 +108,14 @@ def fetch_today_results(channel_id, cfg):
     return results, puzzle_numbers, today, rotation, build_name_map(messages)
 
 
+def _ephemeral(content, components=None):
+    """CHANNEL_MESSAGE_WITH_SOURCE, visible only to the invoker."""
+    data = {'flags': FLAG_EPHEMERAL, 'content': content}
+    if components is not None:
+        data['components'] = components
+    return {'type': 4, 'data': data}
+
+
 def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
     """Build today's scoreboard as an ephemeral Components V2 reply.
 
@@ -136,6 +145,98 @@ def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
             "components": components,
         },
     }
+
+
+STATS_NO_GUILD = ("\U0001F4CA Stats are per-server — run this in a server "
+                  "where the scoreboard is set up.")
+STATS_UNAVAILABLE = "\U0001F4CA Couldn't read your stats just now — try again shortly."
+STATS_EMPTY = ("\U0001F4CA No stats yet — post a result in the scoreboard channel "
+               "and your first streak starts today.")
+
+
+def _stats_lines(bundle):
+    """The per-game body of /stats: one line per game with a live streak, then
+    a single subtext line naming the rest.
+
+    Ordered by the streak the player is actually being shown, so the view leads
+    with what they're most at risk of losing. Games whose streak has lapsed are
+    named but not numbered -- "0" reads as a score, and the honest content is
+    just that the streak is over.
+    """
+    specs = {spec.key: spec for spec in GAME_SPECS}
+    # A game dropped from GAME_SPECS keeps its stored history but has no title
+    # to render it under, so it falls out here rather than showing a raw key.
+    entries = [(specs[key], st) for key, st in bundle['games'].items() if key in specs]
+    entries.sort(key=lambda e: (-e[1]['current'], -e[1]['best'], e[0].title.lower()))
+
+    lines, lapsed = [], []
+    for spec, st in entries:
+        if not st['current']:
+            lapsed.append(spec.title)
+            continue
+        # best == current is the same number twice; it earns its place only
+        # once the player has been further than they are now.
+        best = f" · best {st['best']}" if st['best'] > st['current'] else ''
+        lines.append(f"{spec.emoji} {spec.title} — \U0001F525{st['current']}{best}")
+    if lapsed:
+        lines.append(f"-# No active streak: {', '.join(lapsed)}")
+    return lines
+
+
+def format_stats(bundle, ref_date):
+    """/stats as one markdown message, or the empty state for a new player."""
+    overall = bundle['overall']
+    lines = _stats_lines(bundle)
+    if not overall['plays'] and not lines:
+        return STATS_EMPTY
+
+    plays = overall['plays']
+    played = f"{plays} play" + ('' if plays == 1 else 's')
+    head = [f"### \U0001F4CA Your Stats — {ref_date.strftime('%B %d, %Y')}"]
+    if overall['current']:
+        best = (f" · best {overall['best']}"
+                if overall['best'] > overall['current'] else '')
+        head.append(f"\U0001F525 **{overall['current']}-day streak**{best} · {played}")
+    else:
+        # No live overall streak still has a story: what they've done, and the
+        # furthest they've taken it.
+        head.append(f"{played} · best streak {overall['best']}")
+    if lines:
+        head.append('')
+        head.append('**Streaks by game**')
+    return "\n".join(head + lines)
+
+
+def build_stats_response(channel_id, user_id=None, guild_id=None, cfg=None):
+    """The invoker's own streaks, as an ephemeral reply.
+
+    Reads the guild's input channel rather than wherever /stats was typed: that
+    is where results are posted, so it is the only channel that can tell
+    whether today already counts. Falls back to the invoking channel for a
+    guild that has never pointed the bot anywhere.
+    """
+    if not guild_id or not user_id:
+        return _ephemeral(STATS_NO_GUILD)
+    cfg = cfg or guild_cfg(guild_id)
+
+    source = cfg['input_channel_id'] or channel_id
+    try:
+        results, puzzle_numbers, today, _, _ = fetch_today_results(source, cfg)
+    except Exception as e:
+        # Today's parse only decides whether today counts yet; stored history is
+        # the substance, so a channel hiccup costs a day, not the whole reply.
+        print(f'stats: live parse failed, showing stored history -- '
+              f'{type(e).__name__}: {e}')
+        tz = ZoneInfo(cfg['timezone'])
+        today = reference_date(datetime.now(tz), tz, cfg['hours_after_midnight'])
+        results, puzzle_numbers = {}, compute_puzzle_numbers(today)
+
+    bundle = gather_player_stats(
+        guild_id, user_id, today, results,
+        build_games(puzzle_numbers, cfg['game_overrides']), cfg['minimum_players'])
+    if bundle is None:
+        return _ephemeral(STATS_UNAVAILABLE)
+    return _ephemeral(format_stats(bundle, today))
 
 
 def interaction_user_id(body):
@@ -200,7 +301,7 @@ def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
     streaks = None
     if today is not None:
         streaks = gather_streaks(guild_id, today, results, games,
-                                 cfg['minimum_players'], include_players=False)
+                                 cfg['minimum_players'])
 
     if user_id is not None:
         games = [g for g in games if user_id not in results.get(g.key, {})]
@@ -299,7 +400,7 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_
 #   from roughly every other click into a rarity; the deferral above stays as
 #   the backstop for the colds that remain (a deploy, a concurrent overlap).
 
-ACTION_PLAY, ACTION_SCORES = 'play', 'scores'
+ACTION_PLAY, ACTION_SCORES, ACTION_STATS = 'play', 'scores', 'stats'
 
 # Envelope key for the self-invoke payload. Only ever read off a direct
 # invocation -- anything arriving through the public Function URL carries a
@@ -361,6 +462,8 @@ def build_live_response(action, channel_id, user_id=None, guild_id=None, cfg=Non
     cfg = cfg or guild_cfg(guild_id)
     if action == ACTION_SCORES:
         return build_scoreboard_response(channel_id, guild_id, cfg)
+    if action == ACTION_STATS:
+        return build_stats_response(channel_id, user_id, guild_id, cfg)
     return build_play_response(channel_id, user_id, guild_id, cfg, show_all)
 
 
@@ -416,14 +519,6 @@ def run_deferred(work):
 
 
 # --- /setup (admin configuration) ----------------------------------------------
-
-def _ephemeral(content, components=None):
-    """CHANNEL_MESSAGE_WITH_SOURCE, visible only to the invoker."""
-    data = {'flags': FLAG_EPHEMERAL, 'content': content}
-    if components is not None:
-        data['components'] = components
-    return {'type': 4, 'data': data}
-
 
 def _update(content, components=None):
     """UPDATE_MESSAGE: rewrite the ephemeral message a component lives on --
@@ -999,6 +1094,8 @@ def lambda_handler(event, context):
         command_name = body.get('data', {}).get('name', '')
         if command_name == 'play':
             return _http(defer(ACTION_PLAY, body))
+        if command_name == 'stats':
+            return _http(defer(ACTION_STATS, body))
         if command_name == 'setup':
             return _http(admin_dispatch(handle_setup, body))
         if command_name == 'suggest':

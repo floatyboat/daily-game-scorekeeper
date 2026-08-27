@@ -99,6 +99,13 @@ COMMANDS = [
         ],
     },
     {
+        # Personal and read-only: no permission gate, no options, and the reply
+        # is ephemeral, so a server full of people running it stays quiet.
+        'name': 'stats',
+        'description': 'Your own streaks — overall and game by game',
+        'type': CHAT_INPUT,
+    },
+    {
         # No permission gate and no options: anyone can suggest, and the reply is
         # a modal (interaction_lambda.suggest_modal) because the payload is a
         # multi-line paste that command options can't carry.

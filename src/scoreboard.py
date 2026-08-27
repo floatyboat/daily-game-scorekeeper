@@ -130,17 +130,24 @@ def safe_guild_id(session, channel_id):
 # store.display_streak folds the "played on ref_date" flag in at render time
 # (see the docstring below) -- both sides of the fold display the same
 # numbers; the only lag is cosmetic (players_30d), bounded by the TTL.
+# One partition Query is now the whole read: the per-player fan-out that used
+# to ride along went with the personal streaks, to /stats.
 # finalize_day itself reads through store.query_aggs directly and never sees
 # this cache.
 AGGS_TTL_SECONDS = 300
 _aggs_cache = {}   # guild_pk -> (expires, {SK: item})
 
 
-def gather_streaks(guild_id, ref_date, results, games, minimum_players=1,
-                   include_players=True):
-    """Display-ready streak numbers for one board render, or None when the
+def gather_streaks(guild_id, ref_date, results, games, minimum_players=1):
+    """Display-ready SERVER streak numbers for one render, or None when the
     store can't serve them (no guild, IAM grant not applied yet, outage) --
     callers render streak-less, so store problems never break a view.
+
+    Server-wide only, on purpose: every number here belongs to the guild, not
+    to a player, so the fire emoji means the same thing on every surface that
+    spends this bundle. A player's own streaks are a personal view (/stats, via
+    gather_player_stats below), which reads that one player's partition rather
+    than fanning out across everyone who scored.
 
     Takes the built `games` (not just their keys) because streak eligibility is
     scoring, not merely posting: game_parser.scoring_players() needs each game's
@@ -155,20 +162,13 @@ def gather_streaks(guild_id, ref_date, results, games, minimum_players=1,
 
     Bundle (plain ints/strings, JSON-safe):
       server        server-wide streak to show (points scored in ANY game that
-                    day; displayed on the sticky, not the scoreboard)
+                    day); the board's heading line and the sticky's flair
       games         {game_key: streak to show}
       broken        {game_key: streak that ended on ref_date}
       players_30d   {game_key: rolling 30-day distinct-player count, as of the
                     last finalize (store.refresh_players_30d); 0 for a game
                     whose aggregate predates the field or has never been played}
       players_total {game_key: all-time distinct-player count}
-      players       {game_key: {user_id: streak to show}} (players who SCORED
-                    on ref_date only; empty when include_players=False). A
-                    player who posted a poop is absent, so their score line
-                    renders untagged -- their streak for that game is over.
-      players_overall {user_id: overall streak to show} -- days running that
-                    player scored in ANY game; drives the points summary, same
-                    population/emptiness rule as `players`
     """
     if not guild_id:
         return None
@@ -189,7 +189,7 @@ def gather_streaks(guild_id, ref_date, results, games, minimum_players=1,
                       if sk.startswith(store.GAME_AGG_PREFIX)}
 
         bundle = {'games': {}, 'broken': {}, 'players_30d': {},
-                  'players_total': {}, 'players': {}, 'players_overall': {},
+                  'players_total': {},
                   'server': store.display_streak(
                       aggs.get(store.SERVER_AGG_SK), day,
                       any(scorers.values()))}
@@ -203,33 +203,69 @@ def gather_streaks(guild_id, ref_date, results, games, minimum_players=1,
             # documented (and deferred-invoke serialized) as JSON-safe.
             bundle['players_30d'][key] = int((item or {}).get('players_30d') or 0)
             bundle['players_total'][key] = len((item or {}).get('players') or ())
-
-        if include_players:
-            pairs = sorted({(uid, key) for key in game_keys
-                            for uid in scorers.get(key, ())})
-            uids = sorted({uid for uid, _ in pairs})
-            # Per-game and overall player aggregates ride in one batch; the
-            # overall one is filed under game key None.
-            keys = [{'PK': store.player_pk(guild_id, uid), 'SK': store.game_agg_sk(key)}
-                    for uid, key in pairs]
-            keys += [{'PK': store.player_pk(guild_id, uid), 'SK': store.SERVER_AGG_SK}
-                     for uid in uids]
-            fetched = {}
-            for item in store.batch_get(keys):
-                uid = item['PK'].split('#PLAYER#', 1)[1]
-                sk = item['SK']
-                game = None if sk == store.SERVER_AGG_SK else store.game_key_from_sk(sk)
-                fetched[(uid, game)] = item
-            for uid, key in pairs:
-                bundle['players'].setdefault(key, {})[uid] = store.display_streak(
-                    fetched.get((uid, key)), day, True)
-            for uid in uids:
-                bundle['players_overall'][uid] = store.display_streak(
-                    fetched.get((uid, None)), day, True)
         return bundle
     except Exception as e:
         print(f'store: streak read failed, rendering without streaks -- '
               f'{type(e).__name__}: {e}')
+        return None
+
+
+def gather_player_stats(guild_id, user_id, ref_date, results, games,
+                        minimum_players=1):
+    """One player's own aggregates, display-ready, or None when the store
+    can't serve them -- /stats then says so rather than showing a blank slate.
+
+    The personal counterpart to gather_streaks: that one is server numbers for
+    a board everyone reads, this one is a single player's for a reply only they
+    see. One Query on their own partition covers every game they have ever
+    played, so the cost is flat in the size of the server.
+
+    `results` is today's live parse, which decides the same "played on
+    ref_date" flag gather_streaks folds -- so a streak kept alive an hour ago
+    reads as extended here, exactly as it would on the board.
+
+    Unlike the board, nothing here is gated on STREAK_MIN: the board shows what
+    is worth announcing to a server, /stats shows a player their real numbers,
+    and a streak of one is a real number.
+
+    Bundle (plain ints/strings, JSON-safe):
+      overall   {'current','best','plays','played_today'} across all games
+      games     {game_key: the same four} -- games with stored history only,
+                so a game the player has never touched is simply absent
+    """
+    if not guild_id or not user_id:
+        return None
+    try:
+        day = store.day_str(ref_date)
+        scorers = scoring_players(results, games, minimum_players)
+        items = store.query_aggs(store.player_pk(guild_id, user_id))
+
+        def entry(item, played):
+            return {'current': store.display_streak(item, day, played),
+                    # A best that predates today can be beaten by today: the
+                    # stored number is only current through the last finalize.
+                    'best': max(int((item or {}).get('best_streak') or 0),
+                                store.display_streak(item, day, played)),
+                    'plays': int((item or {}).get('total_plays') or 0) + int(played),
+                    'played_today': played}
+
+        played_any = any(user_id in s for s in scorers.values())
+        bundle = {'overall': entry(items.get(store.SERVER_AGG_SK), played_any),
+                  'games': {}}
+        for sk, item in items.items():
+            if not sk.startswith(store.GAME_AGG_PREFIX):
+                continue
+            key = store.game_key_from_sk(sk)
+            bundle['games'][key] = entry(item, user_id in scorers.get(key, ()))
+        # A game played for the first time today has no stored aggregate yet,
+        # so the Query above can't see it -- but its streak is 1 and the player
+        # would rightly wonder where it went.
+        for key, uids in scorers.items():
+            if user_id in uids and key not in bundle['games']:
+                bundle['games'][key] = entry(None, True)
+        return bundle
+    except Exception as e:
+        print(f'store: player stats read failed -- {type(e).__name__}: {e}')
         return None
 
 

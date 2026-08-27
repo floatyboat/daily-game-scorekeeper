@@ -19,10 +19,11 @@ there is the whole onboarding — no redeploy, no config file.
 
 | Surface | What it is |
 |---|---|
-| **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and streak flair — off-rotation plays listed below the scored games for zero points. |
+| **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and the server's streaks — off-rotation plays listed below the scored games for zero points. |
 | **Today's games** | Posted at the server's day start while rotation is on (the default): the rotating subset of games that scores today, as play links. Lands right under the board when the board posts at that same hour. |
 | **Now Playing sticky** | One message kept at the bottom of the input channel showing who has played what today, with **Play**, **Scores** and **Yesterday** buttons. |
 | **`/play`** | A private list of today's games as buttons, linking straight to each puzzle, ordered by what the server is actually playing. With rotation on it lists the games that score today; **`/play all:true`** lists every tracked game. |
+| **`/stats`** | A private view of your own streaks — overall, then game by game. Every streak on the board belongs to the server; this is where yours are. |
 | **`/suggest`** | Anyone can propose a game the bot doesn't track yet. |
 | **`/setup`** | Where admins configure the server (needs **Manage Server**). |
 
@@ -233,6 +234,7 @@ DISCORD_APPLICATION_ID=...   # same value; register_commands falls back to DISCO
 DISCORD_PUBLIC_KEY=...       # General Information page; verifies interaction signatures
 TEST_CHANNEL_ID=...          # where local/test-mode runs post
 TEST_GUILD_ID=...            # server the interaction fixtures pretend to come from
+TEST_USER_ID=...             # whose stats the /stats fixture asks for
 DEV_CHANNEL_ID=...           # optional: where /suggest submissions land
 MINIMUM_STREAK=3             # optional: shortest streak that renders (default 3)
 ```

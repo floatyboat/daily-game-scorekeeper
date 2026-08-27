@@ -1177,36 +1177,8 @@ def scoring_players(results, games, minimum_players=1):
             for key, scores in points_per_game(results, games, minimum_players).items()}
 
 
-def _streak_tag(player_streaks, uid):
-    """' (xN)' for a player at or above the display minimum, else ''.
-
-    Per-game player streaks render as this plain multiplier -- they repeat on
-    every score line of every game, so an emoji there drowns the board. The
-    fire emoji is reserved for streaks that appear at most once per player per
-    board (a game's title line, the sticky's server streak, and the overall
-    streak in the points summary -- see _overall_streak_tag).
-    """
-    n = (player_streaks or {}).get(uid, 0)
-    return f' (x{n})' if n >= STREAK_MIN else ''
-
-
-def _overall_streak_tag(player_streaks, uid):
-    """' \U0001F525N' for a player at or above the display minimum, else ''.
-
-    The overall (any-game) streak is the headline number for a player and lands
-    once, at the end of their points-summary line, so it earns the fire emoji
-    that per-game streaks don't.
-    """
-    n = (player_streaks or {}).get(uid, 0)
-    return f' \U0001F525{n}' if n >= STREAK_MIN else ''
-
-
-def format_points_summary(points, player_streaks=None):
+def format_points_summary(points):
     """Format the points summary section.
-
-    player_streaks ({user_id: overall streak}) tags players at or above the
-    display minimum with their days-running-in-any-game count, rendered as a
-    trailing fire emoji.
 
     Returns empty string if no points earned.
     """
@@ -1236,8 +1208,7 @@ def format_points_summary(points, player_streaks=None):
         unit = 'pt' if current_val == 1 else 'pts'
         for k in range(i, j):
             uid = sorted_users[k][0]
-            message += (f'{medal}<@{uid}>: {current_val} {unit}'
-                        f'{_overall_streak_tag(player_streaks, uid)}\n')
+            message += f'{medal}<@{uid}>: {current_val} {unit}\n'
 
         prev_val = current_val
         i = j
@@ -1270,13 +1241,11 @@ def _mmss(seconds):
     return f'{seconds // 60}:{seconds % 60:02d}'
 
 
-def _format_game_players(game_scores, metric, total, player_streaks=None,
-                         names=None, mention_limit=None, show_totals=True):
+def _format_game_players(game_scores, metric, total, names=None,
+                         mention_limit=None, show_totals=True):
     """Format ranked player lines for a single game.
 
     Returns a markdown string with medal emojis, player mentions, and scores.
-    player_streaks ({user_id: streak}) appends an "(xN)" marker to players whose
-    streak for this game has reached the display minimum.
 
     show_totals=False is the scoreboard's first text-budget reduction (see
     _REDUCTIONS): scores drop the "/N" they are out of. Only the scale goes --
@@ -1292,11 +1261,10 @@ def _format_game_players(game_scores, metric, total, player_streaks=None,
     failure than over budget, and the ladder has another rung to try.
     """
     def mention(uid, rank):
-        tag = _streak_tag(player_streaks, uid)
         name = (names or {}).get(uid)
         if mention_limit is not None and rank > mention_limit and name:
-            return f'{_plain_name(name)}{tag}'
-        return f'<@{uid}>{tag}'
+            return _plain_name(name)
+        return f'<@{uid}>'
 
     # The "/N" every score with a maximum carries, and the one place the
     # show_totals rung is spent. Games scored on an open scale (total=0) never
@@ -1486,12 +1454,28 @@ def top_game_buttons(games, results, streaks, limit):
     return [game_link_button(g, game_streaks.get(g.key, 0)) for g in ordered[:limit]]
 
 
+def _server_streak_line(streaks):
+    """The board's one server-wide streak line, or '' below the display minimum.
+
+    Rides on the heading's own Text Display rather than taking a component of
+    its own -- it reads as a byline under the title, and the component budget
+    is the scarcer of the two caps on a game-heavy board.
+
+    This is the only streak on the board that isn't per-game, and it is the
+    server's, not a player's: personal streaks live on /stats, so a fire emoji
+    on the board always means "this server", never "you".
+    """
+    n = (streaks or {}).get('server', 0)
+    return f"\n\U0001F525 **{n}-day streak**" if n >= STREAK_MIN else ''
+
+
 def _streak_break_lines(streaks, games_by_key):
     """One line per game streak that ended on the displayed day.
 
-    Rendered at the foot of the scores section, under the games that were
-    actually played: a broken streak is a result for that game too, and it
-    reads as one when it sits with them rather than in the header.
+    Rendered at the foot of the off-rotation games where that container exists
+    (see _render_scoreboard) and at the foot of the scores otherwise: either way
+    it sits under games rather than in the header, because a broken streak is a
+    result for that game too.
     """
     if not streaks:
         return []
@@ -1548,11 +1532,10 @@ def over_budget(components):
 
 # How a board is rendered. The full style is what every board has always used;
 # the ladder below relaxes one field at a time when a cap is exceeded.
-_Style = namedtuple('_Style', 'separators merge_games totals player_streaks '
-                              'mention_limit urls game_streaks')
+_Style = namedtuple('_Style', 'separators merge_games totals mention_limit '
+                              'urls game_streaks')
 _FULL_STYLE = _Style(separators=True, merge_games=False, totals=True,
-                     player_streaks=True, mention_limit=None, urls=True,
-                     game_streaks=True)
+                     mention_limit=None, urls=True, game_streaks=True)
 
 # (field, relaxed value, the cap it relieves), least-lossy first.
 #
@@ -1563,12 +1546,12 @@ _FULL_STYLE = _Style(separators=True, merge_games=False, totals=True,
 # budget -- a text-heavy board keeps its separators, and a game-heavy one keeps
 # every mention. Ordered so the board gives up decoration before it gives up
 # information: dividers, then per-game structure, then the scale each score is
-# out of, then the per-player streak markers, then pings below the podium, then
-# links, then the last pings, and only at the end the game streaks -- their fire
-# suffixes and the "streak ended" callouts, which are the one thing on the board
-# a player cannot read off their own line. No rung drops a game or a player, so
-# the board stays complete however far down the ladder it goes -- a board that
-# silently omits a game is indistinguishable from one an admin turned off.
+# out of, then pings below the podium, then links, then the last pings, and only
+# at the end the streaks -- the server line, the per-game fire suffixes and the
+# "streak ended" callouts, which are the one thing on the board a player cannot
+# read off their own line. No rung drops a game or a player, so the board stays
+# complete however far down the ladder it goes -- a board that silently omits a
+# game is indistinguishable from one an admin turned off.
 #
 # Past the last rung the text is irreducible: a line is down to a name, a score
 # and a newline, and 4000 characters holds around 200-230 of those however the
@@ -1580,7 +1563,6 @@ _REDUCTIONS = (
     ('separators', False, 'components'),
     ('merge_games', True, 'components'),
     ('totals', False, 'text'),
-    ('player_streaks', False, 'text'),
     ('mention_limit', PODIUM, 'text'),
     ('urls', False, 'text'),
     ('mention_limit', 0, 'text'),
@@ -1602,13 +1584,14 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     names ({user_id: display name}) feeds the podium_only reduction; without it
     that rung is a no-op and the ladder falls through to dropping URLs.
 
-    streaks is an optional gather_streaks() bundle; it adds "streak ended"
-    callouts at the foot of the scores section, per-game fire suffixes on title
-    lines, a personal fire suffix for each player's overall streak in the points
-    summary, and personal "(xN)" markers on the per-game score lines.
-    None renders exactly the streak-less board. game_overrides is the
-    guild's per-game enable map -- without it a guild-enabled game whose spec
-    defaults to disabled would silently drop out of the render.
+    streaks is an optional gather_streaks() bundle; it adds the server-wide
+    streak line under the heading, per-game fire suffixes on title lines, and
+    "streak ended" callouts. Every one of those is a SERVER number -- a
+    player's own streaks are /stats, not the board, so nothing here is per-
+    player and no score line carries a marker. None renders exactly the
+    streak-less board. game_overrides is the guild's per-game enable map --
+    without it a guild-enabled game whose spec defaults to disabled would
+    silently drop out of the render.
 
     rotation is the day's rotation (key list) or None for an unrestricted
     board. Scored games keep the points summary and the scores section to
@@ -1655,6 +1638,8 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
 
     # --- Header container ---
     header_text = f"### 🧮 {title} - {reference_date.strftime('%B %d, %Y')}"
+    if style.game_streaks:
+        header_text += _server_streak_line(streaks)
     header_children = [{"type": 10, "content": header_text}]
     break_lines = (_streak_break_lines(streaks, {g.key: g for g in games})
                    if style.game_streaks else [])
@@ -1679,8 +1664,7 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
     base = (None if rot is None
             else rotation_points_base(results, scored_games, minimum_players))
     points = compute_points(results, scored_games, minimum_players, base)
-    points_section = format_points_summary(
-        points, (streaks or {}).get('players_overall') if style.player_streaks else None)
+    points_section = format_points_summary(points)
     if points_section:
         header_children.append({"type": 10, "content": points_section.rstrip('\n')})
         components.append({"type": 17, "accent_color": HEADER_COLOR, "components": header_children})
@@ -1695,7 +1679,6 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
                  and (rot is None or g.key in rot)]
 
     game_streaks = streaks['games'] if streaks and style.game_streaks else {}
-    player_streaks = streaks['players'] if streaks and style.player_streaks else {}
 
     def game_text(game):
         puzzle_label = _puzzle_label(game.puzzle, reference_date)
@@ -1705,9 +1688,8 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
         if streak >= STREAK_MIN:
             score_text += f" \U0001F525{streak}"
         return score_text + "\n" + _format_game_players(
-            results[game.key], game.metric, game.total,
-            player_streaks.get(game.key), names, style.mention_limit,
-            show_totals=style.totals).rstrip('\n')
+            results[game.key], game.metric, game.total, names,
+            style.mention_limit, show_totals=style.totals).rstrip('\n')
 
     def game_sections(game_list):
         # Merging folds every game into one Text Display: the games read the
@@ -1735,7 +1717,14 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
     if rot is not None and qualified:
         scores_children = [{"type": 10, "content": "**Scored Games**"}] + scores_children
 
-    if break_child:
+    # Where the break callouts land. A rotation board has an off-rotation
+    # container for exactly the games that didn't score today, which is what a
+    # broken streak is -- so they read as part of that block rather than as a
+    # footnote under games that did score. Without one (no rotation, or
+    # 'hidden' suppressing it) they stay at the foot of the scores, which is
+    # the only place left that isn't the header.
+    breaks_below = rot is not None and rotation_off != 'hidden'
+    if break_child and not breaks_below:
         if scores_children and style.separators:
             scores_children.append({"type": 14, "spacing": 1})  # Separator
         scores_children += break_child
@@ -1746,13 +1735,21 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
     # --- Off-rotation container ---
     # Games outside the rotation that were played: rendered with scores but no
     # points, always below the scored games -- or not at all under 'hidden'.
-    if rot is not None and rotation_off != 'hidden':
+    # Renders for break callouts alone, since suppressing it would drop them.
+    if breaks_below:
         exhibition = [g for g in games if g.key not in rot and results.get(g.key)
                       and len(results[g.key]) >= minimum_players]
-        if exhibition:
-            heading = [{"type": 10, "content": "**Other Games**"}]
+        # The heading labels games, so it appears only when there are games to
+        # label -- a container holding nothing but callouts isn't "Other Games".
+        children = ([{"type": 10, "content": "**Other Games**"}]
+                    + game_sections(exhibition)) if exhibition else []
+        if break_child:
+            if children and style.separators:
+                children.append({"type": 14, "spacing": 1})  # Separator
+            children += break_child
+        if children:
             components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR,
-                               "components": heading + game_sections(exhibition)})
+                               "components": children})
 
     return components
 

@@ -12,7 +12,7 @@ all per-server configuration lives in the table.
 |---|---|---|---|
 | `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Two stages per tick, draw first: draws the rotation at each guild's day start, posts and pins yesterday's scoreboard at its post hour, and announces "Today's games" on either — so a later post hour gets it twice; the only writer of day and aggregate items |
 | `daily-game-sticky` | `src/sticky_lambda.py` | EventBridge rule `daily-game-sticky`, `cron(* * * * ? *)` | Maintains the one sticky ("Now Playing") at the bottom of the input channel |
-| `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, `/setup`, `/suggest`, sticky Play/More/Scores buttons; live ephemeral views |
+| `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, `/stats`, `/setup`, `/suggest`, sticky Play/More/Scores buttons; live ephemeral views |
 
 Shared modules: `game_parser.py` (game specs, parsing, scoring, render), `scoreboard.py`
 (Discord fetch/format helpers), `store.py` (all DynamoDB I/O and the config schema).
@@ -309,9 +309,10 @@ afterwards; every reply from them says so.
   keeps it alive.
 - A game disabled for a while and re-enabled resumes from whatever `last_played_day`
   implies — normally a reset streak.
-- One display threshold governs every streak surface (game and Play suffixes, sticky flair,
-  personal markers, break callouts): the `MINIMUM_STREAK` env var, default 3. Shorter
-  streaks still accrue and still sort.
+- One display threshold governs every *server* streak surface (the board's server line and
+  game suffixes, Play suffixes, sticky flair, break callouts): the `MINIMUM_STREAK` env var,
+  default 3. Shorter streaks still accrue and still sort. `/stats` is deliberately outside
+  it — see Read paths and display.
 
 ## Write path (daily lambda, the only writer)
 
@@ -351,20 +352,36 @@ retroactively.
   presents one consistent order. One helper (`game_link_button`) renders every game link
   button: emoji, title, and a streak suffix — `🔗 Connections 🔥14`. Today's live count
   orders the list but is not in the label.
+- **The board shows the server's streaks; `/stats` shows yours.** That split is the whole
+  display rule, and it is why a `🔥` on the board always means "this server" and never
+  "you". A board carrying a number per player per game rendered around forty of them on an
+  ordinary day, in three different senses of the same emoji; the numbers were never the
+  problem, the ambiguity was.
 - **Scoreboard and Scores button** (`format_scoreboard_components`, one shared path) take an
-  optional streaks argument: a `🔥N` suffix on each game's title line, a `💔 <Game> streak
-  ended at N` callout on the day it breaks — at the foot of the scores section, under the
-  games that were played, since a broken streak is a result for that game too (on a
-  no-results day, where there is no scores section, it falls back to the header
-  container) — and personal streak markers at or above the
-  display minimum — the player's **overall** streak in the points summary
-  (`👑 @alice: 12 pts 🔥14`) and their per-game streak on each score line
-  (`👑 @alice (x9): 3/6 guesses`). The header carries no server-streak line; the server
-  streak's display surface is the sticky.
-- **Fire emoji vs `(xN)`**: streaks that land at most once per board *per subject* render as
-  `🔥N` — a game's title line, the sticky's server streak, and each player's overall streak
-  in the points summary (`_overall_streak_tag()`). Per-game player streaks repeat on every
-  score line of every game and stay a plain `(xN)` (`_streak_tag()`).
+  optional streaks argument, and everything it renders is server-wide:
+  a `🔥 **N-day server streak**` line under the heading (`_server_streak_line()`, carried on
+  the heading's own Text Display so it costs no component), a `🔥N` suffix on each game's
+  title line, and a `💔 <Game> streak ended at N` callout on the day it breaks. Score lines
+  and the points summary carry no streak markers at all.
+- **Where break callouts land**: with a rotation, at the foot of the **Other Games**
+  container — a broken streak is a game nobody played, which is what that block is, and the
+  container renders for callouts alone when no off-rotation game was played. Without a
+  rotation (or under `rotation_off: hidden`, which suppresses that container) they fall back
+  to the foot of the scores section. On a no-results day, where there is no scores section
+  either, they fall back to the header container.
+- **`/stats`** (`gather_player_stats()` + `format_stats()`) is the personal counterpart: an
+  ephemeral reply listing the invoker's overall streak, best, and lifetime plays, then one
+  line per game with a live streak, ordered by that streak, with lapsed games named in a
+  single subtext line. One Query on `GUILD#<gid>#PLAYER#<uid>` covers every game the player
+  has ever played, so the cost is flat in the size of the server, and today's live parse
+  folds in the same "played on ref_date" flag every other surface uses. **`MINIMUM_STREAK`
+  does not gate it**: the board shows what is worth announcing to a server, `/stats` shows a
+  player their real numbers, and a streak of one is a real number. Reading the guild's
+  *input* channel rather than wherever `/stats` was typed is what makes today countable; a
+  failed read costs the day, not the reply, since stored history is the substance.
+- **Why `gather_streaks()` is server-only**: it used to fan out a `batch_get` across every
+  player who scored, to feed markers no surface renders any more. That read is gone with
+  them — one partition Query is now the whole cost of a board.
 - **Sticky**: the content line ends with the server-wide streak (points scored in any game,
   live-adjusted) as a bare `🔥N`. One row of buttons always — Play · Scores · Yesterday ·
   [More], with the grey More (the `/play all:true` view) trailing the everyday buttons and
@@ -403,6 +420,9 @@ retroactively.
   order, with streak suffixes, plus a Random row. Under a rotation it lists the games
   that score today; the optional `all:true` lists every enabled game, scored games
   sorted above off-rotation ones (see Daily rotation).
+- **`/stats`** — open to everyone, no permission gate: the invoker's own streaks, overall
+  then per game, as an ephemeral reply. Deferred like the other live views, since it reads
+  the channel to decide whether today counts yet. See Read paths and display.
 - **`/suggest`** — open to everyone, no permission gate: a modal (Discord's only multi-line
   input) taking a game name, an optional link, and a pasted result, posted to the
   `DEV_CHANNEL_ID` channel as a candidate `GAME_SPECS` entry. The paste goes in a code

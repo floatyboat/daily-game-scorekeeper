@@ -87,7 +87,7 @@ def build(n_games, n_players, *, broken=False, off_rotation=0, with_names=True):
         keys = [g.key for g in games]
         streaks = None
         if broken:
-            streaks = {'games': {}, 'players': {}, 'broken': {k: 7 for k in keys[:3]}}
+            streaks = {'games': {}, 'broken': {k: 7 for k in keys[:3]}, 'server': 0}
         names = {u: NAME for u in uids} if with_names else None
         # Captured rather than printed: the ladder's own log lines are how this
         # tool reports which rungs a shape needed.

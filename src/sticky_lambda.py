@@ -283,7 +283,7 @@ def run_guild(cfg, force=False):
     # line -- kept alive today (live +1) or still extendable from yesterday.
     # Fail-open: no store, no flair.
     streaks = gather_streaks(cfg['guild_id'], today, results, games,
-                             cfg['minimum_players'], include_players=False)
+                             cfg['minimum_players'])
     server_streak = (streaks or {}).get('server', 0)
 
     # Shortcut row: the head of the Play list, same ordering and labels. Off by
