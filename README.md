@@ -132,16 +132,17 @@ Defaults in parentheses.
   channel sees.
 - **`/setup games`** — a multi-select of every supported game, pre-ticked to this
   server's current state.
-- **`/setup rotation enabled:<bool> games:<1-10> mode:<swap|random> min_players:<n> off_rotation:<shown|hidden>`**
-  (`true` / `3` / `swap` / `3` / `shown`) — score only a rotating subset of games
-  each day. In `swap` mode a spot is earned by play, one threshold both ways: games
-  that drew fewer than `min_players` players rotate out, games outside the set that
-  reached it rotate in, and random picks fill the rest. `games` is a hard cap — when
-  more games qualify than fit, the most-played keep the seats. `random` re-draws the
-  whole set daily. `off_rotation` only decides whether the daily board lists
-  off-rotation plays below the scored games for zero points, or leaves them off the
-  board — either way they're archived, keep streaks alive, and still count toward
-  rotating in. The
+- **`/setup rotation enabled:<bool> games:<1-20> mode:<swap|random> keep_players:<n> promote_players:<n> off_rotation:<shown|hidden>`**
+  (`true` / `3` / `swap` / `5` / `5` / `shown`) — score only a rotating subset of games
+  each day. In `swap` mode a spot is earned by play, against two separate thresholds:
+  a game in the set holds its seat by drawing `keep_players`, a game outside it earns
+  one by drawing `promote_players`, and random picks fill the rest. Splitting the two
+  is how a server sets seats that are easy to win and hard to hold, or the reverse.
+  `games` is a hard cap — when more games qualify than fit, the most-played keep the
+  seats. `random` re-draws the whole set daily and consults neither threshold.
+  `off_rotation` only decides whether the daily board lists off-rotation plays below
+  the scored games for zero points, or leaves them off the board — either way they're
+  archived, keep streaks alive, and still count toward rotating in. The
   day's set is what `/play` and the sticky's Play button list — `/play all:true` shows
   everything. It is drawn and announced at the server's **day start**, so a server that
   posts its board later still gets today's games first thing; when the two hours match

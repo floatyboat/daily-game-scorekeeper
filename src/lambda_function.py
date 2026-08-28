@@ -274,7 +274,8 @@ def draw_rotation(cfg, is_test, day, today_day, results):
     enabled_keys = [s.key for s in GAME_SPECS if spec_enabled(s, cfg['game_overrides'])]
     prev = cfg['rotation_games'] if cfg['rotation_day'] == day else None
     rotation = next_rotation(enabled_keys, cfg['rotation_count'], cfg['rotation_mode'],
-                             cfg['rotation_min_players'], prev, results or {})
+                             cfg['rotation_keep_players'],
+                             cfg['rotation_promote_players'], prev, results or {})
     if not rotation:
         return None
     if not is_test:

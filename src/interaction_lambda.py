@@ -701,7 +701,8 @@ def config_summary(cfg):
         f"Link previews: **{'stripped' if cfg['suppress_embeds'] else 'kept'}**",
         f"Rotation: **{onoff(cfg['rotation_enabled'])}** — "
         f"{cfg['rotation_count']} games/day, {cfg['rotation_mode']} mode, "
-        f"min {cfg['rotation_min_players']} players, "
+        f"stay \u2265{cfg['rotation_keep_players']} / "
+        f"join \u2265{cfg['rotation_promote_players']} players, "
         f"off-rotation {cfg['rotation_off_mode']}",
         f"Timezone `{cfg['timezone']}` · day starts {cfg['hours_after_midnight']:02d}:00 · "
         f"posts {post_hour:02d}:00 · window {cfg['time_window_hours']}h",
@@ -802,9 +803,14 @@ def handle_setup(body, guild_id):
         store.update_config(guild_id, updates)
         merged = {**cfg, **updates}
         if enabled:
+            # The thresholds are swap-mode rules, so a random-mode server is
+            # not told two numbers that will never be consulted.
+            shape = f"{merged['rotation_count']} games a day, {merged['rotation_mode']} mode"
+            if merged['rotation_mode'] == 'swap':
+                shape += (f" (stay \u2265{merged['rotation_keep_players']} players, "
+                          f"join \u2265{merged['rotation_promote_players']})")
             return _ephemeral(
-                f"\U0001F504 Rotation on — {merged['rotation_count']} games a day, "
-                f"{merged['rotation_mode']} mode, off-rotation games "
+                f"\U0001F504 Rotation on — {shape}, off-rotation games "
                 f"{merged['rotation_off_mode']}. The first draw is announced "
                 "with the next daily board.")
         return _ephemeral('▶️ Rotation off — every enabled game scores daily.')

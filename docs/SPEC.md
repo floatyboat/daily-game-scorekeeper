@@ -47,7 +47,8 @@ GUILDS                      GUILD#<guild_id>   per-server config: input_channel_
                                                daily_enabled, sticky_enabled,
                                                sticky_games, suppress_embeds,
                                                rotation_enabled, rotation_count,
-                                               rotation_mode, rotation_min_players,
+                                               rotation_mode, rotation_keep_players,
+                                               rotation_promote_players,
                                                rotation_off_mode,
                                                game_overrides (map key->bool),
                                                last_finalized_day, last_posted_day,
@@ -121,9 +122,10 @@ registrar and the handler.
 | `sticky_games` | `sticky games` | `0` | Game shortcut buttons on the sticky's second row (0–3); 0 skips the ranking pass entirely |
 | `suppress_embeds` | `embeds suppress` | `true` | Whether link previews are stripped off counted results |
 | `rotation_enabled` | `rotation enabled` | `true` | Score only a rotating subset of the enabled games each day |
-| `rotation_count` | `rotation games` | `3` | Games in the daily rotation (1–10) |
+| `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 20), so adding a game widens the option |
 | `rotation_mode` | `rotation mode` | `swap` | `swap` replaces under-played members, `random` re-draws daily |
-| `rotation_min_players` | `rotation min_players` | `3` | Membership threshold: games under it rotate out, outsiders reaching it rotate in |
+| `rotation_keep_players` | `rotation keep_players` | `5` | Swap threshold to hold a seat: a scored game under it rotates out |
+| `rotation_promote_players` | `rotation promote_players` | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
 | `rotation_off_mode` | `rotation off_rotation` | `shown` | Board display of off-rotation plays: `shown` below the scored games, or `hidden` |
 | `game_overrides` | `games` | `{}` | Explicit per-guild flips of each game's default state |
 | `last_finalized_day` | — | — | Written at finalize; records how far aggregates are folded |
@@ -218,8 +220,9 @@ afterwards; every reply from them says so.
   run on the same tick and share one parse; when the post hour is later, the draw still
   lands at day start and the announcement repeats under the board. `swap` mode treats membership
   as earned by participation (distinct posters on the scored day, poops included — the
-  same count the archive stores), one threshold both ways: members that drew at least
-  `rotation_min_players` stay, off-rotation games that drew them **join**.
+  same count the archive stores), against two independent thresholds: members that
+  drew at least `rotation_keep_players` **stay**, off-rotation games that drew at
+  least `rotation_promote_players` **join**.
   `rotation_count` is a hard cap — more qualifiers than slots keeps the most played,
   with an exact tie favoring the sitting member (stable sort) — and the bot fills any
   remaining slots at random from the enabled remainder, never a key that just fell

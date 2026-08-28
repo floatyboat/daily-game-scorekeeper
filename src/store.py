@@ -217,9 +217,10 @@ CONFIG_FIELDS = [
     ConfigField('game_overrides', default={}, coerce=_overrides),
 
     # /setup rotation: score only a rotating subset of the enabled games each
-    # day. The four shape fields ride along on the toggle the same way
-    # sticky_games rides on /setup sticky. rotation_min_players is the swap
-    # signal, deliberately separate from the minimum_players display gate.
+    # day. The five shape fields ride along on the toggle the same way
+    # sticky_games rides on /setup sticky. The two swap thresholds are separate
+    # from the minimum_players display gate, and from each other -- how hard a
+    # seat is to hold is a different question from how hard one is to win.
     ConfigField('rotation_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     # Bounded by the game table itself rather than a fixed number: adding a
     # GameSpec widens the option with it, and a rotation wider than the roster
@@ -231,9 +232,12 @@ CONFIG_FIELDS = [
                 group='rotation', option='mode', opt_type=OPT_STRING,
                 choices=ROTATION_MODES,
                 describe="How the next day's games are picked (default swap)"),
-    ConfigField('rotation_min_players', default=3, coerce=int, group='rotation',
-                option='min_players', minimum=1,
-                describe='Games under this many players rotate out; outsiders reaching it rotate in (default 3)'),
+    ConfigField('rotation_keep_players', default=5, coerce=int, group='rotation',
+                option='keep_players', minimum=1,
+                describe='Swap mode: a scored game holds its seat at this many players (default 5)'),
+    ConfigField('rotation_promote_players', default=5, coerce=int, group='rotation',
+                option='promote_players', minimum=1,
+                describe='Swap mode: an off-rotation game earns a seat at this many players (default 5)'),
     ConfigField('rotation_off_mode', default='shown',
                 coerce=_choice(OFF_ROTATION_MODES, 'shown'), group='rotation',
                 option='off_rotation', opt_type=OPT_STRING, choices=OFF_ROTATION_MODES,

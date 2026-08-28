@@ -850,16 +850,19 @@ def spec_enabled(spec, game_overrides=None):
     return not spec.disabled
 
 
-def next_rotation(enabled_keys, count, mode, min_players, prev_rotation, results):
+def next_rotation(enabled_keys, count, mode, keep_players, promote_players,
+                  prev_rotation, results):
     """Draw the rotation for a new day: the game keys that will score on it.
 
     prev_rotation is yesterday's list only when it actually governed the day
     just scored, else None -- None or mode='random' means a fresh sample of
     `count` games. Swap mode treats membership as earned by participation
     (distinct posters in `results`, the same len(day_games[key]) count the
-    archive stores -- poop results keep a game in), one threshold both ways:
-    members that drew at least min_players stay, and off-rotation games that
-    drew them join. `count` is a hard cap -- more qualifiers than slots keeps
+    archive stores -- poop results keep a game in), against two independent
+    thresholds: a member that drew at least keep_players holds its seat, and an
+    off-rotation game that drew at least promote_players wins one. Separate
+    numbers, so a server can make seats easy to win and hard to hold, or the
+    reverse. `count` is a hard cap -- more qualifiers than slots keeps
     the most played, and the sort is stable, so an exact tie favors the
     sitting member over the newcomer. Remaining slots are filled at random
     from the enabled remainder -- never a key that just fell out, unless
@@ -877,10 +880,10 @@ def next_rotation(enabled_keys, count, mode, min_players, prev_rotation, results
     def played(k):
         return len(results.get(k) or {})
 
-    keep = [k for k in prev if played(k) >= min_players]
+    keep = [k for k in prev if played(k) >= keep_players]
     promoted = [k for k in enabled_keys
-                if k not in prev_set and played(k) >= min_players]
-    dropped = [k for k in prev if played(k) < min_players]
+                if k not in prev_set and played(k) >= promote_players]
+    dropped = [k for k in prev if played(k) < keep_players]
     rotation = keep + promoted
     if len(rotation) > target:
         rotation.sort(key=lambda k: -played(k))
