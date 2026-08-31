@@ -21,8 +21,8 @@ there is the whole onboarding — no redeploy, no config file.
 |---|---|
 | **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and the server's streaks — off-rotation plays listed below the scored games for zero points. |
 | **Today's games** | Posted at the server's day start while rotation is on (the default): the rotating subset of games that scores today, as play links. Lands right under the board when the board posts at that same hour. |
-| **Now Playing sticky** | One message kept at the bottom of the input channel showing who has played what today, with **Play**, **Scores** and **Yesterday** buttons. |
-| **`/play`** | A private list of today's games as buttons, linking straight to each puzzle, ordered by what the server is actually playing. With rotation on it lists the games that score today; **`/play all:true`** lists every tracked game. |
+| **Now Playing sticky** | One message kept at the bottom of the input channel: how much the server has played today, today's games as play buttons, the server streak in its heading, and **Play**, **Scores** and **Yesterday** underneath. |
+| **`/play`** | A private list of games as buttons, linking straight to each puzzle, ordered by what the server is actually playing. It lists everything *except* the games already on the sticky, so the two don't repeat; **`/play all:true`** puts the whole roster in one list. |
 | **`/stats`** | A private view of your own streaks — overall, then game by game. Every streak on the board belongs to the server; this is where yours are. |
 | **`/suggest`** | Anyone can propose a game the bot doesn't track yet. |
 | **`/setup`** | Where admins configure the server (needs **Manage Server**). |
@@ -143,15 +143,17 @@ Defaults in parentheses.
   `off_rotation` only decides whether the daily board lists off-rotation plays below
   the scored games for zero points, or leaves them off the board — either way they're
   archived, keep streaks alive, and still count toward rotating in. The
-  day's set is what `/play` and the sticky's Play button list — `/play all:true` shows
-  everything. It is drawn and announced at the server's **day start**, so a server that
+  day's set is what the sticky puts up as buttons, so `/play` and the sticky's Play button
+  list everything else — `/play all:true` puts both halves in one list. It is drawn and announced at the server's **day start**, so a server that
   posts its board later still gets today's games first thing; when the two hours match
   (the default) the announcement lands right under the board.
 - **`/setup daily enabled:false`** — pause the daily post. The sticky drops its
   Yesterday link while paused, since whatever board is still in the channel is stale.
   Today's games keep being drawn and announced — pausing the board doesn't pause the
   rotation.
-- **`/setup sticky enabled:false`** — remove the sticky.
+- **`/setup sticky enabled:false`** — remove the sticky. While it's on, `games:1-5` puts
+  that many of today's games on it as play buttons (off by default) — one row's worth is
+  the cap, and whatever lands there is what `/play` leaves out.
 - **`/setup embeds suppress:false`** — stop stripping link previews off posted results
   (`true` by default). Stripping happens as the sticky counts each result, so it needs
   **Manage Messages** and does nothing at all while the sticky is off. Turning it off

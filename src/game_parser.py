@@ -1450,11 +1450,26 @@ def game_link_button(game, streak=0):
     return {'type': 2, 'style': 5, 'label': label, 'url': game.url}
 
 
+def sticky_row_games(games, results, streaks, limit):
+    """The games the sticky's game row shows: the first `limit` in the
+    app-wide order, or none at all at limit 0 (the default -- and then the
+    ordering pass never runs).
+
+    Defined here, next to the ordering it depends on, because the Play list is
+    the COMPLEMENT of this set: interaction_lambda has to name exactly the
+    games sticky_lambda renders, and two copies of "the top N" would drift
+    apart the first time game_sort_key changed.
+    """
+    if not limit:
+        return []
+    return sorted(games, key=lambda g: game_sort_key(g, results, streaks))[:limit]
+
+
 def top_game_buttons(games, results, streaks, limit):
-    """Link buttons for the first `limit` games in the app-wide order."""
+    """Link buttons for the games the sticky's game row shows."""
     game_streaks = (streaks or {}).get('games', {})
-    ordered = sorted(games, key=lambda g: game_sort_key(g, results, streaks))
-    return [game_link_button(g, game_streaks.get(g.key, 0)) for g in ordered[:limit]]
+    return [game_link_button(g, game_streaks.get(g.key, 0))
+            for g in sticky_row_games(games, results, streaks, limit)]
 
 
 def _server_streak_line(streaks):

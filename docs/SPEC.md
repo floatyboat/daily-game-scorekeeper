@@ -12,7 +12,7 @@ all per-server configuration lives in the table.
 |---|---|---|---|
 | `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Two stages per tick, draw first: draws the rotation at each guild's day start, posts and pins yesterday's scoreboard at its post hour, and announces "Today's games" on either — so a later post hour gets it twice; the only writer of day and aggregate items |
 | `daily-game-sticky` | `src/sticky_lambda.py` | EventBridge rule `daily-game-sticky`, `cron(* * * * ? *)` | Maintains the one sticky ("Now Playing") at the bottom of the input channel |
-| `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, `/stats`, `/setup`, `/suggest`, sticky Play/More/Scores buttons; live ephemeral views |
+| `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, `/stats`, `/setup`, `/suggest`, sticky Play/Scores buttons; live ephemeral views |
 
 Shared modules: `game_parser.py` (game specs, parsing, scoring, render), `scoreboard.py`
 (Discord fetch/format helpers), `store.py` (all DynamoDB I/O and the config schema).
@@ -119,7 +119,7 @@ registrar and the handler.
 | `hundreds_of_messages` | `limits message_volume` | `1` | Input-channel volume (1–8), sets the fetch depth |
 | `daily_enabled` | `daily enabled` | `true` | Whether the daily board posts |
 | `sticky_enabled` | `sticky enabled` | `true` | Whether the sticky is maintained |
-| `sticky_games` | `sticky games` | `0` | Game shortcut buttons on the sticky's second row (0–3); 0 skips the ranking pass entirely |
+| `sticky_games` | `sticky games` | `0` | Today's games as play buttons on the sticky (0–`MAX_BUTTONS_PER_ROW`, one row's worth); 0 skips the ranking pass entirely and hands Play the whole roster |
 | `suppress_embeds` | `embeds suppress` | `true` | Whether link previews are stripped off counted results |
 | `rotation_enabled` | `rotation enabled` | `true` | Score only a rotating subset of the enabled games each day |
 | `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 20), so adding a game widens the option |
@@ -278,12 +278,14 @@ afterwards; every reply from them says so.
   channel but never call `set_rotation`; like `last_posted_day`, rotation state
   advances only on a real run, so repeated test runs leave it untouched — over a day
   already drawn they announce that live set, and otherwise draw a throwaway one.
-- **Consumers.** Bare `/play` and the sticky's Play button list rotation games only
-  (`/play all:true` and the sticky's More button list every enabled game, scored games
-  sorted above off-rotation ones; an exhausted rotation points at them). More is the
-  one surface that exists *because* of the rotation: the sticky carries it only while a
-  rotation governs the day, since unrestricted it would just repeat Play. The sticky's shortcut row is
-  rotation-only, while its content counts every play, on or off rotation. The Scores
+- **Consumers.** The rotation picks the games the sticky's row draws from; bare `/play`
+  and the sticky's Play button are that row's **complement** — every enabled game *except*
+  the ones already on screen as buttons — so the two surfaces partition the roster instead
+  of repeating it. `/play all:true` is the one list that carries both, scored games sorted
+  above the rest; an exhausted complement points at it. With the row off (`sticky_games` 0)
+  there is nothing to subtract and Play lists everything, exactly as it did before
+  rotations existed — the rotation narrows what the sticky shows, never what Play offers.
+  The Scores
   button renders exactly like the board, `rotation_off_mode` included. All of them see
   the new set from day start — including the pre-post-hour window that used to read
   unrestricted, and the morning window before the announcement itself goes out — and
@@ -351,10 +353,13 @@ retroactively.
   aggregate, via the streak bundle) → all-time distinct players desc → title. The 30-day
   tier keeps the tail current: all-time sets only grow, so without it a game the server has
   drifted away from outranks a newer one forever. Used everywhere games are
-  listed — Play buttons, the sticky's shortcut row, and scoreboard sections — so the app
-  presents one consistent order. One helper (`game_link_button`) renders every game link
-  button: emoji, title, and a streak suffix — `🔗 Connections 🔥14`. Today's live count
-  orders the list but is not in the label.
+  listed — Play buttons, the sticky's game row, and scoreboard
+  sections — so the app presents one consistent order. One helper (`game_link_button`)
+  renders every game link button: emoji, title, and a streak suffix — `🔗 Connections 🔥14`.
+  Today's live count orders the list but is not in the label. `sticky_row_games` sits on
+  the same ordering and is the single definition of *what the sticky is showing*: the
+  sticky renders it and the Play list subtracts it, so the two can never drift into
+  showing one game twice or dropping one between them.
 - **The board shows the server's streaks; `/stats` shows yours.** That split is the whole
   display rule, and it is why a `🔥` on the board always means "this server" and never
   "you". A board carrying a number per player per game rendered around forty of them on an
@@ -385,19 +390,27 @@ retroactively.
 - **Why `gather_streaks()` is server-only**: it used to fan out a `batch_get` across every
   player who scored, to feed markers no surface renders any more. That read is gone with
   them — one partition Query is now the whole cost of a board.
-- **Sticky**: the content line ends with the server-wide streak (points scored in any game,
-  live-adjusted) as a bare `🔥N`. One row of buttons always — Play · Scores · Yesterday ·
-  [More], with the grey More (the `/play all:true` view) trailing the everyday buttons and
-  present only while a rotation is narrowing Play —
-  and an optional second: a shortcut row of the first `sticky_games` games in
-  `game_sort_key` order, the head of the Play list one tap earlier. Yesterday appears only
+- **Sticky**: up to two rows — today's games (`sticky_games` of them, in `sticky_row_games`
+  order, drawn from the rotation where one governs the day) sitting *above* the action row
+  Play · Scores · Yesterday, because the games are what the sticky is for and the buttons
+  are the chrome around them. Above both sits the content: the heading carrying the
+  server-wide streak inline — `👾 Now Playing · 🔥17` — over the day's game and play counts.
+  The streak rides on the heading rather than the counts because it is the server's, not
+  the day's; it survives a rollover the counts reset through.
+  `sticky_games` is capped at `MAX_BUTTONS_PER_ROW` — a sixth game wraps to a second row,
+  which is the screenful the sticky is trying not to be — and the cap and the config bound
+  are the same constant, declared in `store` next to `PIN_CAP`.
+  There is no More: Play is already everything the row isn't, so a second list button would
+  only ever re-list what is on screen. (`MORE_BUTTON_CUSTOM_ID` still routes to the
+  `all:true` view — a client can hold a pre-change sticky for a minute — it is simply never
+  rendered.) Yesterday appears only
   once the board covering the day before the tracked one has posted (`last_posted_day`),
   so a guild whose post hour is later than its day start loses the button for that morning
   window rather than pointing it at a day-older board. `sticky_games` is 0 by
   default, and at 0 the ranking pass is skipped rather than run and thrown away. The sticky
   is identified by its own Play button, so extra rows never confuse the match; it reposts
-  when its content *or* any button changes, which covers the shortcut row reshuffling as
-  the day's plays land and an admin resizing or removing it.
+  when its content *or* any button changes, which covers the counts moving, the game row
+  reshuffling as the day's plays land, and an admin resizing or removing it.
 
 ## Commands
 
@@ -406,7 +419,7 @@ retroactively.
   the order `register_commands.py` lists them (which is the order Discord displays):
   `show` · `channel` (both sides at once) · `time` · `limits` · `games` · `daily on|off` ·
   `sticky on|off` (off also deletes the existing sticky; carries the optional `games`
-  shortcut-row size, a `ConfigField` in the `sticky` group that `toggle_sub` appends the
+  row size, a `ConfigField` in the `sticky` group that `toggle_sub` appends the
   same way `field_sub` builds a whole subcommand) · `rotation on|off` (carries the four
   `rotation`-group fields the same way; the mode fields register fixed choice menus off
   `ConfigField.choices`) · `embeds suppress:on|off` ·

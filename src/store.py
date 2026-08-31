@@ -71,6 +71,12 @@ OPT_SUB_COMMAND, OPT_STRING, OPT_INTEGER, OPT_BOOLEAN, OPT_USER, OPT_CHANNEL = 1
 PIN_CAP = 250
 PIN_PAGE = 50
 
+# Buttons Discord fits in one action row. Declared here for the same reason as
+# PIN_CAP: sticky_games is bounded by it below, and a bound that drifted from
+# the real row width would silently buy a second row. scoreboard re-exports it
+# to the render side.
+MAX_BUTTONS_PER_ROW = 5
+
 
 @dataclass(frozen=True)
 class ConfigField:
@@ -210,9 +216,12 @@ CONFIG_FIELDS = [
     # optional option, since it only means anything while the sticky is on.
     ConfigField('daily_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     ConfigField('sticky_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
+    # Capped at the width of one action row: a sixth button wraps to a second
+    # row, which is the screenful the sticky is trying not to be.
     ConfigField('sticky_games', default=0, coerce=int, group='sticky',
-                option='games', minimum=0, maximum=3,
-                describe='Game shortcut buttons on the sticky, 0-3 (default 0, off)'),
+                option='games', minimum=0, maximum=MAX_BUTTONS_PER_ROW,
+                describe=f'Play buttons for today\'s games on the sticky, '
+                         f'0-{MAX_BUTTONS_PER_ROW} (default 0, off)'),
     ConfigField('suppress_embeds', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     ConfigField('game_overrides', default={}, coerce=_overrides),
 

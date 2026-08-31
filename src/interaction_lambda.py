@@ -11,7 +11,7 @@ from nacl.signing import VerifyKey
 from game_parser import (
     build_games, compute_puzzle_numbers, format_scoreboard_components,
     make_timestamp_checker, game_sort_key, match_suggestion, GAME_SPECS,
-    spec_enabled, game_link_button,
+    spec_enabled, game_link_button, sticky_row_games,
 )
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
@@ -252,10 +252,13 @@ def interaction_user_id(body):
 
 
 def _wants_all(body):
-    """True when the caller asked for every tracked game rather than today's
-    rotation: a /play carrying all:true, or the sticky's More button, which is
-    that same view one tap from the channel. The sticky's Play button carries
-    no options and stays narrowed to the rotation."""
+    """True when the caller asked for the whole roster in one list -- the games
+    on the sticky included -- rather than the everything-else list Play gives.
+
+    That is `/play all:true`, plus a click on a legacy More button: the sticky
+    stopped rendering one when Play became the complement of its game row, but
+    a client can still be holding a sticky from before that.
+    """
     data = body.get('data') or {}
     if data.get('custom_id') == MORE_BUTTON_CUSTOM_ID:
         return True
@@ -275,7 +278,8 @@ def interaction_guild_id(body):
 
 def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
     """Today's tracked games the presser hasn't logged yet, plus the live
-    results and streak bundle backing them.
+    results and streak bundle backing them, plus the keys the sticky is
+    showing as buttons right now.
 
     Shared by the Play and Random buttons so both work off the same live view
     of the channel. When user_id is known, games that user has already logged
@@ -285,6 +289,10 @@ def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
     streak numbers reflect the whole server, not just the presser's remainder.
     games always spans the full enabled list (the /play all:true view); the
     returned rotation (key list or None) is how the caller narrows it.
+
+    on_sticky is ranked over every game today offers, deliberately BEFORE the
+    presser's filter: it has to name the same set sticky_lambda rendered for
+    the channel, which knows nothing about who is looking.
     """
     today = None
     rotation = None
@@ -303,25 +311,34 @@ def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
         streaks = gather_streaks(guild_id, today, results, games,
                                  cfg['minimum_players'])
 
+    rot = None if rotation is None else set(rotation)
+    playable = games if rot is None else [g for g in games if g.key in rot]
+    on_sticky = {g.key for g in sticky_row_games(playable, results, streaks,
+                                                 cfg['sticky_games'])}
+
     if user_id is not None:
         games = [g for g in games if user_id not in results.get(g.key, {})]
 
-    return games, results, streaks, rotation
+    return games, results, streaks, rotation, on_sticky
 
 
 ALL_PLAYED_MESSAGE = "\U0001F389 You've played every tracked game today!"
-ROTATION_PLAYED_MESSAGE = ("\U0001F389 You've played all of today's games! "
-                           "**More** on the sticky — or `/play all:true`")
+STICKY_GAMES_MESSAGE = ("\U0001F389 You've played everything but today's games! "
+                        "They're the buttons on the sticky — "
+                        "or `/play all:true` for one list")
 
 
 def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_all=False):
     """Build an ephemeral message with link buttons for tracked games.
 
     When user_id is known, only games that user hasn't logged today are shown,
-    so the Play list is personal to whoever pressed the button. When a
-    rotation governs today it narrows the list to the games that score --
-    unless show_all (`/play all:true`, or the sticky's More button) asks for
-    every tracked game, off-rotation ones included. Buttons
+    so the Play list is personal to whoever pressed the button. Play is the
+    COMPLEMENT of the sticky's game row -- every enabled game except the ones
+    already sitting there as buttons -- so the two surfaces divide the roster
+    instead of repeating it, and a guild with the row off (sticky_games 0, the
+    default) gets the whole list exactly as before. show_all
+    (`/play all:true`) overrides that and lists everything, today's scoring
+    games sorted to the top. Buttons
     follow the app-wide game ordering (game_sort_key, same as scoreboard
     sections): today's live count, then active server streak, then 30-day
     distinct players, then all-time distinct players, then title. Labels
@@ -332,15 +349,18 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_
     title.
     """
     cfg = cfg or guild_cfg(guild_id)
-    games, results, streaks, rotation = unplayed_games(channel_id, cfg, user_id, guild_id)
+    games, results, streaks, rotation, on_sticky = unplayed_games(
+        channel_id, cfg, user_id, guild_id)
     game_streaks = (streaks or {}).get('games', {})
 
     rot = set(rotation) if rotation is not None else None
-    restricted = rot is not None and not show_all
-    more_games = False
+    restricted = bool(on_sticky) and not show_all
+    sticky_left = False
     if restricted:
-        more_games = any(g.key not in rot for g in games)
-        games = [g for g in games if g.key in rot]
+        # The complement: those games are already buttons on the sticky, so a
+        # Play list carrying them would be the sticky with extra taps.
+        sticky_left = any(g.key in on_sticky for g in games)
+        games = [g for g in games if g.key not in on_sticky]
 
     # Scored games always sort above off-rotation ones -- the split only bites
     # on all:true, the one list that mixes both; the app-wide play-count
@@ -365,12 +385,12 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_
         ]})
 
     # Filtering can empty the list once a user has logged everything today --
-    # everything in the rotation, when one narrows it; point at all:true only
-    # while it would actually show more.
+    # everything off the sticky, when its row is up; point at the row's games
+    # only while some of them are actually left to play.
     if action_rows:
         content = "Pick a game to play!"
-    elif restricted and more_games:
-        content = ROTATION_PLAYED_MESSAGE
+    elif restricted and sticky_left:
+        content = STICKY_GAMES_MESSAGE
     else:
         content = ALL_PLAYED_MESSAGE
 
@@ -677,10 +697,10 @@ def delete_stickies(channel_id):
 
 
 def sticky_row_phrase(count):
-    """The sticky's shortcut row in prose, for the summary and the toggle reply."""
+    """The sticky's game row in prose, for the summary and the toggle reply."""
     if not count:
-        return 'no shortcut row'
-    return f"{count} game shortcut{'' if count == 1 else 's'}"
+        return 'no game buttons'
+    return f"{count} game button{'' if count == 1 else 's'}"
 
 
 def config_summary(cfg):
@@ -774,7 +794,7 @@ def handle_setup(body, guild_id):
     if sub == 'sticky':
         # `games` rides along on this subcommand (store.CONFIG_FIELDS declares
         # it group='sticky'), so one call can switch the sticky on and size its
-        # shortcut row. Left out, the stored value stands.
+        # game row. Left out, the stored value stands.
         enabled = bool(args.get('enabled'))
         updates = {'sticky_enabled': enabled, **collect_updates('sticky', args)}
         store.update_config(guild_id, updates)
@@ -782,7 +802,8 @@ def handle_setup(body, guild_id):
         if enabled:
             return _ephemeral('▶️ Sticky enabled — it will appear in the input '
                               'channel within a minute, with '
-                              f'{sticky_row_phrase(rows)}.')
+                              f'{sticky_row_phrase(rows)}. Play lists whatever '
+                              'the row leaves out.')
         note = ''
         if cfg['input_channel_id']:
             try:

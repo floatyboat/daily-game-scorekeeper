@@ -44,7 +44,7 @@ PERM_MANAGE_GUILD = 0x20
 # dropped game looks identical to one an admin turned off. These live here as
 # constants so that split has something to divide by.
 MAX_ACTION_ROWS = 5          # top-level components in one message
-MAX_BUTTONS_PER_ROW = 5
+MAX_BUTTONS_PER_ROW = store.MAX_BUTTONS_PER_ROW   # bounds sticky_games, so it lives there
 MAX_SELECT_OPTIONS = 25      # options in one string select
 MAX_MESSAGE_LENGTH = 2000    # characters in one message's content
 

@@ -14,7 +14,7 @@ from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
     make_session, fetch_messages, reference_date, is_scoreboard_message,
     is_sticky_message, build_avatar_pool, safe_guild_id, gather_streaks,
-    PLAY_BUTTON_CUSTOM_ID, MORE_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
+    PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     STICKY_HEADING,
 )
 import store
@@ -27,18 +27,20 @@ DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 _session = make_session(DISCORD_BOT_TOKEN)
 
 
-def build_sticky_components(yesterday_url=None, game_buttons=(), show_more=False):
-    """The sticky's rows: the action row, then the top-games shortcut row.
+def build_sticky_components(yesterday_url=None, game_buttons=()):
+    """The sticky's rows: today's games, then the action row.
 
-    game_buttons are the leading games in the app-wide order, so the row is the
-    head of the Play list surfaced a tap earlier. Empty -- the guild's
-    sticky_games is 0 (the default), or it has no games enabled -- just drops
-    the row; Discord rejects an action row with no components.
+    game_buttons are the games the sticky advertises (sticky_row_games) -- the
+    day's rotation, or the most-played of the roster where none narrows it --
+    and they sit ABOVE the action row, directly under the heading, because they
+    are what the sticky is for; Play and Scores are the chrome around them.
+    Empty -- sticky_games is 0 (the default), or the guild has no games enabled
+    -- just drops the row; Discord rejects an action row with no components.
 
-    show_more adds the More button (the `/play all:true` view, everything
-    tracked rather than today's draw) last, after the everyday buttons. Only
-    worth a slot while a rotation is actually narrowing Play -- unrestricted,
-    the two buttons would open the same list -- so run_guild gates it on that.
+    There is no More button: these games plus the Play list behind them are the
+    whole roster, so a second list button could only re-list what is on screen.
+    (MORE_BUTTON_CUSTOM_ID still routes to the all:true view -- a client can be
+    holding a sticky from before this change -- it is just never rendered.)
     """
     buttons = [
         {'type': 2, 'style': 1, 'label': 'Play', 'custom_id': PLAY_BUTTON_CUSTOM_ID},
@@ -46,12 +48,10 @@ def build_sticky_components(yesterday_url=None, game_buttons=(), show_more=False
     ]
     if yesterday_url:
         buttons.append({'type': 2, 'style': 5, 'label': 'Yesterday', 'url': yesterday_url})
-    if show_more:
-        buttons.append({'type': 2, 'style': 2, 'label': 'More',
-                        'custom_id': MORE_BUTTON_CUSTOM_ID})
-    rows = [{'type': 1, 'components': buttons}]
+    rows = []
     if game_buttons:
         rows.append({'type': 1, 'components': list(game_buttons)})
+    rows.append({'type': 1, 'components': buttons})
     return rows
 
 
@@ -125,11 +125,10 @@ def _button_identity(rows):
 def _sticky_is_current(sticky, content, components):
     """True when the live sticky already renders exactly what we'd post now.
 
-    Content plus every button, so a stale Yesterday link, a reshuffled or
-    restreaked shortcut row, a row an admin has just resized or switched off,
-    a More button today's rotation has just introduced (or a lapsed rotation
-    has dropped), and a sticky posted before any of these buttons existed all
-    force a repost.
+    Content plus every button, so a game row today's draw has redrawn, a stale
+    Yesterday link, a reshuffled or restreaked game row, a row an admin has
+    just resized or switched off, and a sticky posted before any of these
+    buttons existed all force a repost.
     """
     if sticky.get('content', '') != content:
         return False
@@ -137,22 +136,30 @@ def _sticky_is_current(sticky, content, components):
 
 
 def build_sticky_content(results, server_streak=0):
+    """The heading, carrying the server-wide streak inline, over the day's
+    counts -- how much the server has played, under what to play it on.
+
+    The streak rides on the heading rather than the counts line because it is a
+    property of the server, not of today: it survives a day the counts reset,
+    and reading `Now Playing · \U0001F525 17` as one line is the nudge.
+    """
+    flair = f' · \U0001F525{server_streak}' if server_streak >= STREAK_MIN else ''
+
     # Distinct games that have at least one score, then every play logged
     # against them (each player x game result counts once).
     game_count = sum(1 for scores in results.values() if scores)
     play_count = sum(len(scores) for scores in results.values())
-    flair = f' · \U0001F525{server_streak}' if server_streak >= STREAK_MIN else ''
     if play_count == 0:
-        # Flair stays on the empty state on purpose: "no scores yet, the
-        # server streak is on the line" is the strongest nudge of the day.
-        return f"{STICKY_HEADING}\nNo scores yet today{flair}"
-    g = 'game' if game_count == 1 else 'games'
-    p = 'play' if play_count == 1 else 'plays'
-    return f"{STICKY_HEADING}\n{game_count} {g} · {play_count} {p} today{flair}"
+        counts = 'No scores yet today'
+    else:
+        g = 'game' if game_count == 1 else 'games'
+        p = 'play' if play_count == 1 else 'plays'
+        counts = f'{game_count} {g} · {play_count} {p} today'
+    return f'{STICKY_HEADING}{flair}\n{counts}'
 
 
 def update_sticky(channel_id, channel_messages, results, server_streak=0,
-                  link_yesterday=True, game_buttons=(), show_more=False):
+                  link_yesterday=True, game_buttons=()):
     """Maintain exactly one sticky at the bottom of channel_id.
 
     No-op only when a single sticky is already the most recent message AND both
@@ -184,7 +191,7 @@ def update_sticky(channel_id, channel_messages, results, server_streak=0,
             # Discord's client routes by channel_id/message_id; the guild slot
             # accepts @me even for guild messages.
             yesterday_url = f'https://discord.com/channels/@me/{channel_id}/{scoreboard_id}'
-    components = build_sticky_components(yesterday_url, game_buttons, show_more)
+    components = build_sticky_components(yesterday_url, game_buttons)
 
     if (len(stickies) == 1 and channel_messages
             and channel_messages[0]['id'] == stickies[0]['id']
@@ -286,19 +293,18 @@ def run_guild(cfg, force=False):
                              cfg['minimum_players'])
     server_streak = (streaks or {}).get('server', 0)
 
-    # Shortcut row: the head of the Play list, same ordering and labels. Off by
-    # default (sticky_games 0), and then the ordering pass never runs -- a
-    # guild that doesn't want the row pays nothing to rank games for it. Only
-    # rotation games: the row mirrors what Play lists. The content counts stay
-    # unfiltered -- every play counts, on or off rotation.
+    # What the sticky advertises: the games that actually score today, in the
+    # app-wide order, with the same labels Play uses.
     rot = set(rotation) if rotation is not None else None
-    # More is the way back out to the games today's draw left behind, so it
-    # rides on the same condition that narrows Play in the first place.
-    show_more = rot is not None
-    game_buttons = ()
-    if cfg['sticky_games']:
-        row_games = games if rot is None else [g for g in games if g.key in rot]
-        game_buttons = top_game_buttons(row_games, results, streaks, cfg['sticky_games'])
+    playable = games if rot is None else [g for g in games if g.key in rot]
+
+    # The game row: today's games as buttons, playable without opening
+    # anything. sticky_games is 0 by default, and then the ordering pass never
+    # runs -- a guild that doesn't want the row pays nothing to rank games for
+    # it. Whatever lands here is exactly what the Play list leaves out
+    # (sticky_row_games is the shared definition), so the sticky and Play
+    # partition the roster between them instead of repeating it.
+    game_buttons = top_game_buttons(playable, results, streaks, cfg['sticky_games'])
 
     # Yesterday links the newest board in the channel, which only covers the
     # day before this one once today's board has posted -- between day start
@@ -310,7 +316,7 @@ def run_guild(cfg, force=False):
     link_yesterday = cfg['daily_enabled'] and (force or posted_yesterday)
     action = update_sticky(channel_id, messages, results, server_streak,
                            link_yesterday=link_yesterday,
-                           game_buttons=game_buttons, show_more=show_more)
+                           game_buttons=game_buttons)
     if action == 'unchanged' and not force:
         # 'unchanged' guarantees messages[0] is the single, settled sticky.
         _probe_state[gid] = {'fingerprint': fingerprint,
