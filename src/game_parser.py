@@ -1412,15 +1412,35 @@ def _puzzle_label(puzzle, reference_date):
 
 # Minimum streak length to display, everywhere streaks appear: game title
 # suffixes, Play labels, sticky flair, personal markers, and break callouts.
-# Shorter streaks still accrue and drive sort order -- they just don't render.
+# Shorter streaks still accrue -- they just don't render, and what doesn't
+# render doesn't sort either (shown_streak).
 STREAK_MIN = int(os.getenv('MINIMUM_STREAK') or 3)
+
+
+def shown_streak(n):
+    """A server streak as every surface treats it: itself once it reaches
+    STREAK_MIN, 0 below that.
+
+    The single definition of "this streak is visible", spent by the renderers
+    and by game_sort_key alike so the two can never disagree. A streak the
+    surface doesn't print doesn't reorder it either: an invisible tiebreak
+    reads as an arbitrary shuffle to the only person who can see the result.
+
+    Server numbers only -- /stats is deliberately outside the threshold and
+    must not route through here.
+    """
+    return n if n >= STREAK_MIN else 0
 
 
 def game_sort_key(game, results, streaks):
     """The app-wide game ordering, shared by the scoreboard sections, the Play
-    list and the sticky's shortcut row: today's players desc -> active streak
-    desc -> distinct players in the last 30 days desc -> all-time distinct
-    players desc -> title.
+    list and the sticky's shortcut row: today's players desc -> active VISIBLE
+    streak desc -> distinct players in the last 30 days desc -> all-time
+    distinct players desc -> title.
+
+    Only a streak the surface actually shows sorts (shown_streak): below
+    STREAK_MIN it is 0 here exactly as it is absent from every label, so the
+    order never moves a game for a reason nothing on screen explains.
 
     The 30-day tier is what keeps the tail current: all-time player sets only
     grow, so a game the server has drifted away from outranks a newer one
@@ -1429,7 +1449,7 @@ def game_sort_key(game, results, streaks):
     """
     bundle = streaks or {}
     return (-len(results.get(game.key) or {}),
-            -bundle.get('games', {}).get(game.key, 0),
+            -shown_streak(bundle.get('games', {}).get(game.key, 0)),
             -bundle.get('players_30d', {}).get(game.key, 0),
             -bundle.get('players_total', {}).get(game.key, 0),
             game.title.lower())
@@ -1445,7 +1465,7 @@ def game_link_button(game, streak=0):
     scoreboard already renders, and they churned the label on every play.
     """
     label = f'{game.emoji} {game.title}'
-    if streak >= STREAK_MIN:
+    if shown_streak(streak):
         label += f' \U0001F525{streak}'
     return {'type': 2, 'style': 5, 'label': label, 'url': game.url}
 
@@ -1484,7 +1504,7 @@ def _server_streak_line(streaks):
     on the board always means "this server", never "you".
     """
     n = (streaks or {}).get('server', 0)
-    return f"\n\U0001F525 **{n}-day streak**" if n >= STREAK_MIN else ''
+    return f"\n\U0001F525 **{n}-day streak**" if shown_streak(n) else ''
 
 
 def _streak_break_lines(streaks, games_by_key):
@@ -1500,7 +1520,7 @@ def _streak_break_lines(streaks, games_by_key):
     lines = []
     for key, ended in sorted(streaks['broken'].items(), key=lambda kv: (-kv[1], kv[0])):
         game = games_by_key.get(key)
-        if game and ended >= STREAK_MIN:
+        if game and shown_streak(ended):
             lines.append(f"\U0001F494 {game.title} streak ended at {ended}")
     return lines
 
@@ -1703,7 +1723,7 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
         titled = f"[{game.title}]({game.url})" if style.urls else game.title
         score_text = f"**{titled} {game.emoji} {puzzle_label}**"
         streak = game_streaks.get(game.key, 0)
-        if streak >= STREAK_MIN:
+        if shown_streak(streak):
             score_text += f" \U0001F525{streak}"
         return score_text + "\n" + _format_game_players(
             results[game.key], game.metric, game.total, names,

@@ -239,7 +239,7 @@ TEST_CHANNEL_ID=...          # where local/test-mode runs post
 TEST_GUILD_ID=...            # server the interaction fixtures pretend to come from
 TEST_USER_ID=...             # whose stats the /stats fixture asks for
 DEV_CHANNEL_ID=...           # optional: where /suggest submissions land
-MINIMUM_STREAK=3             # optional: shortest streak that renders (default 3)
+MINIMUM_STREAK=3             # optional: shortest streak that renders, and sorts (default 3)
 ```
 
 That is the complete list — these are global identity only. **Per-server settings live

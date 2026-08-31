@@ -316,8 +316,10 @@ afterwards; every reply from them says so.
   implies — normally a reset streak.
 - One display threshold governs every *server* streak surface (the board's server line and
   game suffixes, Play suffixes, sticky flair, break callouts): the `MINIMUM_STREAK` env var,
-  default 3. Shorter streaks still accrue and still sort. `/stats` is deliberately outside
-  it — see Read paths and display.
+  default 3. Shorter streaks still accrue but neither render nor sort: `game_sort_key`
+  spends the same `shown_streak()` threshold the labels do, so a streak nothing on screen
+  shows can't move a game in the order either. `/stats` is deliberately outside it — see
+  Read paths and display.
 
 ## Write path (daily lambda, the only writer)
 
@@ -349,8 +351,10 @@ retroactively.
 - **`store.py`** owns all DynamoDB I/O and the config schema. IAM per lambda role:
   Query/GetItem/PutItem/UpdateItem/Scan on the table ARN.
 - **Game ordering** (`game_sort_key`, one shared helper): today's live count desc → active
-  server streak desc → distinct players in the last 30 days desc (`players_30d` off the game
-  aggregate, via the streak bundle) → all-time distinct players desc → title. The 30-day
+  *visible* server streak desc (`shown_streak()`, so below `MINIMUM_STREAK` it is 0 here
+  exactly as it is absent from every label) → distinct players in the last 30 days desc
+  (`players_30d` off the game aggregate, via the streak bundle) → all-time distinct players
+  desc → title. The 30-day
   tier keeps the tail current: all-time sets only grow, so without it a game the server has
   drifted away from outranks a newer one forever. Used everywhere games are
   listed — Play buttons, the sticky's game row, and scoreboard

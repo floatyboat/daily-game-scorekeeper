@@ -340,8 +340,9 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_
     (`/play all:true`) overrides that and lists everything, today's scoring
     games sorted to the top. Buttons
     follow the app-wide game ordering (game_sort_key, same as scoreboard
-    sections): today's live count, then active server streak, then 30-day
-    distinct players, then all-time distinct players, then title. Labels
+    sections): today's live count, then the server streak the labels actually
+    show, then 30-day distinct players, then all-time distinct players, then
+    title. Labels
     (game_link_button) carry a fire-streak suffix
     while the game's server streak is alive; today's count orders the list but
     is not shown. With no user_id (an unidentifiable presser) every game is

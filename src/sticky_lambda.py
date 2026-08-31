@@ -8,7 +8,7 @@ from collections import defaultdict
 
 from game_parser import (
     compute_puzzle_numbers, build_games, top_game_buttons,
-    match_message, make_timestamp_checker, STREAK_MIN,
+    match_message, make_timestamp_checker, shown_streak,
 )
 from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
@@ -143,7 +143,7 @@ def build_sticky_content(results, server_streak=0):
     property of the server, not of today: it survives a day the counts reset,
     and reading `Now Playing · \U0001F525 17` as one line is the nudge.
     """
-    flair = f' · \U0001F525{server_streak}' if server_streak >= STREAK_MIN else ''
+    flair = f' · \U0001F525{server_streak}' if shown_streak(server_streak) else ''
 
     # Distinct games that have at least one score, then every play logged
     # against them (each player x game result counts once).
