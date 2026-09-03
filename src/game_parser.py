@@ -535,22 +535,75 @@ def _parse_pips(m, content):
 
 
 # The hint tray the share text draws above its result line: one circle per hint
-# the puzzle offered, a pale one for each hint taken. Any colored-circle emoji
-# counts, so a change of palette doesn't cost us the count.
+# the puzzle offered, the taken ones leading in the order they were spent and
+# the untaken trailing. Any colored-circle emoji counts toward the tray's SIZE,
+# so a change of palette can't cost us the total. Telling the taken ones apart
+# by kind does need the palette, and the two colors below are it -- a change
+# there costs only the split, which _parse_minutecryptic notices and falls
+# back on.
 _MINUTECRYPTIC_HINT = re.compile('[\u26aa\u26ab\U0001F534\U0001F535\U0001F7E0-\U0001F7E4]')
+_MINUTECRYPTIC_LETTER = '\U0001F7E1'    # a revealed letter
+_MINUTECRYPTIC_NUDGE = '\u26aa'         # a prose nudge
+
+# The enumeration closing the clue line -- '(6)', or '(3,4)' for two words --
+# which is the answer's length and so how many letter hints the puzzle has to
+# give. It is the last parenthesized run of digits in the captured span; the
+# solver count sits past the hint number, outside the capture.
+_MINUTECRYPTIC_ENUM = re.compile(r'\((\d[\d\s,\u2010-\u2015-]*)\)')
 
 
 def _parse_minutecryptic(m, content):
-    """(hints used, how many the puzzle offered) -- golf on hints, out of a per-day total.
+    """(weighted, hints, letters, letters available) -- golf on hints, where a
+    revealed letter costs more than a nudge.
+
+    Minute Cryptic gives two kinds of help and its share text counts them as
+    one: a nudge, a line of prose about the wordplay, and a revealed letter,
+    which on a six-letter answer is a sixth of the solution outright -- take
+    all six and you have simply been handed it. So a nudge costs 1 and the Nth
+    letter costs N+1 (2, 3, 4 ...), folded into one weighted number the board
+    ranks on, the way travle folds its hint penalty into +N. `hints` is the raw
+    count the share text prints, carried so the board line can show the player
+    the number they actually see; `letters available` is what the poop rule
+    reads, since revealing every one of them earns nothing.
 
     Minute Cryptic sets its own hint count per puzzle, and the tray is the only
     place the share text says what it was. A message without one (an older
     share, or one retyped without the emoji) leaves the total to the spec's
-    default, the same fallback bandle takes.
+    default, the same fallback bandle takes -- and, having no colors to read,
+    scores every hint alike, exactly as this game did before letters were
+    weighted. Any tray whose colors don't add up to the stated hint count takes
+    that same fallback, so an unfamiliar palette costs the weighting rather
+    than the result.
     """
     hints = int(m.group(2))
-    available = len(_MINUTECRYPTIC_HINT.findall(m.group(1)))
-    return hints, ({'minutecryptic_total': available} if available else {})
+    span = m.group(1)
+    available = len(_MINUTECRYPTIC_HINT.findall(span))
+    letters = span.count(_MINUTECRYPTIC_LETTER)
+    if letters + span.count(_MINUTECRYPTIC_NUDGE) != hints:
+        letters = 0
+    # L letters cost 2 + 3 + ... + (L+1), which is L(L+3)/2, and every other
+    # hint a flat 1.
+    weighted = (hints - letters) + letters * (letters + 3) // 2
+    # How many letters were on offer, when the clue says. Only counted if the
+    # tray leaves room for a nudge beside them and for the letters already
+    # taken -- a reading that says otherwise has matched something that isn't
+    # the enumeration, and a wrong one here would poop a player who solved.
+    enum = _MINUTECRYPTIC_ENUM.findall(span)
+    n_letters = sum(int(d) for d in re.findall(r'\d+', enum[-1])) if enum else 0
+    letters_available = n_letters if letters <= n_letters < available else 0
+    return ((weighted, hints, letters, letters_available),
+            {'minutecryptic_total': available} if available else {})
+
+
+def _minutecryptic_poop(score, total):
+    """A Minute Cryptic result that earns nothing: every letter revealed, which
+    is the answer handed over however few nudges went with it -- or, for a
+    share with no tray to bound it, more hints than the fallback total, the
+    same guard 'guesses' keeps. One definition, spent by the points fold and by
+    the board line, so the zero and the medal can never disagree."""
+    _, hints, letters, letters_available = score
+    return bool((letters_available and letters >= letters_available)
+                or (total and hints > total))
 
 
 def _parse_gerrymandle(m, content):
@@ -787,13 +840,16 @@ GAME_SPECS = [
         parse=lambda m, c: (int(m.group(1)), {}),
     ),
     GameSpec(
-        key='minutecryptic', emoji='🧩', title='Minute Cryptic', metric='guesses',
+        key='minutecryptic', emoji='🧩', title='Minute Cryptic', metric='cryptic',
         total=8, total_key='minutecryptic_total', url='https://www.minutecryptic.com',
         puzzle=lambda ref: (ref - datetime(2024, 6, 26)).days + 1,
         # Scored like golf on hints used, so fewer is better and 0 is a clean
-        # solve. How many hints were on offer changes from puzzle to puzzle, so
-        # like bandle the total comes off the message -- group 1 is everything
-        # between the date and the count, which is where the hint tray sits.
+        # solve -- but a revealed letter costs more than a nudge, so what ranks
+        # is the weighted figure _parse_minutecryptic builds out of the tray.
+        # How many hints were on offer changes from puzzle to puzzle, so like
+        # bandle the total comes off the message -- group 1 is everything
+        # between the date and the count, which is where the hint tray sits,
+        # and the clue's enumeration with it.
         # The leading emoji on the hint line varies with par (🏆 at or under, 🏋
         # over), so match the count and not the emoji.
         # The share text heads on the date, not the puzzle number, so the
@@ -1091,6 +1147,9 @@ def compute_points(results, games, minimum_players=1, first_place_points=None):
             elif metric == 'timed_win':
                 if current_score[0] != 0:
                     is_poop = True
+            elif metric == 'cryptic':
+                if _minutecryptic_poop(current_score, total):
+                    is_poop = True
 
             # Collect tied players
             j = i + 1
@@ -1381,6 +1440,18 @@ def _format_game_players(game_scores, metric, total, names=None,
             else:  # tier == 2: complete wiff
                 medal = '💩 '
                 score_str = f"{raw_n} away{extra}"
+        elif metric == 'cryptic':
+            # (weighted, hints, letters, letters available). The raw hint count
+            # leads, because that is the number on the player's own share; the
+            # letters follow it because they are what ranks two players apart
+            # on an otherwise identical line -- the same reason travle prints
+            # its hints and maptap its unweighted score.
+            hints, letters = current_score[1], current_score[2]
+            if _minutecryptic_poop(current_score, total):
+                medal = '💩 '
+            score_str = f"{hints}{out_of}"
+            if letters:
+                score_str += f" ({letters} letter" + ("s)" if letters != 1 else ")")
         else:  # guesses
             if total and current_score > total:
                 medal = '💩 '
