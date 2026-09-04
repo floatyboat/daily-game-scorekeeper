@@ -878,11 +878,12 @@ GAME_SPECS = [
     ),
     GameSpec(
         key='krillion', emoji='🦐', title='Krillion', metric='score',
-        total=700, url='https://krillion.io',
+        total=0, url='https://krillion.io',
         puzzle=lambda ref: (ref - datetime(2026, 7, 16)).days + 1,
         # Seven rounds, each scored by how obscure the answer was (10 for one
-        # the whole school reaches for, up to 100 for the day's gem), so the
-        # score line is a sum out of 700 and higher is better.
+        # the whole school reaches for, up to 100 for the day's gem), so higher
+        # is better. The ceiling is 700, but total stays 0 to keep the '/700'
+        # off the board -- the score reads as a tally here, not a fraction.
         #
         # The share text puts the score alone on the line under the heading,
         # which is why the pattern spans the newline to reach it. That heading
@@ -1329,8 +1330,8 @@ def _format_game_players(game_scores, metric, total, names=None,
         return f'<@{uid}>'
 
     # The "/N" every score with a maximum carries, and the one place the
-    # show_totals rung is spent. Games scored on an open scale (total=0) never
-    # had one.
+    # show_totals rung is spent. Games with total=0 -- an open scale, or a
+    # ceiling deliberately not printed -- never had one.
     out_of = f'/{total}' if show_totals and total else ''
 
     medals = ['👑', '🥈', '🥉']
