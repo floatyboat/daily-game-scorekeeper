@@ -316,6 +316,11 @@ replays `tests/events/interaction/interaction_sticky_scores.json` by default; pa
 another fixture path as an argument. In the server, `/setup show` should print the
 configuration you just wrote.
 
+Every click and command the bot serves prints one JSON line to the interaction lambda's
+log group (`/aws/lambda/daily-game-play`), so CloudWatch Logs Insights can show who uses
+what — `filter event = "interaction" | stats count() by name, username`. That is the
+bot's only usage record; the scheduled lambdas keep none.
+
 ## Seeding streak history (optional)
 
 Streaks otherwise start from the first day the store sees. Replay channel history so

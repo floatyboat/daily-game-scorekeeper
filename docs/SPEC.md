@@ -458,6 +458,21 @@ retroactively.
   name or key, or a spec's own host and path among the submitted links — and answers
   whether the game is tracked or merely off in this server. Modal submits (interaction
   type 5) answer inline rather than deferring.
+- **Usage log.** Every verified interaction except Discord's endpoint PING prints one
+  JSON line before it is routed (`interaction_lambda.log_interaction`):
+  `{"event": "interaction", "kind": "command" | "component" | "modal", "name": "setup
+  rotation" | "sticky_play", "args": "enabled=True games=3", "guild", "channel", "user",
+  "username"}`. It is the bot's only usage telemetry — nothing else records a click. One
+  line per click, written by the invocation that ACKs it: the self-invoked second phase of
+  a deferred reply is the same click, and the keep-warm ping returns before it. JSON
+  rather than prose because Logs Insights discovers a JSON line's keys as fields, so on
+  `/aws/lambda/daily-game-play` a query needs no parse step:
+
+  ```
+  filter event = "interaction"
+  | stats count() as clicks by name, username
+  | sort clicks desc
+  ```
 
 ## Scheduling
 

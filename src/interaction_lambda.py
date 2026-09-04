@@ -276,6 +276,55 @@ def interaction_guild_id(body):
     return body.get('guild_id') or safe_guild_id(_session, body.get('channel_id'))
 
 
+# Discord interaction types, by the `type` on every interaction body.
+INTERACTION_KINDS = {2: 'command', 3: 'component', 4: 'autocomplete', 5: 'modal'}
+# The option types that nest further options: SUB_COMMAND and SUB_COMMAND_GROUP.
+_NESTING_OPTIONS = (1, 2)
+
+
+def describe_interaction(body):
+    """One flat record of what an interaction is and who sent it.
+
+    `name` is the thing the user reached for -- a command with its subcommand
+    path (`setup rotation`), or a component's custom_id (`sticky_play`) -- and
+    `args` its leaf options as `k=v` pairs, or a select's chosen values. Modal
+    fields are left out: a /suggest paste is long, and it already lands in the
+    dev channel whole.
+    """
+    data = body.get('data') or {}
+    kind = INTERACTION_KINDS.get(body.get('type'), f"type{body.get('type')}")
+    name = data.get('name') or data.get('custom_id') or ''
+    args = ''
+    if kind == 'command':
+        options = data.get('options') or []
+        while options and options[0].get('type') in _NESTING_OPTIONS:
+            name += f" {options[0].get('name')}"
+            options = options[0].get('options') or []
+        args = ' '.join(f"{o.get('name')}={o.get('value')}" for o in options)
+    elif kind == 'component' and data.get('values'):
+        args = ','.join(map(str, data['values']))
+    user = (body.get('member') or {}).get('user') or body.get('user') or {}
+    return {
+        'event': 'interaction', 'kind': kind, 'name': name, 'args': args[:200],
+        'guild': body.get('guild_id'), 'channel': body.get('channel_id'),
+        'user': user.get('id'), 'username': user.get('username'),
+    }
+
+
+def log_interaction(body):
+    """Print the per-click record as one JSON line -- the bot's only usage
+    telemetry.
+
+    JSON rather than prose because the point is querying, not reading:
+    CloudWatch Logs Insights discovers the keys of a JSON log line as fields,
+    so `filter event = "interaction" | stats count() by name, username` answers
+    who uses what with no parse step. Printed once per interaction, on the
+    invocation that ACKs it -- phase two of a deferred reply is the same click,
+    not a second one, and the keep-warm ping never reaches this.
+    """
+    print(json.dumps(describe_interaction(body)))
+
+
 def unplayed_games(channel_id, cfg, user_id=None, guild_id=None):
     """Today's tracked games the presser hasn't logged yet, plus the live
     results and streak bundle backing them, plus the keys the sticky is
@@ -1122,6 +1171,8 @@ def lambda_handler(event, context):
     # PING (type 1) — Discord endpoint validation
     if body.get('type') == 1:
         return _http({'type': 1})
+
+    log_interaction(body)
 
     # APPLICATION_COMMAND (type 2)
     if body.get('type') == 2:
