@@ -13,7 +13,8 @@
       {"name": "games", "type": 4, "value": 3},
       {"name": "mode", "type": 3, "value": "swap"},
       {"name": "keep_players", "type": 4, "value": 5},
-      {"name": "promote_players", "type": 4, "value": 4}
+      {"name": "promote_players", "type": 4, "value": 4},
+      {"name": "announce", "type": 5, "value": true}
     ]}]
   }
 }

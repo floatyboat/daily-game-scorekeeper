@@ -10,7 +10,7 @@ all per-server configuration lives in the table.
 
 | Lambda | Module | Trigger | Role |
 |---|---|---|---|
-| `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Two stages per tick, draw first: draws the rotation at each guild's day start, posts and pins yesterday's scoreboard at its post hour, and announces "Today's games" on either — so a later post hour gets it twice; the only writer of day and aggregate items |
+| `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Two stages per tick, draw first: draws the rotation at each guild's day start, posts and pins yesterday's scoreboard at its post hour, and announces "Today's games" on either — so a later post hour gets it twice, and `rotation_announce` off gets it never; the only writer of day and aggregate items |
 | `daily-game-sticky` | `src/sticky_lambda.py` | EventBridge rule `daily-game-sticky`, `cron(* * * * ? *)` | Maintains the one sticky ("Now Playing") at the bottom of the input channel |
 | `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, `/stats`, `/setup`, `/suggest`, sticky Play/Scores buttons; live ephemeral views |
 
@@ -127,6 +127,7 @@ registrar and the handler.
 | `rotation_keep_players` | `rotation keep_players` | `5` | Swap threshold to hold a seat: a scored game under it rotates out |
 | `rotation_promote_players` | `rotation promote_players` | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
 | `rotation_off_mode` | `rotation off_rotation` | `shown` | Board display of off-rotation plays: `shown` below the scored games, or `hidden` |
+| `rotation_announce` | `rotation announce` | `true` | Whether "Today's games" is posted; `false` draws the rotation silently and changes nothing else |
 | `game_overrides` | `games` | `{}` | Explicit per-guild flips of each game's default state |
 | `last_finalized_day` | — | — | Written at finalize; records how far aggregates are folded |
 | `last_posted_day` | — | — | Written after a real post; the post gate |
@@ -251,7 +252,10 @@ afterwards; every reply from them says so.
   post that actually notifies the channel. A guild whose post hour is later than its day
   start therefore sees it twice a day, at the draw and again under the board; one posting
   at day start (the default, `post_hour` falling back to `hours_after_midnight`) has both
-  on one tick and sees it once, as does one with the board off. Each trigger fires once a
+  on one tick and sees it once, as does one with the board off. `rotation_announce`
+  `false` silences **both** triggers and nothing else — the draw still lands, the board
+  still scores the drawn set, and the sticky and `/play` still narrow to it; the guild
+  simply gets no second message. Each trigger fires once a
   day — the draw is monotonic in the day, `last_posted_day` lets the board through once —
   so a board that never posts (empty input channel, or a marker healed from a manual post)
   costs that day only its second announcement, never the one at the draw.
@@ -289,7 +293,9 @@ afterwards; every reply from them says so.
   button renders exactly like the board, `rotation_off_mode` included. All of them see
   the new set from day start — including the pre-post-hour window that used to read
   unrestricted, and the morning window before the announcement itself goes out — and
-  `daily_enabled` off stops only the board: the rotation still draws and announces.
+  `daily_enabled` off stops only the board: the rotation still draws and announces
+  (`rotation_announce` off is the switch for the announcement alone, and stops nothing
+  else).
 
 ## Streak semantics
 

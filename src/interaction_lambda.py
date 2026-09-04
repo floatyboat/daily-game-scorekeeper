@@ -724,7 +724,8 @@ def config_summary(cfg):
         f"{cfg['rotation_count']} games/day, {cfg['rotation_mode']} mode, "
         f"stay \u2265{cfg['rotation_keep_players']} / "
         f"join \u2265{cfg['rotation_promote_players']} players, "
-        f"off-rotation {cfg['rotation_off_mode']}",
+        f"off-rotation {cfg['rotation_off_mode']}, "
+        f"announcement **{onoff(cfg['rotation_announce'])}**",
         f"Timezone `{cfg['timezone']}` · day starts {cfg['hours_after_midnight']:02d}:00 · "
         f"posts {post_hour:02d}:00 · window {cfg['time_window_hours']}h",
         f"Minimum players {cfg['minimum_players']} · "
@@ -831,10 +832,15 @@ def handle_setup(body, guild_id):
             if merged['rotation_mode'] == 'swap':
                 shape += (f" (stay \u2265{merged['rotation_keep_players']} players, "
                           f"join \u2265{merged['rotation_promote_players']})")
+            # The announcement is the only part a server sees as a message of
+            # its own, so say which way it is set rather than promising a post
+            # that rotation_announce has switched off.
+            tail = ("The first draw is announced with the next daily board."
+                    if merged['rotation_announce'] else
+                    "Today's games are drawn silently — no announcement post.")
             return _ephemeral(
                 f"\U0001F504 Rotation on — {shape}, off-rotation games "
-                f"{merged['rotation_off_mode']}. The first draw is announced "
-                "with the next daily board.")
+                f"{merged['rotation_off_mode']}. {tail}")
         return _ephemeral('▶️ Rotation off — every enabled game scores daily.')
 
     if sub == 'embeds':

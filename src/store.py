@@ -226,7 +226,7 @@ CONFIG_FIELDS = [
     ConfigField('game_overrides', default={}, coerce=_overrides),
 
     # /setup rotation: score only a rotating subset of the enabled games each
-    # day. The five shape fields ride along on the toggle the same way
+    # day. The six shape fields ride along on the toggle the same way
     # sticky_games rides on /setup sticky. The two swap thresholds are separate
     # from the minimum_players display gate, and from each other -- how hard a
     # seat is to hold is a different question from how hard one is to win.
@@ -251,6 +251,12 @@ CONFIG_FIELDS = [
                 coerce=_choice(OFF_ROTATION_MODES, 'shown'), group='rotation',
                 option='off_rotation', opt_type=OPT_STRING, choices=OFF_ROTATION_MODES,
                 describe='Show off-rotation games on the board for zero points, or hide them (default shown)'),
+    # Only the "Today's games" POST -- the rotation itself still draws, and
+    # every other consumer (board scoring, sticky row, /play) still narrows to
+    # it. For a server that wants the rotation without a second daily message.
+    ConfigField('rotation_announce', default=True, coerce=bool, group='rotation',
+                option='announce', opt_type=OPT_BOOLEAN,
+                describe="Post \"Today's games\" when the rotation is drawn (default on)"),
 
     # Run markers, written by the daily lambda. last_posted_day is the post
     # gate; last_finalized_day is diagnostic only -- nothing reads it, it just

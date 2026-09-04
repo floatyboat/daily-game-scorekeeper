@@ -178,7 +178,8 @@ def announce_rotation(channel_id, rotation, games, streaks):
     it rather than being hours stale by the time anyone is looking. A guild
     whose post hour is later than its day start therefore gets it twice a day;
     one posting at day start (the default, post_hour falling back to
-    hours_after_midnight) has both on one tick and gets it once.
+    hours_after_midnight) has both on one tick and gets it once. A guild with
+    rotation_announce off gets neither -- see the caller's announce_due.
 
     Deliberately a plain message, NOT flag 32768: is_scoreboard_message() keys
     on that flag, so a components-v2 follow-up would hijack the sticky's
@@ -306,7 +307,8 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
     the board (post_blocked: post hour, last_posted_day). The draw goes first,
     and "Today's games" is announced after both -- on any tick that drew, and
     on any tick that posted the board, so a guild whose post hour is later gets
-    it at day start and again under the scoreboard. Test runs skip the
+    it at day start and again under the scoreboard, unless rotation_announce
+    switches that post off and leaves the draw alone. Test runs skip the
     board's timing gates, post to the test channel, never pin, and write
     nothing at all: not last_posted_day, not the rotation, not the day archive.
     They read the real table and parse the real input channel, so what they
@@ -434,7 +436,11 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
     # list at day start and again under the board. A board that never posts
     # (empty input channel, a marker healed from a manual post) costs only the
     # second, never the day-start one.
-    announce_due = (cfg['rotation_enabled']
+    #
+    # rotation_announce silences both triggers without touching the draw above:
+    # the day still gets its rotation, and every other consumer still narrows to
+    # it -- the server just does not get the extra message.
+    announce_due = (cfg['rotation_enabled'] and cfg['rotation_announce']
                     and (draw_due or response is not None or is_test))
     todays_rotation = (rotation_today or stored_rotation(cfg, today_day)) \
         if announce_due else None

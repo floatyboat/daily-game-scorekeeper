@@ -20,7 +20,7 @@ there is the whole onboarding — no redeploy, no config file.
 | Surface | What it is |
 |---|---|
 | **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and the server's streaks — off-rotation plays listed below the scored games for zero points. |
-| **Today's games** | Posted at the server's day start while rotation is on (the default): the rotating subset of games that scores today, as play links. Lands right under the board when the board posts at that same hour. |
+| **Today's games** | Posted at the server's day start while rotation is on (the default): the rotating subset of games that scores today, as play links. Lands right under the board when the board posts at that same hour. Servers that would rather not have a second daily message can switch just this post off. |
 | **Now Playing sticky** | One message kept at the bottom of the input channel: how much the server has played today, today's games as play buttons, the server streak in its heading, and **Play**, **Scores** and **Yesterday** underneath. |
 | **`/play`** | A private list of games as buttons, linking straight to each puzzle, ordered by what the server is actually playing. It lists everything *except* the games already on the sticky, so the two don't repeat; **`/play all:true`** puts the whole roster in one list. |
 | **`/stats`** | A private view of your own streaks — overall, then game by game. Every streak on the board belongs to the server; this is where yours are. |
@@ -132,8 +132,8 @@ Defaults in parentheses.
   channel sees.
 - **`/setup games`** — a multi-select of every supported game, pre-ticked to this
   server's current state.
-- **`/setup rotation enabled:<bool> games:<1-20> mode:<swap|random> keep_players:<n> promote_players:<n> off_rotation:<shown|hidden>`**
-  (`true` / `3` / `swap` / `5` / `5` / `shown`) — score only a rotating subset of games
+- **`/setup rotation enabled:<bool> games:<1-20> mode:<swap|random> keep_players:<n> promote_players:<n> off_rotation:<shown|hidden> announce:<bool>`**
+  (`true` / `3` / `swap` / `5` / `5` / `shown` / `true`) — score only a rotating subset of games
   each day. In `swap` mode a spot is earned by play, against two separate thresholds:
   a game in the set holds its seat by drawing `keep_players`, a game outside it earns
   one by drawing `promote_players`, and random picks fill the rest. Splitting the two
@@ -146,7 +146,10 @@ Defaults in parentheses.
   day's set is what the sticky puts up as buttons, so `/play` and the sticky's Play button
   list everything else — `/play all:true` puts both halves in one list. It is drawn and announced at the server's **day start**, so a server that
   posts its board later still gets today's games first thing; when the two hours match
-  (the default) the announcement lands right under the board.
+  (the default) the announcement lands right under the board. `announce:false` silences
+  that post without touching the rotation itself — the day's set is still drawn, still
+  scores the board, and still shapes the sticky and `/play`; the server just gets one
+  message a day instead of two.
 - **`/setup daily enabled:false`** — pause the daily post. The sticky drops its
   Yesterday link while paused, since whatever board is still in the channel is stale.
   Today's games keep being drawn and announced — pausing the board doesn't pause the
