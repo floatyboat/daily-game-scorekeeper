@@ -212,8 +212,9 @@ CONFIG_FIELDS = [
                 describe=f'Days of scoreboards kept pinned, 1-{PIN_CAP} (default 30)'),
 
     # Toggles (/setup daily, /setup sticky, /setup embeds) and the game menu
-    # (/setup games). sticky_games rides along on the sticky toggle as an
-    # optional option, since it only means anything while the sticky is on.
+    # (/setup games). sticky_games and delete_wordle_recap ride along on the
+    # sticky toggle as optional options, since they only mean anything while
+    # the sticky is on.
     ConfigField('daily_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     ConfigField('sticky_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     # Capped at the width of one action row: a sixth button wraps to a second
@@ -222,6 +223,10 @@ CONFIG_FIELDS = [
                 option='games', minimum=0, maximum=MAX_BUTTONS_PER_ROW,
                 describe=f'Play buttons for today\'s games on the sticky, '
                          f'0-{MAX_BUTTONS_PER_ROW} (default 0, off)'),
+    ConfigField('delete_wordle_recap', default=False, coerce=bool, group='sticky',
+                opt_type=OPT_BOOLEAN,
+                describe="Delete the Wordle app's daily recap of yesterday's "
+                         'results (default off)'),
     ConfigField('suppress_embeds', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     ConfigField('game_overrides', default={}, coerce=_overrides),
 

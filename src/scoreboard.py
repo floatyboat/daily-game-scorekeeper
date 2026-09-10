@@ -28,6 +28,12 @@ MORE_BUTTON_CUSTOM_ID = 'sticky_more'
 SCORES_BUTTON_CUSTOM_ID = 'sticky_scores'
 STICKY_HEADING = "\U0001F47E **Now Playing**"
 
+# The "Play now!" button the Wordle app puts on its daily recap message, and
+# only there -- its live-game message (the one whose finished grid the parser
+# reads) carries live_game_launch instead. That makes it the one stable,
+# wording-independent marker of a recap; is_wordle_recap keys on it.
+WORDLE_RECAP_CUSTOM_ID = 'summary_launch'
+
 # Channel types the bot can be pointed at, and the permission bits that gate the
 # admin commands. Shared by register_commands.py (which declares them to Discord)
 # and interaction_lambda.py (which re-verifies them server-side).
@@ -413,6 +419,29 @@ def is_sticky_message(msg, bot_id=None):
             if c.get('custom_id') == PLAY_BUTTON_CUSTOM_ID:
                 return True
     return (msg.get('content') or '').startswith(STICKY_HEADING)
+
+
+def is_wordle_recap(msg):
+    """True for the Wordle app's once-a-day recap of the previous day's play.
+
+    Posted when the first member opens the game each day: "**Your group is on
+    a N day streak!** Here are yesterday's results ..." with a grid image, or
+    the no-winners "Nobody got yesterday's Wordle..." line -- every variant
+    pinging the members it names. This bot never reads it: the daily board and
+    streak flair already cover yesterday, and parse_wordle_attachment skips
+    the recap's "solved games" image by design. Guilds that find it redundant
+    can have the sticky pass delete it (the delete_wordle_recap setting).
+
+    Matched by the recap's own launch button, the same way is_sticky_message
+    keys on the sticky's Play button: precise across every wording variant,
+    and it can never match the live-game message scores are parsed from,
+    which carries a different custom_id.
+    """
+    if (msg.get('author') or {}).get('id') != WORDLE_BOT_ID:
+        return False
+    return any(c.get('custom_id') == WORDLE_RECAP_CUSTOM_ID
+               for row in (msg.get('components') or [])
+               for c in row.get('components', []))
 
 
 def _extract_user_avatars(messages):
