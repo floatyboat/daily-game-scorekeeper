@@ -18,3 +18,5 @@ test-event.json
 # Local virtualenvs
 .venv/
 venv/
+
+notes.md
