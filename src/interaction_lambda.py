@@ -19,6 +19,7 @@ from scoreboard import (
     gather_player_stats, is_sticky_message,
     PLAY_BUTTON_CUSTOM_ID, MORE_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     TEXT_CHANNEL_TYPES, PERM_ADMINISTRATOR, PERM_MANAGE_GUILD, MAX_BUTTONS_PER_ROW,
+    MAX_ENABLED_GAMES,
     MAX_MESSAGE_LENGTH, FLAG_EPHEMERAL, FLAG_IS_COMPONENTS_V2,
 )
 import store
@@ -420,6 +421,16 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_
 
     buttons = [game_link_button(g, game_streaks.get(g.key, 0)) for g in games]
 
+    # /setup games holds a server to MAX_ENABLED_GAMES, which is exactly what
+    # fits under the Random row. The one way past it is a default-on GameSpec
+    # shipping into a server already at the cap, so drop the tail rather than
+    # send a sixth row for Discord to reject -- and say so in the content, since
+    # a game that vanished silently is indistinguishable from one an admin
+    # turned off. The list is in play-count order: what goes is what the server
+    # plays least.
+    hidden = max(0, len(buttons) - MAX_ENABLED_GAMES)
+    buttons = buttons[:MAX_ENABLED_GAMES]
+
     action_rows = []
     for i in range(0, len(buttons), MAX_BUTTONS_PER_ROW):
         action_rows.append({"type": 1, "components": buttons[i:i + MAX_BUTTONS_PER_ROW]})
@@ -439,6 +450,9 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_
     # only while some of them are actually left to play.
     if action_rows:
         content = "Pick a game to play!"
+        if hidden:
+            content += (f" (+{hidden} more this list can't fit — "
+                        f"turn some off with `/setup games`.)")
     elif restricted and sticky_left:
         content = STICKY_GAMES_MESSAGE
     else:
@@ -692,7 +706,7 @@ def set_channel(guild_id, sub, channel_id, cfg=None):
 
 
 def games_select_row(game_overrides):
-    # One option per GameSpec, 20 of scoreboard.MAX_SELECT_OPTIONS today; see
+    # One option per GameSpec, 21 of scoreboard.MAX_SELECT_OPTIONS today; see
     # the split-across-two-messages note on that constant for when it runs out.
     options = [{
         'label': spec.title,
@@ -700,13 +714,19 @@ def games_select_row(game_overrides):
         'emoji': {'name': spec.emoji},
         'default': spec_enabled(spec, game_overrides),
     } for spec in sorted(GAME_SPECS, key=lambda s: s.title.lower())]
+    # Discord's picker stops taking ticks at max_values, which is where the cap
+    # is felt. It widens past the cap only for a menu that already shows more
+    # ticked -- a default-on GameSpec shipped into a server at the cap -- rather
+    # than pre-ticking more games than it allows; the submit handler still
+    # refuses to save that many.
+    ticked = sum(1 for o in options if o['default'])
     return {'type': 1, 'components': [{
         'type': 3,   # string select
         'custom_id': GAMES_SELECT_ID,
         'options': options,
         'min_values': 0,
-        'max_values': len(options),
-        'placeholder': 'Choose the games to track',
+        'max_values': min(len(options), max(MAX_ENABLED_GAMES, ticked)),
+        'placeholder': f'Choose up to {MAX_ENABLED_GAMES} games to track',
     }]}
 
 
@@ -911,8 +931,8 @@ def handle_setup(body, guild_id):
 
     if sub == 'games':
         return _ephemeral(
-            'Select every game this server should track — unselected games are hidden '
-            'from parsing, the scoreboard, and the Play list.',
+            f'Select every game this server should track, up to {MAX_ENABLED_GAMES} — '
+            'unselected games are hidden from parsing, the scoreboard, and the Play list.',
             components=[games_select_row(cfg['game_overrides'])],
         )
 
@@ -956,6 +976,16 @@ def handle_setup_component(body, guild_id):
     values = body['data'].get('values') or []
 
     if custom_id == GAMES_SELECT_ID:
+        if len(values) > MAX_ENABLED_GAMES:
+            # The picker enforces max_values itself, so this is a stale client
+            # or a menu widened to show a server already over the cap. Nothing
+            # is written; the menu comes back with their picks still ticked, so
+            # the fix is unticking rather than starting over.
+            over = len(values) - MAX_ENABLED_GAMES
+            picks = {spec.key: spec.key in values for spec in GAME_SPECS}
+            return _update(f'⚠️ A server can track up to {MAX_ENABLED_GAMES} games, '
+                           f'and that was {len(values)} — untick {over} and save again.',
+                           components=[games_select_row(picks)])
         return _update(apply_games_selection(guild_id, values))
 
     if custom_id.startswith(CHANNEL_SELECT_PREFIX):
@@ -1073,6 +1103,20 @@ def already_tracked(spec, guild_id):
                       f'off {where} — an admin can switch it back on with `/setup games`.')
 
 
+def keep_suggestion(body, name, url, score):
+    """Keep a forwarded suggestion where tools/broadcast.py can find it once the
+    game ships, to thank this person in this server. Server suggestions only --
+    a DM has no server to be thanked in -- and never at the cost of the reply:
+    the log line and the dev-channel post still carry it if the store is down."""
+    guild_id, user_id = body.get('guild_id'), interaction_user_id(body)
+    if not (guild_id and user_id):
+        return
+    try:
+        store.record_suggestion(guild_id, user_id, name, url, score)
+    except Exception as e:
+        print(f'suggest: keep failed -- {type(e).__name__}: {e}')
+
+
 def handle_suggest(body):
     """Modal submit: forward one game suggestion to the dev channel.
 
@@ -1092,9 +1136,10 @@ def handle_suggest(body):
     if spec:
         return already_tracked(spec, body.get('guild_id'))
 
-    # Logged before it is sent, so a suggestion outlives a failed post.
+    # Logged and kept before it is sent, so a suggestion outlives a failed post.
     print(f'suggest: {name!r} url={url!r} guild={body.get("guild_id")} '
           f'user={interaction_user_id(body)}')
+    keep_suggestion(body, name, url, score)
     if not DEV_CHANNEL_ID:
         return _ephemeral("Thanks! Suggestions aren't set up on this bot right now, "
                           'so there was nowhere to pass it along.')

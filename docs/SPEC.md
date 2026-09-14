@@ -35,7 +35,7 @@ aggregates. `tools/register_commands.py` registers the slash commands.
 
 One table `daily-game-tracker`, generic string keys `PK`/`SK`, provisioned 5 RCU / 5 WCU,
 **no GSIs**. Auth is the Lambda IAM role; boto3 ships in the runtime, so the store adds no
-deploy dependency. Six item types cover every access pattern:
+deploy dependency. These item types cover every access pattern:
 
 ```
 PK                          SK                 Contents
@@ -78,6 +78,10 @@ GUILD#<gid>#PLAYER#<uid>    AGG#GAME#<key>     per-player-per-game: current_stre
                                                best_streak, last_played_day, total_plays,
                                                best/sum score fields where numeric
 GUILD#<gid>#PLAYER#<uid>    PROFILE            display-name snapshot, totals, dm_opt_in
+SUGGESTIONS                 <gid>#<uid>#<name> one forwarded /suggest: guild_id, user_id,
+                                               name, url, text (the paste), suggested_at
+                                               (first asked), thanked_at (stamped by
+                                               tools/broadcast.py once the game ships)
 ```
 
 Access patterns → reads:
@@ -91,6 +95,9 @@ Access patterns → reads:
 - **Distinct players**: string set on the game aggregate; `ADD` is idempotent, and the
   all-time count is the set length. `players_30d` is computed once per day at finalize from
   the trailing 30 `DAY#` items and stored, so interactive reads stay one small Query.
+- **Suggestion thank-yous**: every kept suggestion shares the `SUGGESTIONS` partition, so
+  `tools/broadcast.py --game` reads them all with one small Query and matches each to the
+  game with `match_suggestion()`.
 
 A per-player overall streak is not derivable from that player's per-game items: a player
 who alternates games has no per-game streak, so `PLAYER#<uid> / AGG#SERVER` is stored in
@@ -124,7 +131,7 @@ registrar and the handler.
 | `delete_wordle_recap` | `sticky delete_wordle_recap` | `false` | Whether the sticky pass deletes the Wordle app's daily recap of yesterday's results |
 | `suppress_embeds` | `embeds suppress` | `true` | Whether link previews are stripped off counted results |
 | `rotation_enabled` | `rotation enabled` | `true` | Score only a rotating subset of the enabled games each day |
-| `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 20), so adding a game widens the option |
+| `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 21), so adding a game widens the option — re-run `register_commands.py` for the picker to follow |
 | `rotation_mode` | `rotation mode` | `swap` | `swap` replaces under-played members, `random` re-draws daily |
 | `rotation_keep_players` | `rotation keep_players` | `5` | Swap threshold to hold a seat: a scored game under it rotates out |
 | `rotation_promote_players` | `rotation promote_players` | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
@@ -176,10 +183,15 @@ afterwards; every reply from them says so.
   `build_avatar_pool` returns `{}` from an in-memory scan (`_has_multiplayer_wordle`) unless
   the window actually holds a multi-player grid — before any member fetch or CDN round
   trip. A server without the Wordle bot does no image work whatsoever.
-- Two Discord payload caps bound how far `GAME_SPECS` can grow before these surfaces need
-  splitting across two messages (constants in `scoreboard.py`, noted at the `GAME_SPECS`
-  declaration): the `/setup games` menu is one option per spec, capped at 25; `/play` is one
-  button per *enabled* game at 5 per row plus the Random row, capped at 20.
+- Two Discord payload caps bound the game surfaces (constants in `scoreboard.py`, noted at
+  the `GAME_SPECS` declaration). The `/setup games` menu is one option per spec, capped at
+  25 — past that it needs splitting across two messages. `/play` is one button per
+  *enabled* game at 5 per row under the Random row, so a server may enable at most
+  `MAX_ENABLED_GAMES` (20): the menu's `max_values` enforces it in the picker, and the select
+  handler re-checks it on submit, writing nothing and handing the menu back with the picks
+  still ticked. A default-on `GameSpec` shipping into a server already at 20 is the one way
+  past the cap; `build_play_response` drops the tail of that list and says how many it left
+  off rather than sending a sixth row.
 
 ## Daily rotation
 
@@ -460,7 +472,11 @@ retroactively.
   `game_parser.match_suggestion()` short-circuits games already in `GAME_SPECS` — exact
   name or key, or a spec's own host and path among the submitted links — and answers
   whether the game is tracked or merely off in this server. Modal submits (interaction
-  type 5) answer inline rather than deferring.
+  type 5) answer inline rather than deferring. A suggestion forwarded from a server is also
+  kept (`store.record_suggestion`, keyed by server, user and name, so asking twice updates
+  one item) before the post goes out — it outlives a failed post and the 30-day log, and
+  `tools/broadcast.py --game` reads it back to thank the sender in that server once the
+  game ships. Keeping it never fails the reply.
 - **Usage log.** Every verified interaction except Discord's endpoint PING prints one
   JSON line before it is routed (`interaction_lambda.log_interaction`):
   `{"event": "interaction", "kind": "command" | "component" | "modal", "name": "setup

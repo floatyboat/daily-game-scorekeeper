@@ -40,6 +40,7 @@ and the bot picks it up.
 | Color-Toon | https://dialed.gg/color2?d=1 | yes |
 | Connections | https://www.nytimes.com/games/connections | yes |
 | Enclose | https://enclose.horse | yes |
+| Fermi | https://fermi.gg | no |
 | Flagle | https://flagle.org | no |
 | Gerrymandle | https://gerrymandle.com | yes |
 | Globle | https://globle.org | no |
@@ -131,8 +132,9 @@ Defaults in parentheses.
   than that, `message_volume` is roughly how many hundreds of messages a day the input
   channel sees.
 - **`/setup games`** — a multi-select of every supported game, pre-ticked to this
-  server's current state.
-- **`/setup rotation enabled:<bool> games:<1-20> mode:<swap|random> keep_players:<n> promote_players:<n> off_rotation:<shown|hidden> announce:<bool>`**
+  server's current state. A server can track up to 20 at once — as many as the Play
+  list has room for.
+- **`/setup rotation enabled:<bool> games:<1-21> mode:<swap|random> keep_players:<n> promote_players:<n> off_rotation:<shown|hidden> announce:<bool>`**
   (`true` / `3` / `swap` / `5` / `5` / `shown` / `true`) — score only a rotating subset of games
   each day. In `swap` mode a spot is earned by play, against two separate thresholds:
   a game in the set holds its seat by drawing `keep_players`, a game outside it earns
@@ -172,7 +174,8 @@ Defaults in parentheses.
 `/suggest` is open to everyone: a form taking a game name, an optional link, and a
 pasted result from a game the bot doesn't track yet. The bot forwards it — paste kept
 verbatim, mentions defused, link un-embedded — to the operator's dev channel, where it
-becomes a candidate for a new game.
+becomes a candidate for a new game. The suggestion is also kept, so if the game is added
+the operator can thank whoever suggested it, in the server they suggested it from.
 
 Suggestions naming a game that is already supported are answered on the spot instead of
 forwarded, including the case worth acting on: *supported, but turned off in this
@@ -338,6 +341,29 @@ dotenv run -- python3 tools/backfill.py --rebuild-only  # recompute aggregates, 
 
 Re-running is safe. `--rebuild-only` recomputes every aggregate from the archived days
 and is also what you run after a scoring-rule change.
+
+## Talking to servers as the bot
+
+The bot has no other outbound voice — the scheduled lambdas post scoreboards and stickies,
+and interaction replies only answer whoever clicked. `tools/broadcast.py` sends a message
+as the bot, and its main job is closing the loop on `/suggest`: when a suggested game
+ships, it thanks whoever asked, in the server they asked from — and nowhere else.
+
+```bash
+dotenv run -- python3 tools/broadcast.py --game fermi           # preview, sends nothing
+dotenv run -- python3 tools/broadcast.py --game fermi --send
+dotenv run -- python3 tools/broadcast.py -m "back in an hour" --guild 818... --send
+```
+
+**Preview is the default**; nothing is posted without `--send`. `--game` finds its
+recipients among the suggestions the bot keeps, matched to the game the same way `/suggest`
+recognises a game it already tracks. The note mentions the people who asked, carries a play
+button, and reads off that server's own setting — *an admin can turn it on with
+`/setup games`*, or that it's already on. Thanked suggestions are stamped, so a re-run skips
+them (`--again` resends). A game nobody suggested has nobody to thank; `-m`/`--file` send
+free text to every server, or only `--guild`. Messages land in each server's output channel
+(`--channel input` for the sticky's), with embeds suppressed and nobody pinged but the
+people being thanked.
 
 ---
 

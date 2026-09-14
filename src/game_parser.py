@@ -713,9 +713,11 @@ def _parse_travle(m, content):
 # Adding a game is one entry here and nothing else -- except that two rendered
 # surfaces have Discord payload caps this list now feeds (scoreboard.py holds
 # the constants): the /setup games menu is one option per spec and tops out
-# at 25, and /play is one button per ENABLED game at 5 per row plus the Random
-# row, so it tops out at 20. 20 specs today. Past either, the fix is to split
-# the response across two messages -- see the FUTURE note in scoreboard.py.
+# at 25, and /play is one button per ENABLED game, which is why a server may
+# switch on at most MAX_ENABLED_GAMES (20) of them. 21 specs today. Past 25 the
+# menu needs splitting across two messages -- see the FUTURE note in
+# scoreboard.py. A default-on game lands in every server at once, including
+# one already at the cap; build_play_response is what copes with that.
 
 GAME_SPECS = [
     GameSpec(
@@ -895,6 +897,27 @@ GAME_SPECS = [
         pattern=lambda ref, n: re.compile(rf'Krillion #{n} 🦐\s*\n\s*(\d+)',
                                           re.IGNORECASE),
         parse=lambda m, c: (int(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='fermi', emoji='⚛️', title='Fermi', metric='reverse_score',
+        total=0, url='https://fermi.gg', disabled=True,
+        puzzle=lambda ref: (ref - datetime(2026, 7, 27)).days + 1,
+        # Three estimation rounds, each scored by how far off the guess was as a
+        # multiple of the true answer, so 1.00× is exact and lower is better --
+        # a reverse score. No metric of its own: every metric but score,
+        # connections and maptap already ranks ascending, and the plain-number
+        # display prints it as is. No poop either; there is no fail state.
+        #
+        # The share text opens 'Fermi · No. 49' while the site's own header
+        # writes '#049', so the separator class and the optional 'No.' take
+        # either and 0* eats the padding. The anchor doing the real work is the
+        # second half: '× score' appears once, on the summary line, and never on
+        # the per-round lines above it ('01  9.29×'), so the lazy span between
+        # the two cannot pick up a round by mistake.
+        pattern=lambda ref, n: re.compile(
+            rf'Fermi[\s·#–—-]*(?:No\.?\s*)?0*{n}\b.*?(\d+(?:\.\d+)?)×\s*score',
+            re.IGNORECASE | re.DOTALL),
+        parse=lambda m, c: (float(m.group(1)), {}),
     ),
 ]
 
@@ -1453,7 +1476,7 @@ def _format_game_players(game_scores, metric, total, names=None,
             score_str = f"{hints}{out_of}"
             if letters:
                 score_str += f" ({letters} letter" + ("s)" if letters != 1 else ")")
-        else:  # guesses
+        else:  # guesses, reverse_score -- a plain number, lower wins
             if total and current_score > total:
                 medal = '💩 '
                 current_score = 'X'

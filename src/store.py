@@ -9,6 +9,7 @@ One table, generic PK/SK string keys, no GSIs. Item catalog (see SPEC.md):
     GUILD#<gid>               AGG#GAME#<key>    per-game server streak + player sets
     GUILD#<gid>#PLAYER#<uid>  AGG#SERVER        per-player overall streak (any game)
     GUILD#<gid>#PLAYER#<uid>  AGG#GAME#<key>    per-player-per-game streak + totals
+    SUGGESTIONS               <gid>#<uid>#<name> a forwarded /suggest, kept to thank its sender
 
 All configs share one partition (GUILDS) so the scheduled lambdas can load every
 guild with a single small Query each tick -- a Scan would read the whole table
@@ -996,3 +997,62 @@ def rebuild_aggregates(guild_id, through_day):
         'player_aggs': len(player_aggs),
         'players': len(player_server),
     }
+
+
+# --- Suggestions ------------------------------------------------------------------
+# A forwarded /suggest is a promise: if the game ships, whoever asked should hear
+# about it, in the server they asked from. The dev-channel post can't keep it --
+# it is prose for a human, truncated, and names the server rather than always
+# carrying its id -- and the interaction log line ages out after 30 days. So the
+# submission is kept here too, one small partition like GUILDS, read whole by
+# tools/broadcast.py when a game lands.
+
+SUGGESTIONS_PK = 'SUGGESTIONS'
+
+
+def suggestion_sk(guild_id, user_id, name):
+    """One item per person per server per suggested name: asking twice, or a
+    test fixture replayed, lands on the item already there rather than stacking
+    duplicates. Case and spacing don't make a different suggestion."""
+    return f"{guild_id}#{user_id}#{' '.join(str(name).lower().split())}"
+
+
+def _now_iso():
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
+def record_suggestion(guild_id, user_id, name, url='', text='', suggested_at=None):
+    """Keep one forwarded /suggest. Asking again refreshes the link and the paste
+    but keeps the first suggested_at, and leaves thanked_at alone. suggested_at
+    is for seeding a suggestion made before suggestions were kept."""
+    table().update_item(
+        Key={'PK': SUGGESTIONS_PK, 'SK': suggestion_sk(guild_id, user_id, name)},
+        UpdateExpression='SET guild_id = :g, user_id = :u, #name = :n, #url = :l, '
+                         '#text = :t, suggested_at = if_not_exists(suggested_at, :at)',
+        ExpressionAttributeNames={'#name': 'name', '#url': 'url', '#text': 'text'},
+        ExpressionAttributeValues={
+            ':g': str(guild_id), ':u': str(user_id), ':n': str(name),
+            ':l': url or '', ':t': text or '', ':at': suggested_at or _now_iso(),
+        },
+    )
+
+
+def suggestions():
+    """Every kept suggestion, oldest first -- one small Query, like all_configs."""
+    items = _query_all(KeyConditionExpression=Key('PK').eq(SUGGESTIONS_PK))
+    return sorted(items, key=lambda it: it.get('suggested_at') or '')
+
+
+def mark_thanked(sk):
+    """Stamp a suggestion as answered, so thanking for the same game again skips
+    it. A no-op for an item deleted in the meantime, like _advance_marker."""
+    try:
+        table().update_item(
+            Key={'PK': SUGGESTIONS_PK, 'SK': sk},
+            UpdateExpression='SET thanked_at = :t',
+            ConditionExpression='attribute_exists(SK)',
+            ExpressionAttributeValues={':t': _now_iso()},
+        )
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
+            raise

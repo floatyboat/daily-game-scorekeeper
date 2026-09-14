@@ -67,6 +67,7 @@ def fake_score(metric, i):
             'travle': (0, 3, 0, -2), 'time': 90 + i,
             'timed_win': (0, 1, 0, 90 + i),
             'cryptic': (10, 4, 3, 6),
+            'reverse_score': round(9.63 + i, 2),
             'score': 50 + i}.get(metric, 3)
 
 

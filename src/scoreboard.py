@@ -41,18 +41,24 @@ TEXT_CHANNEL_TYPES = (0, 5)   # guild text, announcement
 PERM_ADMINISTRATOR = 0x8
 PERM_MANAGE_GUILD = 0x20
 
-# Discord payload caps the rendered surfaces have to fit inside. Today's 20
-# games clear both: /play tops out at 4 button rows plus the Random row, and the
-# /setup games menu uses 20 of 25 options.
+# Discord payload caps the rendered surfaces have to fit inside. The /setup
+# games menu is one option per GameSpec (21 of 25 today). /play is one button
+# per ENABLED game, in MAX_ACTION_ROWS rows of which the Random row takes one --
+# so a server may enable at most MAX_ENABLED_GAMES, and /setup games enforces
+# it. GAME_SPECS itself can grow past that; a server just can't switch every
+# game on at once.
 #
-# FUTURE: when GAME_SPECS outgrows either cap, split across two messages (the
-# interaction reply plus a follow-up) rather than truncating -- a silently
-# dropped game looks identical to one an admin turned off. These live here as
-# constants so that split has something to divide by.
+# FUTURE: when GAME_SPECS outgrows the menu, split it across two messages (the
+# interaction reply plus a follow-up) rather than truncating -- a game missing
+# from the menu can't be turned on at all, and looks identical to one that was
+# never added. These live here as constants so that split has something to
+# divide by.
 MAX_ACTION_ROWS = 5          # top-level components in one message
 MAX_BUTTONS_PER_ROW = store.MAX_BUTTONS_PER_ROW   # bounds sticky_games, so it lives there
 MAX_SELECT_OPTIONS = 25      # options in one string select
 MAX_MESSAGE_LENGTH = 2000    # characters in one message's content
+# Games one server may track: exactly the /play buttons that fit under Random.
+MAX_ENABLED_GAMES = MAX_BUTTONS_PER_ROW * (MAX_ACTION_ROWS - 1)
 
 
 # (connect, read) seconds applied to every Discord call made through
