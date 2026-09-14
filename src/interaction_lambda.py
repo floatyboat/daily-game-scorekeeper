@@ -768,7 +768,8 @@ def config_summary(cfg):
         f"Daily scoreboard: **{onoff(cfg['daily_enabled'])}** · "
         f"Sticky: **{onoff(cfg['sticky_enabled'])}** "
         f"({sticky_row_phrase(cfg['sticky_games'])}) · "
-        f"Link previews: **{'stripped' if cfg['suppress_embeds'] else 'kept'}**",
+        f"Link previews: **{'stripped' if cfg['suppress_embeds'] else 'kept'}** · "
+        f"Wordle recap: **{'deleted' if cfg['delete_wordle_recap'] else 'kept'}**",
         f"Rotation: **{onoff(cfg['rotation_enabled'])}** — "
         f"{cfg['rotation_count']} games/day, {cfg['rotation_mode']} mode, "
         f"stay \u2265{cfg['rotation_keep_players']} / "
@@ -843,18 +844,21 @@ def handle_setup(body, guild_id):
                           'and the sticky drops its Yesterday link.')
 
     if sub == 'sticky':
-        # `games` rides along on this subcommand (store.CONFIG_FIELDS declares
-        # it group='sticky'), so one call can switch the sticky on and size its
-        # game row. Left out, the stored value stands.
+        # `games` and `delete_wordle_recap` ride along on this subcommand
+        # (store.CONFIG_FIELDS declares them group='sticky'), so one call can
+        # switch the sticky on, size its game row, and set the recap cleanup.
+        # Options left out keep their stored values.
         enabled = bool(args.get('enabled'))
         updates = {'sticky_enabled': enabled, **collect_updates('sticky', args)}
         store.update_config(guild_id, updates)
-        rows = updates.get('sticky_games', cfg['sticky_games'])
+        merged = {**cfg, **updates}
         if enabled:
+            recap = (", deleting the Wordle app's daily recap on sight"
+                     if merged['delete_wordle_recap'] else '')
             return _ephemeral('▶️ Sticky enabled — it will appear in the input '
                               'channel within a minute, with '
-                              f'{sticky_row_phrase(rows)}. Play lists whatever '
-                              'the row leaves out.')
+                              f"{sticky_row_phrase(merged['sticky_games'])}{recap}. "
+                              'Play lists whatever the row leaves out.')
         note = ''
         if cfg['input_channel_id']:
             try:

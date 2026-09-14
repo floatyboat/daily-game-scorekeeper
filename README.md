@@ -77,7 +77,7 @@ permissions and nothing else:
 | View Channel | Seeing the input and output channels |
 | Read Message History | Parsing results posted while it wasn't looking |
 | Send Messages | Posting the scoreboard and the sticky |
-| Manage Messages | Stripping link previews off the sticky, collapsing duplicate stickies |
+| Manage Messages | Stripping link previews off the sticky, collapsing duplicate stickies, deleting the Wordle app's daily recap (opt-in) |
 | Pin Messages | Pinning the daily board, and unpinning it once it ages out |
 
 Pin Messages is its own permission, not part of Manage Messages: Discord split it out
@@ -157,6 +157,11 @@ Defaults in parentheses.
 - **`/setup sticky enabled:false`** — remove the sticky. While it's on, `games:1-5` puts
   that many of today's games on it as play buttons (off by default) — one row's worth is
   the cap, and whatever lands there is what `/play` leaves out.
+- **`/setup sticky enabled:true delete_wordle_recap:true`** — have the sticky pass
+  delete the Wordle app's daily "here are yesterday's results" recap (`false` by
+  default). The bot's own board and streaks already cover yesterday, and the recap
+  pings the players it names. Needs **Manage Messages**; the finished-grid message
+  scores are read from is never touched.
 - **`/setup embeds suppress:false`** — stop stripping link previews off posted results
   (`true` by default). Stripping happens as the sticky counts each result, so it needs
   **Manage Messages** and does nothing at all while the sticky is off. Turning it off

@@ -13,7 +13,8 @@ from game_parser import (
 from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
     make_session, fetch_messages, reference_date, is_scoreboard_message,
-    is_sticky_message, build_avatar_pool, safe_guild_id, gather_streaks,
+    is_sticky_message, is_wordle_recap, build_avatar_pool, safe_guild_id,
+    gather_streaks,
     PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     STICKY_HEADING,
 )
@@ -69,8 +70,15 @@ def send_sticky(channel_id, content, components):
 
 
 def delete_message(channel_id, message_id):
+    """Delete one message, reporting whether it is actually gone.
+
+    A 404 counts as gone -- a concurrent run got there first -- while a
+    failure (most likely missing MANAGE_MESSAGES on a message the bot didn't
+    author) reports False so callers can keep treating the message as live.
+    """
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}'
-    _session.delete(url)
+    r = _session.delete(url)
+    return r.ok or r.status_code == 404
 
 
 def suppress_embeds(channel_id, message):
@@ -271,6 +279,26 @@ def run_guild(cfg, force=False):
                                      cfg['time_window_hours'])
 
     messages = fetch_messages(_session, channel_id, limit=200)
+
+    # Opt-in cleanup: the Wordle app's daily recap restates yesterday's
+    # results and streak, which this bot's own board and flair already cover,
+    # and pings the players it names -- so a guild can have this pass delete
+    # it on sight (needs MANAGE_MESSAGES, like suppress_embeds). Deleted
+    # recaps leave the working list too: the recap typically lands right on
+    # top of a settled sticky, and once it is gone the sticky really is the
+    # newest message again, so update_sticky can settle without a repost. A
+    # failed delete stays in the list and the sticky reposts below it,
+    # exactly as with any other message.
+    recaps_deleted = 0
+    if cfg['delete_wordle_recap']:
+        kept = []
+        for msg in messages:
+            if is_wordle_recap(msg) and delete_message(channel_id, msg['id']):
+                recaps_deleted += 1
+            else:
+                kept.append(msg)
+        messages = kept
+
     avatar_pool = build_avatar_pool(_session, messages, checker, cfg['guild_id'])
 
     results = defaultdict(dict)
@@ -322,7 +350,12 @@ def run_guild(cfg, force=False):
         _probe_state[gid] = {'fingerprint': fingerprint,
                              'newest_id': messages[0]['id'],
                              'expires': time.monotonic() + PROBE_MAX_AGE}
-    note = f' (embeds suppressed: {suppressed})' if cfg['suppress_embeds'] else ''
+    notes = []
+    if cfg['suppress_embeds']:
+        notes.append(f'embeds suppressed: {suppressed}')
+    if cfg['delete_wordle_recap']:
+        notes.append(f'recaps deleted: {recaps_deleted}')
+    note = f' ({", ".join(notes)})' if notes else ''
     return f'{action}{note}'
 
 

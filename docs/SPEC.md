@@ -45,7 +45,8 @@ GUILDS                      GUILD#<guild_id>   per-server config: input_channel_
                                                time_window_hours, minimum_players,
                                                hundreds_of_messages,
                                                daily_enabled, sticky_enabled,
-                                               sticky_games, suppress_embeds,
+                                               sticky_games, delete_wordle_recap,
+                                               suppress_embeds,
                                                rotation_enabled, rotation_count,
                                                rotation_mode, rotation_keep_players,
                                                rotation_promote_players,
@@ -120,6 +121,7 @@ registrar and the handler.
 | `daily_enabled` | `daily enabled` | `true` | Whether the daily board posts |
 | `sticky_enabled` | `sticky enabled` | `true` | Whether the sticky is maintained |
 | `sticky_games` | `sticky games` | `0` | Today's games as play buttons on the sticky (0–`MAX_BUTTONS_PER_ROW`, one row's worth); 0 skips the ranking pass entirely and hands Play the whole roster |
+| `delete_wordle_recap` | `sticky delete_wordle_recap` | `false` | Whether the sticky pass deletes the Wordle app's daily recap of yesterday's results |
 | `suppress_embeds` | `embeds suppress` | `true` | Whether link previews are stripped off counted results |
 | `rotation_enabled` | `rotation enabled` | `true` | Score only a rotating subset of the enabled games each day |
 | `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 20), so adding a game widens the option |
@@ -429,8 +431,9 @@ retroactively.
   the order `register_commands.py` lists them (which is the order Discord displays):
   `show` · `channel` (both sides at once) · `time` · `limits` · `games` · `daily on|off` ·
   `sticky on|off` (off also deletes the existing sticky; carries the optional `games`
-  row size, a `ConfigField` in the `sticky` group that `toggle_sub` appends the
-  same way `field_sub` builds a whole subcommand) · `rotation on|off` (carries the four
+  row size and `delete_wordle_recap`, `ConfigField`s in the `sticky` group that
+  `toggle_sub` appends the same way `field_sub` builds a whole subcommand) ·
+  `rotation on|off` (carries the four
   `rotation`-group fields the same way; the mode fields register fixed choice menus off
   `ConfigField.choices`) · `embeds suppress:on|off` ·
   `input`/`output` (override one side of `channel`, so they sit last). `limits` carries
@@ -495,6 +498,13 @@ retroactively.
   Messages, and does nothing in a guild with `sticky_enabled` off — that guild is skipped
   before anything is scanned. Turning it off stops future stripping; it never restores an
   already-stripped preview.
+- So does Wordle-recap cleanup: with `delete_wordle_recap` on (off by default), every
+  fetched message matching `is_wordle_recap` — the Wordle app's once-a-day "here are
+  yesterday's results" post, identified by its `summary_launch` button, never the
+  live-game message scores are parsed from — is deleted (Manage Messages again) and
+  dropped from the working list, so a recap that landed on a settled sticky doesn't force
+  a repost. A failed delete leaves the message in the list and the sticky reposts below
+  it as usual.
 - With `daily_enabled` off the board stops and the sticky drops its Yesterday link; the
   rotation stage keeps running, so today's games are still drawn and announced.
 - Onboarding is automatic: `/setup` writes the config item and the next tick picks the guild
