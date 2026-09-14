@@ -155,8 +155,12 @@ def main():
         ('rotation split', dict(off_rotation=3)),
         ('rotation split + breaks', dict(broken=True, off_rotation=3)),
     ]
+    # The dense case fills today's spec count right up to the envelope; a fixed
+    # player count walks past it as specs are added, into shapes no formatting
+    # can fit.
+    dense = (n_specs, SUPPORTED_LINES // n_specs)
     for label, kw in edges:
-        for n_games, n_players in ((n_specs, 6), (n_specs, 10), (30, 6)):
+        for n_games, n_players in ((n_specs, 6), dense, (30, 6)):
             board, rungs, out = build(n_games, n_players, **kw)
             check(f'{label} ({n_games}x{n_players})', board, rungs, out,
                   failures, args.report)

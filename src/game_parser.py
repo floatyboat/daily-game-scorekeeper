@@ -714,7 +714,7 @@ def _parse_travle(m, content):
 # surfaces have Discord payload caps this list now feeds (scoreboard.py holds
 # the constants): the /setup games menu is one option per spec and tops out
 # at 25, and /play is one button per ENABLED game, which is why a server may
-# switch on at most MAX_ENABLED_GAMES (20) of them. 21 specs today. Past 25 the
+# switch on at most MAX_ENABLED_GAMES (20) of them. 22 specs today. Past 25 the
 # menu needs splitting across two messages -- see the FUTURE note in
 # scoreboard.py. A default-on game lands in every server at once, including
 # one already at the cap; build_play_response is what copes with that.
@@ -918,6 +918,24 @@ GAME_SPECS = [
             rf'Fermi[\s·#–—-]*(?:No\.?\s*)?0*{n}\b.*?(\d+(?:\.\d+)?)×\s*score',
             re.IGNORECASE | re.DOTALL),
         parse=lambda m, c: (float(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='sizeitup', emoji='📏', title='Size It Up', metric='score',
+        total=0, url='https://magnitudle.com/size-it-up', needs_timestamp=True, disabled=True,
+        puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
+        # Five rounds of resizing a silhouette against a known reference, each
+        # worth up to 100 for how close it came, so higher is better. The
+        # ceiling is 500, but as with krillion total stays 0 to keep the '/500'
+        # off the board -- the share text prints a tally, not a fraction.
+        #
+        # That share text carries no puzzle number and no date, and a replay
+        # from the site's archive writes exactly the same lines, so like the
+        # dialed games it is tied to a day by when it was posted and nothing
+        # else. Its first line is the variant's label, which is what keeps the
+        # sister games off this board: 'Size It Up: Pop Culture' and 'Size It
+        # Up: Geography' put a colon where this pattern needs the score line.
+        pattern=lambda ref, n: re.compile(r'Size It Up\s*Overall Score\s*(\d+)', re.IGNORECASE),
+        parse=lambda m, c: (int(m.group(1)), {}),
     ),
 ]
 

@@ -131,7 +131,7 @@ registrar and the handler.
 | `delete_wordle_recap` | `sticky delete_wordle_recap` | `false` | Whether the sticky pass deletes the Wordle app's daily recap of yesterday's results |
 | `suppress_embeds` | `embeds suppress` | `true` | Whether link previews are stripped off counted results |
 | `rotation_enabled` | `rotation enabled` | `true` | Score only a rotating subset of the enabled games each day |
-| `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 21), so adding a game widens the option — re-run `register_commands.py` for the picker to follow |
+| `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 22), so adding a game widens the option — re-run `register_commands.py` for the picker to follow |
 | `rotation_mode` | `rotation mode` | `swap` | `swap` replaces under-played members, `random` re-draws daily |
 | `rotation_keep_players` | `rotation keep_players` | `5` | Swap threshold to hold a seat: a scored game under it rotates out |
 | `rotation_promote_players` | `rotation promote_players` | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |

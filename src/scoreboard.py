@@ -42,7 +42,7 @@ PERM_ADMINISTRATOR = 0x8
 PERM_MANAGE_GUILD = 0x20
 
 # Discord payload caps the rendered surfaces have to fit inside. The /setup
-# games menu is one option per GameSpec (21 of 25 today). /play is one button
+# games menu is one option per GameSpec (22 of 25 today). /play is one button
 # per ENABLED game, in MAX_ACTION_ROWS rows of which the Random row takes one --
 # so a server may enable at most MAX_ENABLED_GAMES, and /setup games enforces
 # it. GAME_SPECS itself can grow past that; a server just can't switch every
