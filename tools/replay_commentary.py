@@ -233,7 +233,8 @@ def replay(session, cfg, day, archive, history, overrides, nudge_after, midday_h
             if post:
                 posts.append((minute, cadence, post))
                 if post.board:
-                    log(minute, cadence.upper(), f"{post.kind}: standings board, silent")
+                    log(minute, cadence.upper(),
+                        f"{post.kind}: standings board, {loudness(post, names)}")
                     for comp in post.components:
                         for child in [comp] + list(comp.get('components') or []):
                             if child.get('type') == 10:
@@ -241,9 +242,7 @@ def replay(session, cfg, day, archive, history, overrides, nudge_after, midday_h
                                     print(f"                  {pretty(line, names)}")
                     visible.insert(0, bot_message(minute, '', post.components))
                 else:
-                    ping = f" (pings {', '.join(names.get(u, u) for u in post.mentions)})" \
-                        if post.mentions else ' (silent)'
-                    log(minute, cadence.upper(), f"{post.kind}{ping}")
+                    log(minute, cadence.upper(), f"{post.kind} ({loudness(post, names)})")
                     for line in post.content.split('\n'):
                         print(f"                  {pretty(line, names)}")
                     buttons = [b['label'] for row in post.components
@@ -260,9 +259,20 @@ def replay(session, cfg, day, archive, history, overrides, nudge_after, midday_h
     for _, cadence, post in posts:
         kinds[post.kind] = kinds.get(post.kind, 0) + 1
     humans = sum(1 for m in stream if m['author']['id'] != BOT_ID and start <= ts(m) < close)
+    pinged = sum(1 for _, _, p in posts if p.notify == commentary.PING and p.mentions)
+    notifying = sum(1 for _, _, p in posts if p.notify == commentary.NOTIFY)
     print(f"Summary: {len(posts)} commentary posts ({', '.join(f'{k} x{n}' for k, n in kinds.items()) or 'none'}) "
           f"against {humans} human messages; "
-          f"{sum(1 for _, _, p in posts if p.mentions)} of them pinged someone.")
+          f"{pinged} pinged someone, {notifying} notified without naming anyone, "
+          f"{len(posts) - pinged - notifying} landed silent.")
+
+
+def loudness(post, names):
+    """How the post would land, read off the post itself rather than guessed
+    from its mentions: 'silent', 'notify', or who it pings."""
+    if post.notify == commentary.PING and post.mentions:
+        return f"pings {', '.join(names.get(u, u) for u in post.mentions)}"
+    return post.notify
 
 
 def busiest_day(archive):

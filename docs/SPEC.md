@@ -369,9 +369,9 @@ players are (the test channel on a test run).
 
 - **A registry, not a pipeline.** `commentary.TRIGGERS` is a list of `Trigger` entries in
   priority order; each is one message kind with its own `detect(tick) -> events`,
-  `render(events, tick)`, `sample(tick)` (for the preview), `cadence`, `ping` policy,
+  `render(events, tick)`, `sample(tick)` (for the preview), `cadence`, `notify` level,
   coded `default` and `once` flag. Adding a kind is one entry; the engine supplies dedup,
-  the one-post rule, the gates, the ping policy, the `/setup commentary` menu (built from
+  the one-post rule, the gates, the notification policy, the `/setup commentary` menu (built from
   the registry, so a new kind needs no `register_commands` run) and persistence. The
   per-kind switch is `commentary_overrides`, an explicit-deviations map resolved by
   `trigger_enabled()` exactly like `game_overrides` by `spec_enabled()`.
@@ -433,7 +433,7 @@ players are (the test channel on a test run).
   longest first, at most 10 names; pings; notes the server's own streak when nobody has
   scored yet. *Midday*: today's board so far (`format_scoreboard_components` with
   `MIDDAY_TITLE`), **scored games only** — under a rotation the off-rotation section is
-  hidden whatever `rotation_off_mode` says for the morning board — and silent; when
+  hidden whatever `rotation_off_mode` says for the morning board — and `NOTIFY`; when
   off-rotation games were played, and the Scores button would show them (`rotation_off_mode`
   `shown`, sticky on), one subtext line says how many and points at the button. *First
   result*: a player in today's results who is in no game's all-time `players` set —
@@ -450,10 +450,18 @@ players are (the test channel on a test run).
   with what first outright would pay. Every line has two or three phrasings, picked by a
   hash of the day and the event, so a retried pass repeats itself rather than rewording.
   House style: no em dashes in any line except the per-player nudge lines.
-- **Pings.** Only the users a body names as its audience are in `allowed_mentions`; every
-  other mention renders without notifying, and a post with nobody to notify goes out with
-  the silent flag (`scoreboard.send_commentary`, shared by both passes). The nudge and the
-  last call are the two kinds that ping.
+- **How loudly a post lands** (`Trigger.notify`, three levels defined in `scoreboard.py`
+  beside the flag they map to, spent by `scoreboard.send_commentary`, shared by both
+  passes). `SILENT` adds `FLAG_SUPPRESS_NOTIFICATIONS`, so nobody gets a push: the sticky
+  one-liners (first result, lead change, clean sweep). `NOTIFY` drops that flag but names
+  nobody, so it reaches whoever has the channel on All Messages and no one else: the
+  midday board and the tie line, both once-a-day-ish and worth noticing. `PING` also puts
+  the users the render names into `allowed_mentions`: the nudge and the last call. Discord
+  marks the channel unread either way, so `NOTIFY` differs from `SILENT` only for members
+  who opted into All Messages. Every other mention renders as text without notifying.
+  A composed post takes the loudest level of the parts that are actually IN it
+  (`commentary.loudest`) — a losing body waits for a later pass and must not raise the
+  level of a message it contributed nothing to.
 - **State** (`COMMENTARY#<day>`, two attributes): `announced`, a string set of every event
   id that has gone out — nothing is said twice, and a body that lost a pass to a
   higher-priority one is simply re-detected next time — and `standings`, the last pass's
@@ -699,7 +707,8 @@ retroactively.
   worth under the server's `scoring`, the rotation, the day's clock, streaks, reactions
   where they're on, and the command list — so it never describes a setting the server
   doesn't have: the sticky, the board and the Today's games post are named only where
-  they're switched on. The sticky's How
+  they're switched on. The scoring line follows the same rule, saying "today's games"
+  only where a rotation narrows them and plain "any game" otherwise. The sticky's How
   it works button (`HELP_BUTTON_CUSTOM_ID`) is the same reply. Answered inline; nothing in
   it reads a channel.
 - **First interaction.** The first time a player opens any live view (Play, Scores,

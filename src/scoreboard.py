@@ -19,6 +19,19 @@ FLAG_EPHEMERAL               = 1 << 6    # 64
 FLAG_SUPPRESS_NOTIFICATIONS  = 1 << 12   # 4096
 FLAG_IS_COMPONENTS_V2        = 1 << 15   # 32768
 
+# How loudly a commentary post arrives, quietest first (commentary.Trigger.notify,
+# carried on the Post and spent by send_commentary). They live here, with the flag
+# they map to, because commentary.py imports this module and not the other way
+# round -- so both ends share one definition instead of send_commentary matching
+# on a string literal it can't see the source of.
+#   SILENT  adds FLAG_SUPPRESS_NOTIFICATIONS: lands without a push for anyone.
+#   NOTIFY  drops that flag but names nobody: notifies whoever has the channel on
+#           All Messages, and nobody else. Discord marks the channel unread either
+#           way, so this is the only thing that separates it from SILENT.
+#   PING    also lists the render's people in allowed_mentions.
+SILENT, NOTIFY, PING = 'silent', 'notify', 'ping'
+LOUDNESS = {SILENT: 0, NOTIFY: 1, PING: 2}
+
 # Custom IDs for the sticky's interactive buttons, and the sticky's heading.
 # Defined here, in the module both lambdas already import, so the producer
 # (sticky_lambda) and the consumers (interaction_lambda) share one source of
@@ -426,22 +439,24 @@ def is_scoreboard_message(msg, bot_id=None):
 
 def send_commentary(session, channel_id, post):
     """Post one commentary.Post. A board goes out as Components V2, everything
-    else as content plus its button rows. Only the users the post names as its
-    audience are notified (allowed_mentions lists them); every other mention
-    renders without a ping, and a post with nobody to notify is sent silent so
-    it never lights up the channel. Shared by both passes that post commentary
-    (the daily lambda's hour, the sticky's minute). Returns the message."""
+    else as content plus its button rows. How loudly it lands is the post's own
+    `notify` (commentary.Trigger.notify), not a guess from its mentions: only
+    SILENT adds the suppress-notifications flag, so a NOTIFY kind reaches
+    whoever has the channel on All Messages without naming anyone. Only the
+    users the post lists as mentions are notified (a PING kind); every other
+    mention renders as text. Shared by both passes that post commentary (the
+    daily lambda's hour, the sticky's minute). Returns the message."""
+    flags = FLAG_IS_COMPONENTS_V2 if post.board else FLAG_SUPPRESS_EMBEDS
+    if post.notify == SILENT:
+        flags |= FLAG_SUPPRESS_NOTIFICATIONS
     if post.board:
-        payload = {'components': post.components,
-                   'flags': FLAG_IS_COMPONENTS_V2 | FLAG_SUPPRESS_NOTIFICATIONS,
+        payload = {'components': post.components, 'flags': flags,
                    'allowed_mentions': {'parse': []}}
     else:
-        payload = {'content': post.content, 'flags': FLAG_SUPPRESS_EMBEDS,
+        payload = {'content': post.content, 'flags': flags,
                    'allowed_mentions': {'parse': []}}
         if post.mentions:
             payload['allowed_mentions'] = {'users': [str(u) for u in post.mentions][:100]}
-        else:
-            payload['flags'] |= FLAG_SUPPRESS_NOTIFICATIONS
         if post.components:
             payload['components'] = post.components
     response = session.post(f'{DISCORD_API_BASE}/channels/{channel_id}/messages', json=payload)

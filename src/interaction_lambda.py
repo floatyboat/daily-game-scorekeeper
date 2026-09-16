@@ -254,7 +254,7 @@ def build_stats_response(channel_id, user_id=None, guild_id=None, cfg=None):
 HELP_HEADING = "### ❓ How the scoreboard works"
 
 
-def _scoring_blurb(mode, board):
+def _scoring_blurb(mode, board, rotation):
     crown = 'takes the \U0001F451 on the morning board' if board else 'takes the \U0001F451'
     if mode == SCORING_PER_GAME:
         return ("each game pays **1 point plus one for every player you beat**; the "
@@ -262,7 +262,11 @@ def _scoring_blurb(mode, board):
     if mode == SCORING_OFF:
         return ("no points here: every score is ranked, best first, and the streaks "
                 "are the game.")
-    return ("first place in any of today's games is worth **the number of players "
+    # "today's games" is the rotation's own term for the games that score, so a
+    # server running without one says plain "any game"; the scale is the same
+    # either way (first place is worth the day's turnout).
+    where = "any of today's games" if rotation else 'any game'
+    return (f"first place in {where} is worth **the number of players "
             "who showed up today**, one fewer for each place below; the most points "
             f"across the day {crown}.")
 
@@ -305,7 +309,7 @@ def build_help_text(cfg):
         f"\U0001F3AE **Play**: pick a game from {'the sticky or ' if sticky else ''}`/play`, "
         f"then paste the share text it gives you into {channel}. That's it: the bot "
         "reads it from there.",
-        f"\U0001F3C6 **Points**: {_scoring_blurb(cfg['scoring'], board)}",
+        f"\U0001F3C6 **Points**: {_scoring_blurb(cfg['scoring'], board, cfg['rotation_enabled'])}",
         f"\U0001F504 **Today's games**: {rotation}",
         day,
         streaks,
