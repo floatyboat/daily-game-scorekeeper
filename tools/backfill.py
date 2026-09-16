@@ -31,7 +31,8 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 
 import store
-from game_parser import make_timestamp_checker, build_games, points_per_game
+from game_parser import (make_timestamp_checker, build_games, points_per_game,
+                         SCORING_PER_GAME)
 from scoreboard import (
     DISCORD_API_BASE, make_session, parse_results, build_avatar_pool, reference_date,
 )
@@ -96,9 +97,15 @@ def backfill_days(session, cfg, tz, messages, start_dt, through_dt):
             )
             if any(results.values()):
                 games = build_games(puzzle_numbers, cfg['game_overrides'])
-                points = points_per_game(results, games, cfg['minimum_players'])
+                # History replays per game, whatever the server scores on
+                # today: the backfill archives no rotation, so a placement
+                # pool over every game would rescore old days on a scale
+                # their boards never printed.
+                points = points_per_game(results, games, cfg['minimum_players'],
+                                         scoring=SCORING_PER_GAME)
                 day = store.day_str(day_dt)
-                store.write_day(cfg['guild_id'], day, results, points, puzzle_numbers)
+                store.write_day(cfg['guild_id'], day, results, points, puzzle_numbers,
+                                scoring=SCORING_PER_GAME)
                 written += 1
                 total = sum(len(v) for v in results.values())
                 played = sum(1 for v in results.values() if v)

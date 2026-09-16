@@ -2,7 +2,8 @@
 
     dotenv run -- python3 tools/register_commands.py
 
-Re-run whenever a command or option changes. The `time` and `limits` options are
+The interaction lambda's deploy workflow runs this after every deploy of that function;
+run it by hand only for an instance of your own. The `time` and `limits` options are
 generated from store.CONFIG_FIELDS, the same table interaction_lambda reads them
 back through, so no option name is written out twice. /setup defaults to Manage
 Server via default_member_permissions; the interaction handler re-verifies the
@@ -72,15 +73,17 @@ def channel_sub(name):
             ]}
 
 
-def toggle_sub(name, description, prompt, option='enabled', group=None):
-    """An on/off subcommand with a single required boolean.
+def toggle_sub(name, description, prompt, option='enabled', group=None, required=True):
+    """An on/off subcommand with a single boolean, required unless said otherwise.
 
     `group` appends every config field declared in that group as an optional
     option, the same way field_sub builds a whole subcommand from one — for
     settings that only shape a feature that is already on (see sticky_games).
+    required=False is for a toggle whose bare form means something of its own
+    (/setup commentary with no options opens the per-kind menu).
     """
     options = [{'type': OPT_BOOLEAN, 'name': option, 'description': prompt,
-                'required': True}]
+                'required': required}]
     if group:
         options += [field_option(f) for f in setup_options(group)]
     return {'type': OPT_SUB_COMMAND, 'name': name, 'description': description,
@@ -114,6 +117,14 @@ COMMANDS = [
         'type': CHAT_INPUT,
     },
     {
+        # The explainer (interaction_lambda.build_help_text): ephemeral, built
+        # off the server's live config, the same text the sticky's How it works
+        # button and the one-time welcome send.
+        'name': 'help',
+        'description': 'How the scoreboard works — playing, points, the daily rotation',
+        'type': CHAT_INPUT,
+    },
+    {
         'name': 'setup',
         'description': 'Configure the daily game scoreboard for this server',
         'type': CHAT_INPUT,
@@ -139,8 +150,14 @@ COMMANDS = [
                        group='sticky'),
             toggle_sub('rotation', 'Score a rotating subset of games each day',
                        'Rotate which games are scored each day?', group='rotation'),
+            field_sub('scoring', 'Which points scale the board uses'),
+            toggle_sub('commentary', 'Hourly posts between boards: nudges, standings, last call',
+                       'Post commentary between the daily boards?', group='commentary',
+                       required=False),
             toggle_sub('embeds', 'Strip link previews off posted game results',
                        'Suppress link previews on game results?', option='suppress'),
+            toggle_sub('reactions', 'React to each result with how it went and where it placed',
+                       'React to game results as they are counted?', group='reactions'),
             channel_sub('input'),
             channel_sub('output'),
         ],
@@ -177,11 +194,12 @@ def register():
 
     response = requests.put(url, headers=headers, json=COMMANDS)
     print(f'Status: {response.status_code}')
-    if response.ok:
-        for cmd in response.json():
-            print(f"  /{cmd['name']} (id {cmd['id']})")
-    else:
-        print(response.json())
+    if not response.ok:
+        # A non-zero exit, so the deploy workflow's registration step fails
+        # where it can be seen instead of passing with the error in its log.
+        raise SystemExit(response.text[:2000])
+    for cmd in response.json():
+        print(f"  /{cmd['name']} (id {cmd['id']})")
 
 
 if __name__ == '__main__':

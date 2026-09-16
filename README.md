@@ -1,4 +1,4 @@
-### ➕ [Add the bot to your Discord server](https://discord.com/oauth2/authorize?client_id=1425892168471548006&scope=bot+applications.commands&permissions=2251799813762048)
+### ➕ [Add the bot to your Discord server](https://discord.com/oauth2/authorize?client_id=1425892168471548006&scope=bot+applications.commands&permissions=2251799813762112)
 
 Then run `/setup channel` in the server — that's the whole setup.
 
@@ -22,6 +22,7 @@ there is the whole onboarding — no redeploy, no config file.
 | **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and the server's streaks — off-rotation plays listed below the scored games for zero points. |
 | **Today's games** | Posted at the server's day start while rotation is on (the default): the rotating subset of games that scores today, as play links. Lands right under the board when the board posts at that same hour. Servers that would rather not have a second daily message can switch just this post off. |
 | **Now Playing sticky** | One message kept at the bottom of the input channel: how much the server has played today, today's games as play buttons, the server streak in its heading, and **Play**, **Scores** and **Yesterday** underneath. |
+| **Reactions** | Opt-in per server: within a minute of a result being posted, the bot reacts to it with how it went (💯 aced, 😎 good, 🙂 medium, 😬 bad, 💩 failed) and where it placed in that game at that moment (👑 🥈 🥉, 👍 below third, nothing for the first to post). Good, medium and bad are set per game. |
 | **`/play`** | A private list of games as buttons, linking straight to each puzzle, ordered by what the server is actually playing. It lists everything *except* the games already on the sticky, so the two don't repeat; **`/play all:true`** puts the whole roster in one list. |
 | **`/stats`** | A private view of your own streaks — overall, then game by game. Every streak on the board belongs to the server; this is where yours are. |
 | **`/suggest`** | Anyone can propose a game the bot doesn't track yet. |
@@ -70,8 +71,8 @@ as *images* are ignored until a server opts in — see
 
 ## 1. Invite it
 
-Open the [invite link](https://discord.com/oauth2/authorize?client_id=1425892168471548006&scope=bot+applications.commands&permissions=2251799813762048),
-choose your server (you need **Manage Server** there) and authorize. It asks for five
+Open the [invite link](https://discord.com/oauth2/authorize?client_id=1425892168471548006&scope=bot+applications.commands&permissions=2251799813762112),
+choose your server (you need **Manage Server** there) and authorize. It asks for six
 permissions and nothing else:
 
 | Permission | What it's for |
@@ -81,18 +82,23 @@ permissions and nothing else:
 | Send Messages | Posting the scoreboard and the sticky |
 | Manage Messages | Stripping link previews off the sticky, collapsing duplicate stickies, deleting the Wordle app's daily recap (opt-in) |
 | Pin Messages | Pinning the daily board, and unpinning it once it ages out |
+| Add Reactions | Reacting to each result with how it went and where it placed (only with `/setup reactions` on) |
 
 Pin Messages is its own permission, not part of Manage Messages: Discord split it out
 with the current pins API, so a server invited on the older four-permission integer
 (`76800`) posts its board fine and then fails the pin with `403 / 50013`.
 
+Add Reactions came later still, and only `/setup reactions` uses it. A server invited
+before it usually allows it anyway, since Discord gives it to `@everyone` by default;
+where reactions are restricted, grant it to the bot's role before switching them on.
+
 Running your own instance? Build the link from your own application on the **OAuth2**
 tab of the [Developer Portal](https://discord.com/developers/applications) — scopes
-`bot` and `applications.commands`, the five permissions above, which is the integer
-`2251799813762048`:
+`bot` and `applications.commands`, the six permissions above, which is the integer
+`2251799813762112`:
 
 ```
-https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot+applications.commands&permissions=2251799813762048
+https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot+applications.commands&permissions=2251799813762112
 ```
 
 The bot has to be running somewhere before its slash commands do anything — see
@@ -169,6 +175,11 @@ Defaults in parentheses.
   (`true` by default). Stripping happens as the sticky counts each result, so it needs
   **Manage Messages** and does nothing at all while the sticky is off. Turning it off
   doesn't restore previews already stripped.
+- **`/setup reactions enabled:true rotation_only:<bool>`** (`false` / `false`) — react
+  to each result as it's counted: how it went, against per-game good/medium/bad lines,
+  and where it placed in that game when it was posted. `rotation_only:true` limits it to
+  today's rotation games while the rotation is on. Needs **Add Reactions** and, like
+  link stripping, does nothing while the sticky is off.
 
 ## Suggesting a game
 
@@ -307,7 +318,9 @@ uploading, so a missing dependency fails the build instead of the next cold star
    ```bash
    dotenv run -- python3 tools/register_commands.py
    ```
-   Bulk overwrite, safe to re-run — do it whenever a command or option changes.
+   Bulk overwrite, safe to re-run. After this first time, `deploy-interaction.yml` does
+   it for you: it re-registers after every deploy of the interaction lambda, reading the
+   bot's token and ID off that function's own environment.
 3. Invite the bot and run `/setup` — see
    [Adding the bot to your Discord server](#adding-the-bot-to-your-discord-server).
 

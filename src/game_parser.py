@@ -39,6 +39,7 @@ class Game:
     needs_timestamp: bool = False
     search_pattern: re.Pattern = None   # optional cheap pre-check before the full pattern
     parse: object = None                # callable(match, content) -> (score, metadata)
+    breakpoints: tuple = None           # (good, medium); see GameSpec
 
 
 def compute_puzzle_numbers(reference_date):
@@ -496,6 +497,17 @@ class GameSpec:
                 flip any game either way per guild via /setup games
                 (game_overrides in the guild config); this flag only decides
                 what a guild gets before anyone touches the menu.
+      breakpoints
+                (good, medium): where a result stops being good, and where it
+                stops being medium, for the reaction the sticky pass puts on
+                it (performance_tier). In the metric's own number, lower is
+                better -- guesses, connections mistakes, cryptic weighted
+                hints, time and timed_win seconds, travle +N, reverse_score
+                the score -- except score and maptap, which compare the
+                result's percentage of `total`, higher is better. That is why
+                every score game carries its real ceiling in `total`: no
+                score game's board line prints it. None: no good, medium or
+                bad, though an aced or pooped result still reads as one.
     """
     key: str
     emoji: str
@@ -510,6 +522,7 @@ class GameSpec:
     search: object = None       # callable(reference_date, puzzle) -> re.Pattern
     total_key: str = None       # puzzle_numbers key that overrides `total`
     disabled: bool = False
+    breakpoints: tuple = None   # (good, medium), see performance_tier
 
 
 # --- Per-game score extractors -------------------------------------------------
@@ -723,6 +736,7 @@ GAME_SPECS = [
     GameSpec(
         key='connections', emoji='🔗', title='Connections', metric='connections',
         total=4, url='https://www.nytimes.com/games/connections',
+        breakpoints=(1, 3),
         puzzle=lambda ref: (ref - datetime(2023, 6, 12)).days + 1,
         pattern=lambda ref, n: re.compile(rf'Connections.*?Puzzle #{n}', re.IGNORECASE | re.DOTALL),
         parse=lambda m, c: (get_connections_results(c), {}),
@@ -730,6 +744,7 @@ GAME_SPECS = [
     GameSpec(
         key='bandle', emoji='🎵', title='Bandle', metric='guesses',
         total=6, total_key='bandle_total', url='https://bandle.app/daily',
+        breakpoints=(2, 4),
         puzzle=lambda ref: (ref - datetime(2022, 8, 18)).days + 1,
         pattern=lambda ref, n: re.compile(rf'Bandle #{n} (\d+|x)/(\d+)', re.IGNORECASE),
         parse=_parse_bandle,
@@ -737,6 +752,7 @@ GAME_SPECS = [
     GameSpec(
         key='sports', emoji='🏈', title='Sports Connections', metric='connections',
         total=4, url='https://www.nytimes.com/athletic/connections-sports-edition',
+        breakpoints=(1, 3),
         puzzle=lambda ref: (ref - datetime(2024, 9, 24)).days + 1,
         pattern=lambda ref, n: re.compile(rf'Connections: Sports Edition.*? #{n}', re.IGNORECASE | re.DOTALL),
         parse=lambda m, c: (get_connections_results(c), {}),
@@ -744,6 +760,7 @@ GAME_SPECS = [
     GameSpec(
         key='pips', emoji='🎲', title='Pips', metric='time',
         total=0, url='https://www.nytimes.com/games/pips',
+        breakpoints=(210, 540),     # 3:30 and 9:00
         puzzle=lambda ref: (ref - datetime(2025, 8, 18)).days + 1,
         pattern=lambda ref, n: re.compile(rf'Pips #{n} Hard', re.IGNORECASE),
         parse=_parse_pips,
@@ -757,14 +774,20 @@ GAME_SPECS = [
     ),
     GameSpec(
         key='maptap', emoji='🎯', title='MapTap', metric='maptap',
-        total=0, url='https://maptap.gg',
+        # Final Score is out of 1000. The maptap line never prints a total, so
+        # the ceiling is carried for the breakpoints alone.
+        total=1000, url='https://maptap.gg',
+        breakpoints=(96, 89),
         puzzle=lambda ref: (ref - datetime(2024, 6, 22)).days + 1,
         pattern=lambda ref, n: re.compile(rf'(.*)MapTap(.*){ref.strftime("%B")} {ref.day}', re.IGNORECASE),
         parse=_parse_maptap,
     ),
     GameSpec(
         key='chronophoto', emoji='📷', title='Chronophoto', metric='score',
-        total=0, url='https://www.chronophoto.app/daily.html',
+        # The daily five photos make a ceiling of 5000, carried for the
+        # breakpoints; no score game's line prints its total.
+        total=5000, url='https://www.chronophoto.app/daily.html',
+        breakpoints=(70, 45),
         puzzle=lambda ref: f'{ref.month}/{ref.day}/{ref.year}',
         pattern=lambda ref, n: re.compile(rf"I got a score of (\d+) on today's Chronophoto: {re.escape(n)}", re.IGNORECASE),
         search=lambda ref, n: re.compile(re.escape(n), re.IGNORECASE),
@@ -773,6 +796,7 @@ GAME_SPECS = [
     GameSpec(
         key='globle', emoji='🌍', title='Globle', metric='guesses',
         total=0, url='https://globle.org', needs_timestamp=True, disabled=True,
+        breakpoints=(5, 10),
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         pattern=lambda ref, n: re.compile(r"I guessed today['’]s Globle in (\d+) tr", re.IGNORECASE),
         parse=lambda m, c: (int(m.group(1)), {}),
@@ -780,6 +804,7 @@ GAME_SPECS = [
     GameSpec(
         key='worldle', emoji='🗺️', title='Worldle', metric='guesses',
         total=0, url='https://worldlegame.io', needs_timestamp=True, disabled=True,
+        breakpoints=(2, 4),
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         pattern=lambda ref, n: re.compile(r"I guessed today['’]s Worldle in (\d+) tr", re.IGNORECASE),
         parse=lambda m, c: (int(m.group(1)), {}),
@@ -787,6 +812,7 @@ GAME_SPECS = [
     GameSpec(
         key='flagle', emoji='🏁', title='Flagle', metric='guesses',
         total=0, url='https://flagle.org', needs_timestamp=True, disabled=True,
+        breakpoints=(2, 4),
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         pattern=lambda ref, n: re.compile(r"I guessed today['’]s Flag in (\d+) tr", re.IGNORECASE),
         parse=lambda m, c: (int(m.group(1)), {}),
@@ -794,6 +820,7 @@ GAME_SPECS = [
     GameSpec(
         key='quizl', emoji='⁉️', title='Quizl', metric='score',
         total=5, url='https://quizl.io',
+        breakpoints=(80, 40),
         puzzle=lambda ref: (ref - datetime(2022, 3, 16)).days + 1,
         pattern=lambda ref, n: re.compile(rf'Quizl#{n}', re.IGNORECASE),
         parse=_parse_quizl,
@@ -801,6 +828,7 @@ GAME_SPECS = [
     GameSpec(
         key='wordle', emoji='📗', title='Wordle', metric='guesses',
         total=DEFAULT_WORDLE_TOTAL, url='https://www.nytimes.com/games/wordle',
+        breakpoints=(3, 5),
         puzzle=lambda ref: (ref - datetime(2021, 6, 19)).days,
         pattern=lambda ref, n: re.compile(rf'Wordle\s+{n:,}\s+([1-6X])/6', re.IGNORECASE),
         parse=_parse_wordle,
@@ -808,6 +836,7 @@ GAME_SPECS = [
     GameSpec(
         key='travle', emoji='✈️', title='Travle', metric='travle',
         total=0, url='https://travle.earth',
+        breakpoints=(0, 2),
         puzzle=lambda ref: (ref - datetime(2022, 12, 15)).days + 1,
         pattern=lambda ref, n: re.compile(rf'#travle\s+#{n}\s+(?:\+(\d+)|\((\d+)\s+away\))(?:[^\n]*?\((\d+)\s+hints?\))?[^\n]*(?:\n([^\n]*))?', re.IGNORECASE),
         parse=_parse_travle,
@@ -815,6 +844,7 @@ GAME_SPECS = [
     GameSpec(
         key='dialed_color', emoji='🎨', title='Color', metric='score',
         total=50, url='https://dialed.gg/color?d=1', needs_timestamp=True,
+        breakpoints=(90, 82),
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         pattern=lambda ref, n: re.compile(r'dialed\.gg/(?:color)?\?\S*&s=(\d+(?:\.\d+)?)',
                                           re.IGNORECASE),
@@ -823,6 +853,7 @@ GAME_SPECS = [
     GameSpec(
         key='dialed_sound', emoji='🔊', title='Sound', metric='score',
         total=50, url='https://dialed.gg/sound?d=1', needs_timestamp=True,
+        breakpoints=(92, 70),
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         pattern=lambda ref, n: re.compile(r'dialed\.gg/sound\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
         parse=lambda m, c: (float(m.group(1)), {}),
@@ -830,6 +861,7 @@ GAME_SPECS = [
     GameSpec(
         key='dialed_color2', emoji='🎭', title='Color-Toon', metric='score',
         total=50, url='https://dialed.gg/color2?d=1', needs_timestamp=True,
+        breakpoints=(85, 75),
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         pattern=lambda ref, n: re.compile(r'dialed\.gg/color2\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
         parse=lambda m, c: (float(m.group(1)), {}),
@@ -837,6 +869,7 @@ GAME_SPECS = [
     GameSpec(
         key='enclose', emoji='🐴', title='Enclose', metric='score',
         total=100, url='https://enclose.horse',
+        breakpoints=(95, 90),       # 100 is aced
         puzzle=lambda ref: (ref - datetime(2025, 12, 30)).days + 1,
         pattern=lambda ref, n: re.compile(rf'enclose\.horse Day {n}\b.*?(\d+)%', re.IGNORECASE | re.DOTALL),
         parse=lambda m, c: (int(m.group(1)), {}),
@@ -844,6 +877,7 @@ GAME_SPECS = [
     GameSpec(
         key='minutecryptic', emoji='🧩', title='Minute Cryptic', metric='cryptic',
         total=8, total_key='minutecryptic_total', url='https://www.minutecryptic.com',
+        breakpoints=(1, 3),
         puzzle=lambda ref: (ref - datetime(2024, 6, 26)).days + 1,
         # Scored like golf on hints used, so fewer is better and 0 is a clean
         # solve -- but a revealed letter costs more than a nudge, so what ranks
@@ -867,6 +901,7 @@ GAME_SPECS = [
     GameSpec(
         key='gerrymandle', emoji='🗳️', title='Gerrymandle', metric='timed_win',
         total=0, url='https://gerrymandle.com',
+        breakpoints=(100, 240),     # 1:40 and 4:00, on a win
         puzzle=lambda ref: (ref - datetime(2026, 5, 11)).days + 1,
         # The headline line is all the pattern claims; _parse_gerrymandle digs
         # the clock out of it, because everything after the verb is optional and
@@ -880,12 +915,13 @@ GAME_SPECS = [
     ),
     GameSpec(
         key='krillion', emoji='🦐', title='Krillion', metric='score',
-        total=0, url='https://krillion.io',
+        total=700, url='https://krillion.io',
+        breakpoints=(47, 33),
         puzzle=lambda ref: (ref - datetime(2026, 7, 16)).days + 1,
         # Seven rounds, each scored by how obscure the answer was (10 for one
         # the whole school reaches for, up to 100 for the day's gem), so higher
-        # is better. The ceiling is 700, but total stays 0 to keep the '/700'
-        # off the board -- the score reads as a tally here, not a fraction.
+        # is better, with a ceiling of 700. No score game's line prints its
+        # total, so the score still reads as a tally here, not a fraction.
         #
         # The share text puts the score alone on the line under the heading,
         # which is why the pattern spans the newline to reach it. That heading
@@ -901,6 +937,7 @@ GAME_SPECS = [
     GameSpec(
         key='fermi', emoji='⚛️', title='Fermi', metric='reverse_score',
         total=0, url='https://fermi.gg', disabled=True,
+        breakpoints=(1.5, 3),
         puzzle=lambda ref: (ref - datetime(2026, 7, 27)).days + 1,
         # Three estimation rounds, each scored by how far off the guess was as a
         # multiple of the true answer, so 1.00× is exact and lower is better --
@@ -921,12 +958,13 @@ GAME_SPECS = [
     ),
     GameSpec(
         key='sizeitup', emoji='📏', title='Size It Up', metric='score',
-        total=0, url='https://magnitudle.com/size-it-up', needs_timestamp=True, disabled=True,
+        total=500, url='https://magnitudle.com/size-it-up', needs_timestamp=True, disabled=True,
+        breakpoints=(65, 50),
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         # Five rounds of resizing a silhouette against a known reference, each
-        # worth up to 100 for how close it came, so higher is better. The
-        # ceiling is 500, but as with krillion total stays 0 to keep the '/500'
-        # off the board -- the share text prints a tally, not a fraction.
+        # worth up to 100 for how close it came, so higher is better, with a
+        # ceiling of 500. As with krillion, the line prints no total: the share
+        # text prints a tally, not a fraction.
         #
         # That share text carries no puzzle number and no date, and a replay
         # from the site's archive writes exactly the same lines, so like the
@@ -1072,6 +1110,7 @@ def build_games(puzzle_numbers, game_overrides=None):
             needs_timestamp=spec.needs_timestamp,
             search_pattern=patterns[1],
             parse=spec.parse,
+            breakpoints=spec.breakpoints,
         ))
     return games
 
@@ -1116,6 +1155,162 @@ def match_message(msg, games, timestamp_checker, avatar_hashes=None):
     return []
 
 
+# The points scales a server can pick (config field `scoring`, /setup
+# scoring). Declared here rather than in store because the semantics live
+# here: points_per_game spends them, store only offers them as a menu.
+#   placement  first place is worth the day's turnout, one fewer per place
+#              (rotation_points_base); the default, and the rotation's scale
+#   per_game   1 + every player beaten in that game; the pre-rotation scale
+#   off        no points at all -- scores only, no crown, streaks unaffected
+SCORING_PLACEMENT = 'placement'
+SCORING_PER_GAME = 'per_game'
+SCORING_OFF = 'off'
+
+
+def score_sort_key(metric, score):
+    """Sort key under which a better result of `metric` sorts FIRST.
+
+    The one ranking rule, spent by compute_points, the board lines and the
+    commentary's tie and sweep checks, so no surface can rank a game
+    differently from the points it pays.
+    """
+    if metric == 'connections':
+        return (score[0], -score[1])
+    if metric == 'score':
+        return -score
+    if metric == 'maptap':
+        return (-score[0], -score[1])
+    return score
+
+
+BOARD_HEADING_EMOJI = '\U0001F9EE'
+
+
+def board_heading(title, reference_date=None):
+    """The heading line every board opens with. Without a date it is the
+    prefix scoreboard.is_midday_board matches, so the two can't drift."""
+    head = f'### {BOARD_HEADING_EMOJI} {title}'
+    if reference_date is None:
+        return head
+    return f"{head} - {reference_date.strftime('%B %d, %Y')}"
+
+
+def is_poop(metric, score, total):
+    """A result that earns nothing: the game was failed outright.
+
+    The one definition of a poop, per metric. Spent by compute_points (0
+    points, place still held), scoring_players (not a play for streak
+    purposes, whatever the scoring mode says) and the board line's medal, so
+    the zero, the streak and the emoji can never disagree.
+    """
+    if metric == 'connections':
+        mistakes, solved = score
+        return mistakes == total and solved == 0
+    if metric == 'guesses':
+        return bool(total > 0 and score > total)
+    if metric == 'score':
+        return score == 0
+    if metric == 'maptap':
+        return score[0] == 0
+    if metric == 'travle':
+        return score[0] == 2
+    if metric == 'timed_win':
+        return score[0] != 0
+    if metric == 'cryptic':
+        return _minutecryptic_poop(score, total)
+    return False
+
+
+# --- How a single result went ---------------------------------------------------
+# The sticky pass reacts to every fresh result with two emoji
+# (sticky_lambda.react_to_results): its tier, then the place it took the moment
+# it was posted. Aced and poop read the same in every game; good, medium and
+# bad come from the game's own breakpoints (GameSpec.breakpoints).
+
+ACED, GOOD, MEDIUM, BAD, POOP = 'aced', 'good', 'medium', 'bad', 'poop'
+
+# Metrics whose breakpoints are a percentage of the game's ceiling (`total`),
+# because their raw numbers mean nothing from one game to the next: 45 is a
+# great Color and a hopeless Krillion. Every other metric compares its own
+# lower-is-better number.
+PERCENT_METRICS = ('score', 'maptap')
+
+# The board's podium, and the places a result's reaction marks.
+MEDALS = ('\U0001F451', '\U0001F948', '\U0001F949')
+
+TIER_EMOJI = {ACED: '\U0001F4AF', GOOD: '\U0001F60E', MEDIUM: '\U0001F642',
+              BAD: '\U0001F62C', POOP: '\U0001F4A9'}
+BELOW_PODIUM = '\U0001F44D'
+
+
+def performance_tier(game, score):
+    """ACED, GOOD, MEDIUM, BAD or POOP for one result of `game`, or None when
+    the game has nothing to say about it.
+
+    POOP is is_poop, so the reaction and the board's medal can't disagree.
+    ACED is the perfect result of the games that have one: a guesses game in
+    one, a connections grid without a mistake (a VERT ranks above that, so it
+    counts too), a cryptic with no hints, a score or maptap result at its
+    ceiling (`total`). Anything else is measured against
+    game.breakpoints (good, medium): at least as good as `good` is GOOD, at
+    least as good as `medium` is MEDIUM, worse is BAD. A travle that missed the
+    target is BAD whatever its count, and a gerrymandle won with the timer
+    hidden has no time to measure, so no tier. No breakpoints -- or a
+    percentage game with no ceiling to take a share of -- is no tier either.
+    """
+    metric, total = game.metric, game.total
+    if is_poop(metric, score, total):
+        return POOP
+    if ((metric == 'guesses' and score == 1)
+            or (metric == 'connections' and score[0] <= 0)
+            or (metric == 'cryptic' and score[1] == 0)
+            or (metric in PERCENT_METRICS and total
+                and (score if metric == 'score' else score[0]) >= total)):
+        return ACED
+    if not game.breakpoints:
+        return None
+    good, medium = game.breakpoints
+    if metric in PERCENT_METRICS:
+        if not total:
+            return None
+        share = (score if metric == 'score' else score[0]) * 100 / total
+        return GOOD if share >= good else MEDIUM if share >= medium else BAD
+    if metric == 'travle':
+        if score[0]:
+            return BAD
+        value = score[1]
+    elif metric == 'timed_win':
+        if score[2]:
+            return None
+        value = score[3]
+    elif metric in ('connections', 'cryptic'):
+        value = score[0]
+    else:  # guesses, time, reverse_score: the score is the number
+        value = score
+    return GOOD if value <= good else MEDIUM if value <= medium else BAD
+
+
+def place_at_post(metric, score, earlier):
+    """The place a result took in its game the moment it was posted: 1 plus
+    every one of `earlier` (the scores already in) strictly better by
+    score_sort_key, so a tie shares the better place, as on the board. None
+    for the first result in a game, which has beaten nobody yet."""
+    if not earlier:
+        return None
+    key = score_sort_key(metric, score)
+    return 1 + sum(1 for s in earlier if score_sort_key(metric, s) < key)
+
+
+def result_reactions(tier, place):
+    """The emoji a result is reacted with, in order: its tier, then its place
+    -- a medal on the podium, a thumbs up below it. A poop gets no place, as it
+    gets no medal on the board, and neither does a result with no place."""
+    emojis = [TIER_EMOJI[tier]] if tier else []
+    if place and tier != POOP:
+        emojis.append(MEDALS[place - 1] if place <= len(MEDALS) else BELOW_PODIUM)
+    return emojis
+
+
 def compute_points(results, games, minimum_players=1, first_place_points=None):
     """Compute total points per user across all games.
 
@@ -1151,15 +1346,8 @@ def compute_points(results, games, minimum_players=1, first_place_points=None):
         if game_key not in results or not results[game_key] or len(results[game_key]) < minimum_players:
             continue
 
-        # Sort players using the same keys as _format_game_players
-        if metric == 'connections':
-            players = sorted(results[game_key].items(), key=lambda x: (x[1][0], -x[1][1]))
-        elif metric == 'score':
-            players = sorted(results[game_key].items(), key=lambda x: (-x[1]))
-        elif metric == 'maptap':
-            players = sorted(results[game_key].items(), key=lambda x: (-x[1][0], -x[1][1]))
-        else:
-            players = sorted(results[game_key].items(), key=lambda x: x[1])
+        players = sorted(results[game_key].items(),
+                         key=lambda x: score_sort_key(metric, x[1]))
 
         n = len(players)
 
@@ -1168,37 +1356,13 @@ def compute_points(results, games, minimum_players=1, first_place_points=None):
         while i < len(players):
             current_score = players[i][1]
 
-            # Check for poop override (no points)
-            is_poop = False
-            if metric == 'connections':
-                mistakes, solved = current_score
-                if mistakes == total and solved == 0:
-                    is_poop = True
-            elif metric == 'guesses' and total > 0:
-                if current_score > total:
-                    is_poop = True
-            elif metric == 'score':
-                if current_score == 0:
-                    is_poop = True
-            elif metric == 'maptap':
-                if current_score[0] == 0:
-                    is_poop = True
-            elif metric == 'travle':
-                if current_score[0] == 2:
-                    is_poop = True
-            elif metric == 'timed_win':
-                if current_score[0] != 0:
-                    is_poop = True
-            elif metric == 'cryptic':
-                if _minutecryptic_poop(current_score, total):
-                    is_poop = True
-
             # Collect tied players
             j = i + 1
             while j < len(players) and players[j][1] == current_score:
                 j += 1
 
-            if not is_poop:
+            # A poop holds its place but earns nothing.
+            if not is_poop(metric, current_score, total):
                 if first_place_points is None:
                     # Per-game scale: 1 point + 1 for each player strictly below
                     # (players[j:]); tied players (players[i:j]) don't count as
@@ -1242,43 +1406,79 @@ def rotation_points_base(results, games, minimum_players=1):
     return len(players)
 
 
-def points_per_game(results, games, minimum_players=1, rotation=None):
+def points_per_game(results, games, minimum_players=1, rotation=None,
+                    scoring=SCORING_PLACEMENT):
     """{game_key: {user_id: points}} for every game in `games`.
 
     compute_points scores each game independently, so scoring them one at a
     time sums to exactly the totals the posted points summary shows. One helper
-    so the archive, the streak fold and the live views all agree on who scored.
+    so the archive, the board and the live views all agree on what a result is
+    worth.
 
-    rotation (the day's key list, or None on an unrestricted day) puts the
-    games inside it on the rotation scale, one rotation_points_base shared
-    across them so the per-game split still sums to the board's single call.
-    Games outside it keep the per-game scale: they earn no board points at all,
-    so the day's pool is not the yardstick their frozen points belong on.
+    scoring picks the scale (SCORING_*): `placement` shares one
+    rotation_points_base across the scored games -- the rotation's, or every
+    game when rotation is None, so an unrestricted day pools everyone who
+    played anything -- `per_game` pays 1 + players beaten in each game, and
+    `off` pays nothing anywhere.
+
+    rotation (the day's key list, or None on an unrestricted day) narrows
+    which games are scored on the day's scale. Games outside it always keep
+    the per-game scale for their frozen points: they earn no board points at
+    all, so the day's pool is not the yardstick they belong on. Streak
+    eligibility is scoring_players, not this: a scale that pays nothing must
+    not read as nobody having played.
+    """
+    if scoring == SCORING_OFF:
+        return {g.key: {} for g in games}
+    rot = set(rotation) if rotation else None
+    scored = games if rot is None else [g for g in games if g.key in rot]
+    base = (rotation_points_base(results, scored, minimum_players)
+            if scoring == SCORING_PLACEMENT else None)
+    return {g.key: compute_points(results, [g], minimum_players,
+                                  base if rot is None or g.key in rot else None)
+            for g in games}
+
+
+def total_points(results, games, minimum_players=1, rotation=None,
+                 scoring=SCORING_PLACEMENT):
+    """{user_id: points} summed over the day's SCORED games -- the board's
+    points summary, and the live standings the commentary compares hour to
+    hour. Off-rotation games are left out entirely: their per-game points are
+    frozen for the archive, never counted toward the day.
     """
     rot = set(rotation) if rotation else None
-    base = (rotation_points_base(results, [g for g in games if g.key in rot],
-                                 minimum_players) if rot else None)
-    return {g.key: compute_points(results, [g], minimum_players,
-                                  base if rot and g.key in rot else None)
-            for g in games}
+    scored = games if rot is None else [g for g in games if g.key in rot]
+    totals = defaultdict(int)
+    for pts in points_per_game(results, scored, minimum_players, rotation,
+                               scoring).values():
+        for uid, p in pts.items():
+            totals[uid] += p
+    return dict(totals)
 
 
 def scoring_players(results, games, minimum_players=1):
     """{game_key: {user_id, ...}} -- who a day's streaks count as having played.
 
-    A result by itself is not a play for streak purposes: a poop score earns 0
-    points, and 0 points keeps nothing alive -- not that player's streak for the
-    game, and not the game's own streak when nobody scored. Games below
-    minimum_players score nobody, so they don't extend streaks either -- the
-    same games the board leaves off.
+    A result by itself is not a play for streak purposes: a poop is a failed
+    game, and a failed game keeps nothing alive -- not that player's streak
+    for the game, and not the game's own streak when nobody solved it. Games
+    below minimum_players score nobody, so they don't extend streaks either --
+    the same games the board leaves off.
 
     The single definition of streak eligibility, shared by the finalize fold
-    (via the points it already stores) and every live view. Which scale scored
-    the day makes no difference here: every non-poop result is worth at least 1
-    point on either, so eligibility is the same set of players either way.
+    and every live view. Deliberately keyed on is_poop rather than on points:
+    the scoring mode decides what a result is WORTH, and a server that has
+    switched points off still has streaks to keep.
     """
-    return {key: {uid for uid, pts in scores.items() if pts > 0}
-            for key, scores in points_per_game(results, games, minimum_players).items()}
+    plays = {}
+    for game in games:
+        scores = results.get(game.key) or {}
+        if len(scores) < minimum_players:
+            plays[game.key] = set()
+            continue
+        plays[game.key] = {uid for uid, score in scores.items()
+                           if not is_poop(game.metric, score, game.total)}
+    return plays
 
 
 def format_points_summary(points):
@@ -1293,7 +1493,7 @@ def format_points_summary(points):
 
     sorted_users = sorted(users_with_points.items(), key=lambda x: -x[1])
 
-    medals = ['👑', '🥈', '🥉']
+    medals = MEDALS
     message = ''
 
     rank = 0
@@ -1371,11 +1571,12 @@ def _format_game_players(game_scores, metric, total, names=None,
         return f'<@{uid}>'
 
     # The "/N" every score with a maximum carries, and the one place the
-    # show_totals rung is spent. Games with total=0 -- an open scale, or a
-    # ceiling deliberately not printed -- never had one.
+    # show_totals rung is spent. Games with total=0 -- an open scale -- never
+    # had one, and score games never print theirs: there `total` is only the
+    # ceiling their reaction breakpoints take a percentage of.
     out_of = f'/{total}' if show_totals and total else ''
 
-    medals = ['👑', '🥈', '🥉']
+    medals = MEDALS
     lines = ''
 
     if metric == 'maptap':
@@ -1398,7 +1599,7 @@ def _format_game_players(game_scores, metric, total, names=None,
                 tied.append(mention(sorted_players[j][0], rank))
                 j += 1
             medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
-            if weighted == 0:
+            if is_poop(metric, score_tuple, total):
                 medal = '💩 '
             players_str = " ".join(reversed(tied))
             if weighted_counts[weighted] > 1:
@@ -1409,12 +1610,7 @@ def _format_game_players(game_scores, metric, total, names=None,
             i = j
         return lines
 
-    if metric == 'connections':
-        players = sorted(game_scores.items(), key=lambda x: (x[1][0], -x[1][1]))
-    elif metric == 'score':
-        players = sorted(game_scores.items(), key=lambda x: (-x[1]))
-    else:
-        players = sorted(game_scores.items(), key=lambda x: x[1])
+    players = sorted(game_scores.items(), key=lambda x: score_sort_key(metric, x[1]))
 
     rank = 0
     prev_score = None
@@ -1433,13 +1629,13 @@ def _format_game_players(game_scores, metric, total, names=None,
             j += 1
 
         medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
+        if is_poop(metric, current_score, total):
+            medal = '💩 '
 
         if metric == 'time':
             score_str = _mmss(current_score)
         elif metric == 'timed_win':
             tier, hints, untimed, seconds = current_score
-            if tier:
-                medal = '💩 '
             # A win is just its time -- the clock IS the result, and "won" in
             # front of every top line would be noise. The other two say so.
             parts = [{1: 'tied', 2: 'lost'}[tier]] if tier else []
@@ -1457,14 +1653,10 @@ def _format_game_players(game_scores, metric, total, names=None,
                 score_str = "VERT 🧗"
             elif mistakes == total:
                 score_str = f"{mistakes}{out_of} ({solved} solved)"
-                if solved == 0:
-                    medal = '💩 '
             else:
                 score_str = f"{mistakes}{out_of}"
         elif metric == 'score':
-            if current_score == 0:
-                medal = '💩 '
-            score_str = f"{current_score}{out_of}"
+            score_str = f"{current_score}"
         elif metric == 'travle':
             tier, eff_n, hints, neg_cm = current_score
             k = -neg_cm
@@ -1480,7 +1672,6 @@ def _format_game_players(game_scores, metric, total, names=None,
             elif tier == 1:
                 score_str = f"{raw_n} away{extra}"
             else:  # tier == 2: complete wiff
-                medal = '💩 '
                 score_str = f"{raw_n} away{extra}"
         elif metric == 'cryptic':
             # (weighted, hints, letters, letters available). The raw hint count
@@ -1489,14 +1680,11 @@ def _format_game_players(game_scores, metric, total, names=None,
             # on an otherwise identical line -- the same reason travle prints
             # its hints and maptap its unweighted score.
             hints, letters = current_score[1], current_score[2]
-            if _minutecryptic_poop(current_score, total):
-                medal = '💩 '
             score_str = f"{hints}{out_of}"
             if letters:
                 score_str += f" ({letters} letter" + ("s)" if letters != 1 else ")")
         else:  # guesses, reverse_score -- a plain number, lower wins
             if total and current_score > total:
-                medal = '💩 '
                 current_score = 'X'
             score_str = f"{current_score}{out_of}"
 
@@ -1721,7 +1909,7 @@ _REDUCTIONS = (
 )
 
 
-def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None, rotation=None, rotation_off='shown', names=None):
+def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None, rotation=None, rotation_off='shown', names=None, scoring=SCORING_PLACEMENT):
     """Format the scoreboard as Discord Components V2, within Discord's caps.
 
     Renders the full board, measures it, and if it breaks either cap re-renders
@@ -1752,13 +1940,17 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     board is the only surface the setting touches. Both headings appear only on
     a rotation board: without one there is no split to label.
 
+    scoring is the server's points scale (SCORING_*, see points_per_game); it
+    shapes the points summary alone, and `off` drops that summary entirely.
+
     Returns a list[dict] suitable for the 'components' field in a Discord message.
     """
     style, applied = _FULL_STYLE, set()
     while True:
         components = _render_scoreboard(
             results, reference_date, puzzle_numbers, title, minimum_players,
-            streaks, game_overrides, rotation, rotation_off, names, style)
+            streaks, game_overrides, rotation, rotation_off, names, style,
+            scoring)
         over = over_budget(components)
         if not over:
             return components
@@ -1781,14 +1973,14 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
 
 def _render_scoreboard(results, reference_date, puzzle_numbers, title,
                        minimum_players, streaks, game_overrides, rotation,
-                       rotation_off, names, style):
+                       rotation_off, names, style, scoring=SCORING_PLACEMENT):
     """One pass of the board at a given style. See format_scoreboard_components."""
     games = build_games(puzzle_numbers, game_overrides)
     rot = set(rotation) if rotation is not None else None
     components = []
 
     # --- Header container ---
-    header_text = f"### 🧮 {title} - {reference_date.strftime('%B %d, %Y')}"
+    header_text = board_heading(title, reference_date)
     if style.game_streaks:
         header_text += _server_streak_line(streaks)
     header_children = [{"type": 10, "content": header_text}]
@@ -1806,21 +1998,17 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
         ] + break_child}]
 
     # --- Points container (gold accent) ---
-    # The one rotation-restricted compute_points call site: off-rotation games
-    # earn no points on the board, whatever the archive froze for them. A
-    # rotation day also pays on its own scale -- first place in any of its
-    # games is worth the whole day's turnout -- so the games it drew are worth
-    # the same whether four players showed up for one or two.
-    scored_games = games if rot is None else [g for g in games if g.key in rot]
-    base = (None if rot is None
-            else rotation_points_base(results, scored_games, minimum_players))
-    points = compute_points(results, scored_games, minimum_players, base)
+    # The same fold the archive freezes (points_per_game, via total_points):
+    # off-rotation games earn no points on the board whatever was frozen for
+    # them, and the server's scoring mode picks the scale. Under `off` there is
+    # no summary at all -- the heading keeps its gold, since the day was still
+    # played; gray is for a day nobody scored.
+    points = total_points(results, games, minimum_players, rotation, scoring)
     points_section = format_points_summary(points)
     if points_section:
         header_children.append({"type": 10, "content": points_section.rstrip('\n')})
-        components.append({"type": 17, "accent_color": HEADER_COLOR, "components": header_children})
-    else:
-        components.append({"type": 17, "accent_color": OTHER_GAMES_COLOR, "components": header_children})
+    accent = HEADER_COLOR if points_section or scoring == SCORING_OFF else OTHER_GAMES_COLOR
+    components.append({"type": 17, "accent_color": accent, "components": header_children})
 
     # Canonical app-wide ordering, same as the Play list
     games.sort(key=lambda g: game_sort_key(g, results, streaks))

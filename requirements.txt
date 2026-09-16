@@ -34,4 +34,5 @@ python-dateutil
 # --- local tooling only (never deployed) ---
 
 # tools/backfill.py, tools/register_commands.py - loads .env via `dotenv run`
+# (deploy-interaction.yml also runs register_commands, installing what it needs)
 python-dotenv

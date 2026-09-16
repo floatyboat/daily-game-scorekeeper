@@ -12,16 +12,19 @@ from game_parser import (
     build_games, compute_puzzle_numbers, format_scoreboard_components,
     make_timestamp_checker, game_sort_key, match_suggestion, GAME_SPECS,
     spec_enabled, game_link_button, sticky_row_games,
+    SCORING_PER_GAME, SCORING_OFF, TIER_EMOJI, MEDALS, BELOW_PODIUM,
 )
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
     build_avatar_pool, build_name_map, safe_guild_id, gather_streaks,
     gather_player_stats, is_sticky_message,
     PLAY_BUTTON_CUSTOM_ID, MORE_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
+    HELP_BUTTON_CUSTOM_ID,
     TEXT_CHANNEL_TYPES, PERM_ADMINISTRATOR, PERM_MANAGE_GUILD, MAX_BUTTONS_PER_ROW,
     MAX_ENABLED_GAMES,
     MAX_MESSAGE_LENGTH, FLAG_EPHEMERAL, FLAG_IS_COMPONENTS_V2,
 )
+import commentary
 import store
 
 # Global bot identity only -- per-server settings live in the guild's config
@@ -33,6 +36,7 @@ DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
 _session = make_session(DISCORD_BOT_TOKEN)
 
 GAMES_SELECT_ID = 'setup_games'
+COMMENTARY_SELECT_ID = 'setup_commentary'
 CHANNEL_SELECT_PREFIX = 'setup_channel:'
 # Every reply from a one-sided channel subcommand says so: `/setup channel`
 # points both sides at one channel, and an admin who then runs `/setup input`
@@ -135,6 +139,7 @@ def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
         title="Today's Scores", minimum_players=cfg['minimum_players'], streaks=streaks,
         game_overrides=cfg['game_overrides'], rotation=rotation,
         rotation_off=cfg['rotation_off_mode'], names=names,
+        scoring=cfg['scoring'],
     )
 
     # V2 messages can't have a content field, so the builder's output goes
@@ -238,6 +243,135 @@ def build_stats_response(channel_id, user_id=None, guild_id=None, cfg=None):
     if bundle is None:
         return _ephemeral(STATS_UNAVAILABLE)
     return _ephemeral(format_stats(bundle, today))
+
+
+# --- /help and the one-time welcome ----------------------------------------------
+# One explainer, three doors: `/help`, the sticky's How it works button, and an
+# automatic ephemeral follow-up under a player's first live view. Built off the
+# live config every time, so it never describes a setting the server doesn't
+# have -- the scoring blurb in particular says what a result is worth HERE.
+
+HELP_HEADING = "### ❓ How the scoreboard works"
+
+
+def _scoring_blurb(mode, board):
+    crown = 'takes the \U0001F451 on the morning board' if board else 'takes the \U0001F451'
+    if mode == SCORING_PER_GAME:
+        return ("each game pays **1 point plus one for every player you beat**; the "
+                f"most points across the day {crown}.")
+    if mode == SCORING_OFF:
+        return ("no points here: every score is ranked, best first, and the streaks "
+                "are the game.")
+    return ("first place in any of today's games is worth **the number of players "
+            "who showed up today**, one fewer for each place below; the most points "
+            f"across the day {crown}.")
+
+
+def _listing(places):
+    """'a', 'a and b', 'a, b and c'."""
+    return places[0] if len(places) == 1 else ', '.join(places[:-1]) + ' and ' + places[-1]
+
+
+def build_help_text(cfg):
+    """The explainer: how to play, what a result is worth, when the day turns,
+    where streaks live, and the commands. Every part reads this server's
+    settings, so it never sends anyone to a board, a sticky, a post or a
+    reaction the server has switched off. One message, under Discord's 2000."""
+    channel = (f"<#{cfg['input_channel_id']}>" if cfg['input_channel_id']
+               else 'the scoreboard channel')
+    board, sticky = cfg['daily_enabled'], cfg['sticky_enabled']
+    if cfg['rotation_enabled']:
+        n = cfg['rotation_count']
+        places = ['`/play`']
+        if cfg['rotation_announce']:
+            places.append("the daily Today's games post")
+        if sticky and cfg['sticky_games']:
+            places.append("the sticky's game buttons")
+        rotation = (f"**{n} game{'' if n == 1 else 's'}** score each day (today's "
+                    f"rotation), listed in {_listing(places)}. Every other tracked game "
+                    "still counts toward streaks.")
+    else:
+        rotation = "every tracked game scores, every day."
+    start = cfg['hours_after_midnight']
+    day = (f"\U0001F550 **The day**: starts at {start:02d}:00 ({cfg['timezone']}) and "
+           f"results count for {cfg['time_window_hours']} hours"
+           + (f"; the board for it posts at {store.post_hour(cfg):02d}:00." if board else '.'))
+    fire = [where for where, on in (('the board', board), ('the sticky', sticky)) if on]
+    streaks = ("\U0001F525 **Streaks**: a scoring result a day keeps yours alive. "
+               + (f"The fire on {_listing(fire)} is the server's; `/stats` shows yours."
+                  if fire else "`/stats` shows yours."))
+    lines = [
+        HELP_HEADING,
+        f"\U0001F3AE **Play**: pick a game from {'the sticky or ' if sticky else ''}`/play`, "
+        f"then paste the share text it gives you into {channel}. That's it: the bot "
+        "reads it from there.",
+        f"\U0001F3C6 **Points**: {_scoring_blurb(cfg['scoring'], board)}",
+        f"\U0001F504 **Today's games**: {rotation}",
+        day,
+        streaks,
+    ]
+    # Reactions go on as the sticky pass counts each result, so no sticky, none.
+    if cfg['reactions_enabled'] and sticky:
+        which = (" in today's games" if cfg['reactions_rotation_only']
+                 and cfg['rotation_enabled'] else '')
+        tiers = ', '.join(f'{emoji} {tier}' for tier, emoji in TIER_EMOJI.items())
+        lines.append(f"{BELOW_PODIUM} **Reactions**: each result{which} gets how it went "
+                     f"({tiers}) and where it placed when it was posted "
+                     f"({' '.join(MEDALS)}, {BELOW_PODIUM} below third).")
+    lines.append("-# `/play` today's games · `/stats` your streaks · `/suggest` propose a "
+                 "game · `/help` this again")
+    return '\n'.join(lines)
+
+
+def build_help_response(cfg):
+    return _ephemeral(build_help_text(cfg))
+
+
+def _mark_welcomed(guild_id, user_id, where):
+    """Best-effort: a failed stamp costs a repeat explainer, never a reply."""
+    if not (guild_id and user_id):
+        return
+    try:
+        store.mark_welcomed(guild_id, user_id)
+    except Exception as e:
+        print(f'{where}: welcome mark skipped -- {type(e).__name__}: {e}')
+
+
+def handle_help(body):
+    """`/help` and the sticky's How it works button. Answered inline -- nothing
+    here reads a channel -- and the player is marked welcomed, so the automatic
+    first-click copy never follows something they have already read."""
+    guild_id = interaction_guild_id(body)
+    _mark_welcomed(guild_id, interaction_user_id(body), 'help')
+    return build_help_response(guild_cfg(guild_id))
+
+
+def welcome_if_new(guild_id, user_id, application_id, token):
+    """The explainer as a second ephemeral message under a player's FIRST live
+    view (Play, Scores, /stats), sent from phase two of the deferred reply on
+    the same interaction token. PROFILE.welcomed_at records that it went out;
+    the check is one GetItem per click. True when the follow-up was sent.
+
+    Never fails the view it rides under: any store or Discord problem just
+    means the welcome waits for the next click.
+    """
+    if not (guild_id and user_id and application_id and token):
+        return False
+    try:
+        if store.get_profile(guild_id, user_id).get('welcomed_at'):
+            return False
+        r = _session.post(
+            f'{DISCORD_API_BASE}/webhooks/{application_id}/{token}',
+            json={'content': build_help_text(guild_cfg(guild_id)),
+                  'flags': FLAG_EPHEMERAL, 'allowed_mentions': {'parse': []}})
+        if not r.ok:
+            print(f'welcome: follow-up failed {r.status_code} {r.text[:200]}')
+            return False
+        store.mark_welcomed(guild_id, user_id)
+        return True
+    except Exception as e:
+        print(f'welcome: skipped -- {type(e).__name__}: {e}')
+        return False
 
 
 def interaction_user_id(body):
@@ -598,8 +732,13 @@ def run_deferred(work):
         f"/messages/@original", json=data)
     if not r.ok:
         print(f'defer: follow-up edit failed {r.status_code} {r.text[:200]}')
+    # The one-time explainer rides under the view, after it -- a newcomer's
+    # first click gets what they asked for first and the rules second.
+    welcomed = r.ok and welcome_if_new(guild_id, work.get('user_id'),
+                                       work['application_id'], work['token'])
     return {'statusCode': 200,
-            'body': json.dumps({'deferred': work['action'], 'edit': r.status_code})}
+            'body': json.dumps({'deferred': work['action'], 'edit': r.status_code,
+                                'welcomed': welcomed})}
 
 
 # --- /setup (admin configuration) ----------------------------------------------
@@ -753,6 +892,71 @@ def apply_games_selection(guild_id, selected_keys):
     return text
 
 
+def commentary_select_row(overrides):
+    """One option per registered message kind (commentary.TRIGGERS), ticked to
+    the guild's effective state -- the same shape as the games menu, so a
+    Trigger added in code shows up here with no re-registration."""
+    options = [{
+        'label': t.label,
+        'value': t.key,
+        'description': t.describe[:100],
+        'default': commentary.trigger_enabled(t, overrides),
+    } for t in commentary.TRIGGERS]
+    return {'type': 1, 'components': [{
+        'type': 3,   # string select
+        'custom_id': COMMENTARY_SELECT_ID,
+        'options': options,
+        'min_values': 0,
+        'max_values': len(options),
+        'placeholder': 'Choose which messages to post',
+    }]}
+
+
+def apply_commentary_selection(guild_id, selected_keys):
+    """Overrides-only, like apply_games_selection: kinds matching their coded
+    default are left unset, so a future kind arrives with its default."""
+    selected = set(selected_keys)
+    overrides = {t.key: t.key in selected for t in commentary.TRIGGERS
+                 if (t.key in selected) != t.default}
+    store.update_config(guild_id, {'commentary_overrides': overrides})
+    on = [t.label for t in commentary.TRIGGERS if t.key in selected]
+    off = [t.label for t in commentary.TRIGGERS if t.key not in selected]
+    text = (f"✅ Commentary will post: {', '.join(on)}." if on
+            else '⚠️ Every message kind is off — commentary will post nothing.')
+    if off:
+        text += f"\n-# Off: {', '.join(off)}"
+    return text
+
+
+def commentary_phrase(cfg):
+    """The commentary settings in prose, for the summary and the toggle reply."""
+    if not cfg['commentary_enabled']:
+        return ('\U0001F4AC Commentary: **off** — nothing posts between boards '
+                '(`/setup commentary enabled:True` starts it).')
+    on = commentary.enabled_triggers(cfg)
+    # Only the tuning of the kinds actually posting: with a kind switched off --
+    # the nudge ships that way -- its hours would describe nothing.
+    keys = {t.key for t in on}
+    tuning = []
+    if 'midday' in keys:
+        tuning.append(f"midday standings at {cfg['commentary_midday_hour']:02d}:00")
+    if 'last_call' in keys:
+        tuning.append(f"last call {cfg['commentary_last_call_hours']}h before the close"
+                      if cfg['commentary_last_call_hours'] else 'no last call (0 hours)')
+    if 'nudge' in keys:
+        tuning.append(f"nudges {cfg['commentary_nudge_after_hours']}h after a player's "
+                      'last result')
+    return (f"\U0001F4AC Commentary: **on**{' — ' + ', '.join(tuning) if tuning else ''}; "
+            f"posting {', '.join(t.label for t in on) if on else 'nothing (every kind is off)'}.")
+
+
+def reactions_phrase(cfg):
+    """The reactions setting in a few words, for the summary."""
+    if not cfg['reactions_enabled']:
+        return 'off'
+    return 'on, rotation games only' if cfg['reactions_rotation_only'] else 'on'
+
+
 def delete_stickies(channel_id):
     """Best-effort removal of the bot's sticky when an admin turns it off --
     otherwise the last sticky would sit there dead until someone deletes it.
@@ -789,18 +993,21 @@ def config_summary(cfg):
         f"Sticky: **{onoff(cfg['sticky_enabled'])}** "
         f"({sticky_row_phrase(cfg['sticky_games'])}) · "
         f"Link previews: **{'stripped' if cfg['suppress_embeds'] else 'kept'}** · "
-        f"Wordle recap: **{'deleted' if cfg['delete_wordle_recap'] else 'kept'}**",
+        f"Wordle recap: **{'deleted' if cfg['delete_wordle_recap'] else 'kept'}** · "
+        f"Reactions: **{reactions_phrase(cfg)}**",
         f"Rotation: **{onoff(cfg['rotation_enabled'])}** — "
         f"{cfg['rotation_count']} games/day, {cfg['rotation_mode']} mode, "
         f"stay \u2265{cfg['rotation_keep_players']} / "
         f"join \u2265{cfg['rotation_promote_players']} players, "
         f"off-rotation {cfg['rotation_off_mode']}, "
-        f"announcement **{onoff(cfg['rotation_announce'])}**",
+        f"announcement **{onoff(cfg['rotation_announce'])}** · "
+        f"Scoring: **{cfg['scoring']}**",
         f"Timezone `{cfg['timezone']}` · day starts {cfg['hours_after_midnight']:02d}:00 · "
         f"posts {post_hour:02d}:00 · window {cfg['time_window_hours']}h",
         f"Minimum players {cfg['minimum_players']} · "
         f"volume ~{cfg['hundreds_of_messages'] * 100} msgs/day · "
         f"pins {cfg['pin_keep_days']} days",
+        commentary_phrase(cfg),
     ]
     enabled = [s for s in GAME_SPECS if spec_enabled(s, cfg['game_overrides'])]
     disabled = [s for s in GAME_SPECS if not spec_enabled(s, cfg['game_overrides'])]
@@ -929,6 +1136,28 @@ def handle_setup(body, guild_id):
         return _ephemeral('🔗 Link previews left alone — results already stripped '
                           f'stay that way.{note}')
 
+    if sub == 'reactions':
+        # rotation_only rides along (group='reactions'), the way the sticky's
+        # options ride on /setup sticky; left out, it keeps its stored value.
+        enabled = bool(args.get('enabled'))
+        updates = {'reactions_enabled': enabled, **collect_updates('reactions', args)}
+        store.update_config(guild_id, updates)
+        merged = {**cfg, **updates}
+        if not enabled:
+            return _ephemeral('⏸️ Reactions off — results already reacted to keep theirs.')
+        which = ("today's rotation games" if merged['reactions_rotation_only']
+                 and merged['rotation_enabled'] else 'every game')
+        # Reactions go on as the sticky pass counts each result, like link
+        # stripping, so a server with the sticky off has nothing reacting.
+        note = '' if merged['sticky_enabled'] else ('\n-# The sticky is off, so nothing '
+                                                    'reacts to results.')
+        return _ephemeral(
+            f"{BELOW_PODIUM} Reactions on for {which} — each new result gets how it "
+            f"went ({' '.join(TIER_EMOJI.values())}) and where it placed "
+            f"({' '.join(MEDALS)}, {BELOW_PODIUM} below third, nothing for the first "
+            "to post).\n-# Needs Add Reactions in the input channel. Most servers give it "
+            f"to everyone; where yours doesn't, grant it to the bot's role.{note}")
+
     if sub == 'games':
         return _ephemeral(
             f'Select every game this server should track, up to {MAX_ENABLED_GAMES} — '
@@ -967,6 +1196,30 @@ def handle_setup(body, guild_id):
                           f"volume ~{merged['hundreds_of_messages'] * 100} msgs/day, "
                           f"pinning {merged['pin_keep_days']} days of scoreboards.")
 
+    if sub == 'scoring':
+        updates = collect_updates('scoring', args)
+        if not updates:
+            return _ephemeral(config_summary(cfg))
+        store.update_config(guild_id, updates)
+        # The archive freezes each day's points on the scale that scored it, so
+        # a change is forward-only: the boards already posted keep their numbers.
+        blurb = dict((v, label) for label, v in store.SCORING_MODES)[updates['scoring']]
+        return _ephemeral(f"✅ Scoring set to **{blurb}**. Applies from the next "
+                          "board; days already scored keep their points.")
+
+    if sub == 'commentary':
+        # The two tuning fields ride along (group='commentary') as on the other
+        # toggles; `enabled` is optional here, unlike theirs, because the bare
+        # command is the door to the per-kind menu.
+        updates = collect_updates('commentary', args)
+        if args.get('enabled') is not None:
+            updates['commentary_enabled'] = bool(args['enabled'])
+        if not updates:
+            return _ephemeral(commentary_phrase(cfg) + '\nPick which messages it posts:',
+                              components=[commentary_select_row(cfg['commentary_overrides'])])
+        store.update_config(guild_id, updates)
+        return _ephemeral('✅ ' + commentary_phrase({**cfg, **updates}))
+
     # 'show' and anything unrecognized fall back to the summary.
     return _ephemeral(config_summary(cfg))
 
@@ -987,6 +1240,9 @@ def handle_setup_component(body, guild_id):
                            f'and that was {len(values)} — untick {over} and save again.',
                            components=[games_select_row(picks)])
         return _update(apply_games_selection(guild_id, values))
+
+    if custom_id == COMMENTARY_SELECT_ID:
+        return _update(apply_commentary_selection(guild_id, values))
 
     if custom_id.startswith(CHANNEL_SELECT_PREFIX):
         sub = store.channel_sub(custom_id[len(CHANNEL_SELECT_PREFIX):])
@@ -1230,6 +1486,8 @@ def lambda_handler(event, context):
             return _http(defer(ACTION_PLAY, body))
         if command_name == 'stats':
             return _http(defer(ACTION_STATS, body))
+        if command_name == 'help':
+            return _http(guarded(handle_help, body))
         if command_name == 'setup':
             return _http(admin_dispatch(handle_setup, body))
         if command_name == 'suggest':
@@ -1246,7 +1504,10 @@ def lambda_handler(event, context):
             return _http(defer(ACTION_PLAY, body))
         if custom_id == SCORES_BUTTON_CUSTOM_ID:
             return _http(defer(ACTION_SCORES, body))
-        if custom_id == GAMES_SELECT_ID or custom_id.startswith(CHANNEL_SELECT_PREFIX):
+        if custom_id == HELP_BUTTON_CUSTOM_ID:
+            return _http(guarded(handle_help, body))
+        if (custom_id in (GAMES_SELECT_ID, COMMENTARY_SELECT_ID)
+                or custom_id.startswith(CHANNEL_SELECT_PREFIX)):
             return _http(admin_dispatch(handle_setup_component, body))
 
     # MODAL_SUBMIT (type 5) — the /suggest form coming back filled in
