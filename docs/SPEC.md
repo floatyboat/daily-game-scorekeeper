@@ -417,7 +417,9 @@ players are (the test channel on a test run).
   something to say. Bodies then gate
   themselves: the last call fires on the first pass within
   `commentary_last_call_hours` of the close, the midday board on the first pass at or
-  after `commentary_midday_hour` with a scored result to show, the nudge
+  after `commentary_midday_hour` with somebody actually on the standings (exactly what
+  `format_points_summary` would print, so the kind stays quiet on a day whose board would
+  be empty: scoring `off`, or only poops so far), the nudge
   `commentary_nudge_after_hours` after a player's last result and never inside the final
   hour (the last call owns it).
 - **What each kind says.** *Nudge* (the kind that ships off): everyone who has a result in
@@ -431,11 +433,14 @@ players are (the test channel on a test run).
   filtered through the same `shown_streak()` floor (`MINIMUM_STREAK`) every other surface
   spends, so the ping never names a streak the board wouldn't print;
   longest first, at most 10 names; pings; notes the server's own streak when nobody has
-  scored yet. *Midday*: today's board so far (`format_scoreboard_components` with
-  `MIDDAY_TITLE`), **scored games only** — under a rotation the off-rotation section is
-  hidden whatever `rotation_off_mode` says for the morning board — and `NOTIFY`; when
-  off-rotation games were played, and the Scores button would show them (`rotation_off_mode`
-  `shown`, sticky on), one subtext line says how many and points at the button. *First
+  scored yet. *Midday*: **the standings so far and nothing else**
+  (`format_scoreboard_components` with `MIDDAY_TITLE` and `standings_only`), so the post is
+  the header container alone — heading, server streak, points summary — with no games
+  section under it and `rotation_off_mode` therefore moot; `NOTIFY`. Points still come from
+  the rotation alone, as on the morning board. One subtext line under it counts the results
+  and games the Scores button would show this guild (the rotation, plus off-rotation games
+  where `rotation_off_mode` is `shown`) and points at the button; no sticky means no
+  button, so the line is dropped rather than pointed at nothing. *First
   result*: a player in today's results who is in no game's all-time `players` set —
   checked only once yesterday is finalized, since the sets fold at post hour. *Lead
   change*: a new **sole** leader who is clear of one win's worth of points (`one_win`: the
@@ -498,21 +503,40 @@ players are (the test channel on a test run).
 ## Reactions
 
 With `reactions_enabled` on (off by default), the sticky pass reacts to every fresh result
-with two emoji: how it went, then where it placed in its game the moment it was posted.
+with one to four emoji, in this order: where it placed in its game the moment it was
+posted, how it went, then a flourish or two if it was good enough to earn one.
 `sticky_lambda.react_to_results` does the Discord side; the rules are pure, in `game_parser`.
 
+- **Where it placed** (`place_at_post`): 1 plus every earlier first result in that game
+  strictly better by `score_sort_key`, so a tie shares the better place, as on the board.
+  🥇 🥈 🥉 (`PLACE_EMOJI`), 👍 below third; nothing for the first result in a game, and
+  nothing on a poop. A set of its own rather than the board's `MEDALS`, so a reaction reads
+  as the medals it sits beside while the board keeps its 👑 for the day's winner and each
+  game's first place; only first place differs between the two.
 - **How it went** (`performance_tier`). A poop is `is_poop`, so the reaction and the
   board's medal agree. Aced is the perfect result of the games that have one: a `guesses`
   game in 1, a connections grid with no mistakes (a VERT, which ranks above that, too), a
   cryptic with no hints, a `score` or `maptap` result at its ceiling (`total`). Anything
   else is good, medium or bad against the game's
   `breakpoints` (see Games and per-server enabling). A Travle that missed the target is
-  bad; a Gerrymandle won with the timer hidden has no time to measure, so no tier. Emoji
-  (`TIER_EMOJI`): 💯 aced, 😎 good, 🙂 medium, 😬 bad, 💩 poop.
-- **Where it placed** (`place_at_post`): 1 plus every earlier first result in that game
-  strictly better by `score_sort_key`, so a tie shares the better place, as on the board.
-  👑 🥈 🥉 (`MEDALS`, the board's own), 👍 below third; nothing for the first result in a
-  game, and nothing on a poop.
+  bad; a Gerrymandle won with the timer hidden has no time to measure, so no tier. Only
+  the happy tiers carry an emoji (`TIER_EMOJI`): 💯 aced, 😎 good, 🙂 medium. Bad and poop
+  are still computed -- poop is what withholds a place -- but react with nothing, so a
+  rough result is never publicly labelled as one: a bad result keeps just its place, and a
+  poop falls through to the thumbs up below.
+- **Never nothing** (`result_reactions`). A result the two rules above would leave bare --
+  a poop, or a bad or untiered result that is first in its game -- gets 👍 on its own. It
+  says "counted", not "well played", and it keeps no reaction meaning the one thing it
+  should: the bot didn't read the message.
+- **A flourish on top** (`FLOURISH`, `FLOURISH_COUNT`): two more emoji on an ace, one on a
+  good result, nothing below that, drawn at random from a bank of fourteen so two aces in a
+  row don't read the same. The bank holds no game's emoji, no place, no tier and none of
+  the app's own signs (🔥 streaks, 🏆 points, 💔 a broken streak), so a flourish can
+  only mean "nice one"; every entry is a single code point needing no variation selector,
+  so what Discord stores back is exactly what was sent. **The draw is seeded on the message
+  id**, which is what makes it safe: the pass is stateless and re-runs over the same result
+  for as long as `REACTION_WINDOW` holds it open, skipping what it already added, so an
+  unseeded draw would pile a fresh flourish on every minute.
 - **Which results.** Matches are walked oldest first. A player's first result in a game is
   the one that counts, as on the board, and a repost gets nothing. The Wordle app's own
   messages count toward places but get no reaction: several players share one, and the app
@@ -616,8 +640,9 @@ retroactively.
   container — a broken streak is a game nobody played, which is what that block is, and the
   container renders for callouts alone when no off-rotation game was played. Without a
   rotation (or under `rotation_off: hidden`, which suppresses that container) they fall back
-  to the foot of the scores section. On a no-results day, where there is no scores section
-  either, they fall back to the header container.
+  to the foot of the scores section. On a no-results day, and on a `standings_only` board
+  (the midday standings), where there is no scores section either, they fall back to the
+  header container.
 - **`/stats`** (`gather_player_stats()` + `format_stats()`) is the personal counterpart: an
   ephemeral reply listing the invoker's overall streak, best, and lifetime plays, then one
   line per game with a live streak, ordered by that streak, with lapsed games named in a

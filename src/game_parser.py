@@ -1222,10 +1222,14 @@ def is_poop(metric, score, total):
 
 
 # --- How a single result went ---------------------------------------------------
-# The sticky pass reacts to every fresh result with two emoji
-# (sticky_lambda.react_to_results): its tier, then the place it took the moment
-# it was posted. Aced and poop read the same in every game; good, medium and
-# bad come from the game's own breakpoints (GameSpec.breakpoints).
+# The sticky pass reacts to every fresh result with one to four emoji
+# (sticky_lambda.react_to_results): the place it took the moment it was posted,
+# then its tier, then a flourish or two if it earned one. Aced and poop read the same in every game; good, medium and
+# bad come from the game's own breakpoints (GameSpec.breakpoints). The two
+# unhappy tiers are deliberately silent: bad and poop are still computed (poop
+# is what withholds a place), but neither carries an emoji, so a rough result
+# is never publicly labelled as one. Never silent, though -- a result those
+# rules would leave bare takes the thumbs up on its own.
 
 ACED, GOOD, MEDIUM, BAD, POOP = 'aced', 'good', 'medium', 'bad', 'poop'
 
@@ -1235,12 +1239,32 @@ ACED, GOOD, MEDIUM, BAD, POOP = 'aced', 'good', 'medium', 'bad', 'poop'
 # lower-is-better number.
 PERCENT_METRICS = ('score', 'maptap')
 
-# The board's podium, and the places a result's reaction marks.
+# The board's podium: the day's winner and each game's top three.
 MEDALS = ('\U0001F451', '\U0001F948', '\U0001F949')
+# The podium a reaction marks. A set of its own, so the board keeps its crown
+# while a reaction reads as the medals it sits beside: silver and bronze are
+# the same characters either way, and only first place differs.
+PLACE_EMOJI = ('\U0001F947', '\U0001F948', '\U0001F949')
 
-TIER_EMOJI = {ACED: '\U0001F4AF', GOOD: '\U0001F60E', MEDIUM: '\U0001F642',
-              BAD: '\U0001F62C', POOP: '\U0001F4A9'}
+# Only the tiers worth saying out loud. A tier missing here reacts with
+# nothing, which is what keeps bad and poop silent; it is also what /help and
+# /setup read to say which reactions a result can get, so they stay in step.
+TIER_EMOJI = {ACED: '\U0001F4AF', GOOD: '\U0001F60E', MEDIUM: '\U0001F642'}
 BELOW_PODIUM = '\U0001F44D'
+
+# The flourish a standout result picks up on top of its tier and place, drawn
+# at random so two aces in a row don't read the same. Nothing here is a game's
+# emoji, a place, a tier or one of the app's own signs (\U0001F525 streaks,
+# \U0001F3C6 points, \U0001F494 a broken streak), so a flourish can never be
+# mistaken for something that means anything -- it only means "nice one".
+# Every entry is a single code point that needs no variation selector, so what
+# Discord stores is exactly what we sent and the pass's own dedup sees it.
+FLOURISH = ('\U0001F389', '\U0001F973', '\U0001F38A', '\U0001F64C', '\U0001F44F',
+            '\u2B50', '\u2728', '\u26A1', '\U0001F680', '\U0001F4AA',
+            '\U0001F929', '\U0001F92F', '\U0001F4A5', '\U0001F9E0')
+# How many a tier is worth. Only the top two earn one: a flourish everywhere is
+# just noise with extra steps.
+FLOURISH_COUNT = {ACED: 2, GOOD: 1}
 
 
 def performance_tier(game, score):
@@ -1301,13 +1325,36 @@ def place_at_post(metric, score, earlier):
     return 1 + sum(1 for s in earlier if score_sort_key(metric, s) < key)
 
 
-def result_reactions(tier, place):
-    """The emoji a result is reacted with, in order: its tier, then its place
-    -- a medal on the podium, a thumbs up below it. A poop gets no place, as it
-    gets no medal on the board, and neither does a result with no place."""
-    emojis = [TIER_EMOJI[tier]] if tier else []
+def result_reactions(tier, place, seed=''):
+    """The emoji a result is reacted with, in order: its place -- a medal on the
+    podium, a thumbs up below it -- then its tier, then a flourish or two if it
+    was good enough to earn one. A poop gets no place, as it gets no medal on
+    the board, and neither does a result with no place. Tiers outside TIER_EMOJI
+    (bad and poop) say nothing, so a bad result is left with just the place it
+    took.
+
+    Never nothing, though: a result those rules would leave bare -- a poop, or
+    a bad or untiered result that is first in its game -- comes away with the
+    thumbs up alone. It says "counted" rather than "well played", which is the
+    one thing every result has earned, and it keeps no reaction meaning what it
+    should: the bot didn't read the message.
+
+    The flourishes (FLOURISH_COUNT: two for an ace, one for a good result) are
+    drawn from FLOURISH on `seed` -- anything stable per result; the sticky
+    passes the message id. Stable is the whole point: the pass is stateless and
+    re-runs over the same result for as long as REACTION_WINDOW holds it open,
+    skipping the emoji it already added, so a fresh draw each time would pile a
+    new flourish on every minute instead of leaving the first two alone.
+    """
+    emojis = []
     if place and tier != POOP:
-        emojis.append(MEDALS[place - 1] if place <= len(MEDALS) else BELOW_PODIUM)
+        emojis.append(PLACE_EMOJI[place - 1] if place <= len(PLACE_EMOJI) else BELOW_PODIUM)
+    if tier in TIER_EMOJI:
+        emojis.append(TIER_EMOJI[tier])
+    emojis = emojis or [BELOW_PODIUM]
+    count = FLOURISH_COUNT.get(tier, 0)
+    if count:
+        emojis += random.Random(seed).sample(FLOURISH, count)
     return emojis
 
 
@@ -1909,7 +1956,7 @@ _REDUCTIONS = (
 )
 
 
-def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None, rotation=None, rotation_off='shown', names=None, scoring=SCORING_PLACEMENT):
+def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None, rotation=None, rotation_off='shown', names=None, scoring=SCORING_PLACEMENT, standings_only=False):
     """Format the scoreboard as Discord Components V2, within Discord's caps.
 
     Renders the full board, measures it, and if it breaks either cap re-renders
@@ -1943,6 +1990,12 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     scoring is the server's points scale (SCORING_*, see points_per_game); it
     shapes the points summary alone, and `off` drops that summary entirely.
 
+    standings_only keeps the header container -- heading, server streak, points
+    summary -- and drops every games section below it, which is the midday
+    board (commentary.render_midday): the standings are the whole message
+    there, and the per-game breakdown is a tap away on the sticky. It makes
+    `rotation_off` moot, since neither games section renders either way.
+
     Returns a list[dict] suitable for the 'components' field in a Discord message.
     """
     style, applied = _FULL_STYLE, set()
@@ -1950,7 +2003,7 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
         components = _render_scoreboard(
             results, reference_date, puzzle_numbers, title, minimum_players,
             streaks, game_overrides, rotation, rotation_off, names, style,
-            scoring)
+            scoring, standings_only)
         over = over_budget(components)
         if not over:
             return components
@@ -1973,7 +2026,8 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
 
 def _render_scoreboard(results, reference_date, puzzle_numbers, title,
                        minimum_players, streaks, game_overrides, rotation,
-                       rotation_off, names, style, scoring=SCORING_PLACEMENT):
+                       rotation_off, names, style, scoring=SCORING_PLACEMENT,
+                       standings_only=False):
     """One pass of the board at a given style. See format_scoreboard_components."""
     games = build_games(puzzle_numbers, game_overrides)
     rot = set(rotation) if rotation is not None else None
@@ -2008,7 +2062,16 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
     if points_section:
         header_children.append({"type": 10, "content": points_section.rstrip('\n')})
     accent = HEADER_COLOR if points_section or scoring == SCORING_OFF else OTHER_GAMES_COLOR
+    if standings_only and break_child:
+        # No games section to sit under, so the callouts ride in the header
+        # rather than being lost -- the same fallback the no-results board uses.
+        header_children += break_child
     components.append({"type": 17, "accent_color": accent, "components": header_children})
+
+    # Standings-only stops here: no scores container, no off-rotation container,
+    # and none of the sorting that feeds them.
+    if standings_only:
+        return components
 
     # Canonical app-wide ordering, same as the Play list
     games.sort(key=lambda g: game_sort_key(g, results, streaks))

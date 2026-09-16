@@ -526,38 +526,57 @@ def sample_last_call(tick):
 def detect_midday(tick):
     if tick.hour < tick.cfg['commentary_midday_hour']:
         return []
-    if not any(tick.results.get(g.key) for g in tick.scored):
+    # Standings, so somebody has to be standing: this is exactly what
+    # format_points_summary prints, so the kind stays quiet on the days the
+    # board it would post is empty -- scoring off, or a day whose only results
+    # so far are poops.
+    if not any(p > 0 for p in tick.totals.values()):
         return []
     return [{'id': 'midday'}]
 
 
 def render_midday(events, tick):
     cfg = tick.cfg
-    # Scored games only: under a rotation the off-rotation section stays off
-    # this board whatever rotation_off_mode says for the morning one -- the
-    # standings are the point, and only the rotation feeds them. What was
-    # played outside the rotation gets one line pointing at the Scores button,
-    # which renders the morning board's layout and so does show them -- but
-    # only where it would: a guild that hides off-rotation games there too, or
-    # runs no sticky to carry the button, gets no pointer to nothing.
+    # The standings alone (standings_only), not a second full board: who is
+    # ahead is the whole message, and the per-game breakdown is one tap away on
+    # the sticky's Scores button, which renders the morning board's layout
+    # live. Points still come from the rotation alone, as on the morning board.
     components = format_scoreboard_components(
         tick.results, tick.today, tick.puzzle_numbers, title=MIDDAY_TITLE,
         minimum_players=cfg['minimum_players'], streaks=tick.streaks,
         game_overrides=cfg['game_overrides'], rotation=tick.rotation,
-        rotation_off='hidden', names=tick.names, scoring=cfg['scoring'])
-    if tick.rotation and cfg['rotation_off_mode'] == 'shown' and cfg['sticky_enabled']:
-        rot = set(tick.rotation)
-        others = [g for g in tick.games if g.key not in rot
-                  and len(tick.results.get(g.key) or {}) >= cfg['minimum_players']]
-        n = sum(len(tick.results[g.key]) for g in others)
-        if others:
-            hint = (f"-# Plus {n} result{'' if n == 1 else 's'} in {len(others)} game"
-                    f"{'' if len(others) == 1 else 's'} outside today's rotation: "
-                    "tap Scores on the sticky to see them.")
-            with_hint = components + [{'type': 10, 'content': hint}]
-            if not over_budget(with_hint):
-                components = with_hint
+        names=tick.names, scoring=cfg['scoring'], standings_only=True)
+    hint = midday_hint(tick)
+    if hint:
+        with_hint = components + [{'type': 10, 'content': hint}]
+        if not over_budget(with_hint):
+            components = with_hint
     return Rendered(components=components)
+
+
+def midday_hint(tick):
+    """The line under the midday standings pointing at the full breakdown, or
+    '' when there is nothing to point at.
+
+    Counts what the Scores button would actually show this guild -- the
+    morning board's layout, so the rotation plus whatever rotation_off_mode
+    lets through -- rather than everything parsed, so the numbers match the
+    view the line is sending people to. No sticky means no button, and the
+    pointer is dropped rather than made up: there is no other live scores view.
+    """
+    cfg = tick.cfg
+    if not cfg['sticky_enabled']:
+        return ''
+    rot = set(tick.rotation) if tick.rotation else None
+    shown = [g for g in tick.games
+             if len(tick.results.get(g.key) or {}) >= cfg['minimum_players']
+             and (rot is None or g.key in rot or cfg['rotation_off_mode'] == 'shown')]
+    if not shown:
+        return ''
+    n = sum(len(tick.results[g.key]) for g in shown)
+    return (f"-# {n} result{'' if n == 1 else 's'} in {len(shown)} game"
+            f"{'' if len(shown) == 1 else 's'} so far: tap Scores on the sticky "
+            "to see them all.")
 
 
 def sample_midday(tick):
@@ -725,7 +744,7 @@ TRIGGERS = [
     Trigger('last_call', 'Last call', 'Streaks about to break, a few hours before the close',
             BODY, HOURLY, detect_last_call, render_last_call, sample_last_call,
             notify=PING, once=True, waits=NEVER),
-    Trigger('midday', 'Midday standings', "Today's scored games so far, once, at the midday hour",
+    Trigger('midday', 'Midday standings', 'The points standings so far, once, at the midday hour',
             BOARD, HOURLY, detect_midday, render_midday, sample_midday, once=True,
             notify=NOTIFY, waits=NEVER),
     # Off until its cadence is settled: a nudge per player, each on the hour that

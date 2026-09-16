@@ -150,7 +150,10 @@ def react_to_results(channel_id, posts, games, now, react_keys=None):
             continue
         mine = {(r.get('emoji') or {}).get('name')
                 for r in msg.get('reactions') or () if r.get('me')}
-        for emoji in result_reactions(performance_tier(game, score), place):
+        # The message id seeds the flourish draw: stable per result, so the
+        # passes that see it again re-draw the same emoji and add nothing.
+        for emoji in result_reactions(performance_tier(game, score), place,
+                                      seed=msg['id']):
             if emoji in mine:
                 continue
             if sent == REACTIONS_PER_PASS:
