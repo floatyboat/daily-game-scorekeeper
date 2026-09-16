@@ -37,9 +37,7 @@ LOUDNESS = {SILENT: 0, NOTIFY: 1, PING: 2}
 # (sticky_lambda) and the consumers (interaction_lambda) share one source of
 # truth instead of duplicating the literal strings and silently drifting apart.
 PLAY_BUTTON_CUSTOM_ID = 'sticky_play'
-MORE_BUTTON_CUSTOM_ID = 'sticky_more'
 SCORES_BUTTON_CUSTOM_ID = 'sticky_scores'
-HELP_BUTTON_CUSTOM_ID = 'sticky_help'
 STICKY_HEADING = "\U0001F47E **Now Playing**"
 # The commentary's midday board is a Components V2 board like the daily one,
 # and this title is what tells them apart: is_scoreboard_message leaves a

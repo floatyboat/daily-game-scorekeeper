@@ -18,7 +18,7 @@ from scoreboard import (
     make_session, fetch_messages, reference_date, is_scoreboard_message,
     is_sticky_message, is_wordle_recap, build_avatar_pool, safe_guild_id,
     gather_streaks, guild_aggs, send_commentary,
-    PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID, HELP_BUTTON_CUSTOM_ID,
+    PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     STICKY_HEADING,
 )
 import commentary
@@ -44,12 +44,11 @@ def build_sticky_components(yesterday_url=None, game_buttons=()):
 
     There is no More button: these games plus the Play list behind them are the
     whole roster, so a second list button could only re-list what is on screen.
-    (MORE_BUTTON_CUSTOM_ID still routes to the all:true view -- a client can be
-    holding a sticky from before this change -- it is just never rendered.)
-
-    How it works closes the row: the same explainer as /help, one tap from the
-    message a newcomer lands on. Last, after Yesterday, so the three buttons
-    people use daily keep their positions whether or not a board has posted.
+    There is no How it works button either: the explainer reaches a newcomer on
+    its own, as the follow-up under their first live view, so the sticky spends
+    its width on the games instead of a door nobody needs twice. Neither custom
+    ID is routed any more: the sticky reposts whenever its buttons change, so
+    a client holds a stale row for a minute at most.
     """
     buttons = [
         {'type': 2, 'style': 1, 'label': 'Play', 'custom_id': PLAY_BUTTON_CUSTOM_ID},
@@ -57,8 +56,6 @@ def build_sticky_components(yesterday_url=None, game_buttons=()):
     ]
     if yesterday_url:
         buttons.append({'type': 2, 'style': 5, 'label': 'Yesterday', 'url': yesterday_url})
-    buttons.append({'type': 2, 'style': 2, 'label': '❓ How it works',
-                    'custom_id': HELP_BUTTON_CUSTOM_ID})
     rows = []
     if game_buttons:
         rows.append({'type': 1, 'components': list(game_buttons)})

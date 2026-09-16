@@ -1111,8 +1111,8 @@ def get_profile(guild_id, user_id):
 
 def mark_welcomed(guild_id, user_id):
     """Record that the explainer has been shown to this player in this server.
-    Keeps the first timestamp: /help, the sticky's How it works button and the
-    automatic first-click follow-up all call this, and only the earliest matters."""
+    Keeps the first timestamp: /help and the automatic first-click follow-up
+    both call this, and only the earliest matters."""
     table().update_item(
         Key={'PK': player_pk(guild_id, user_id), 'SK': PROFILE_SK},
         UpdateExpression='SET welcomed_at = if_not_exists(welcomed_at, :now)',

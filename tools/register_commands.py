@@ -118,8 +118,8 @@ COMMANDS = [
     },
     {
         # The explainer (interaction_lambda.build_help_text): ephemeral, built
-        # off the server's live config, the same text the sticky's How it works
-        # button and the one-time welcome send.
+        # off the server's live config, the same text the one-time welcome
+        # follow-up sends.
         'name': 'help',
         'description': 'How the scoreboard works — playing, points, the daily rotation',
         'type': CHAT_INPUT,

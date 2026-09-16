@@ -633,10 +633,8 @@ retroactively.
   them — one partition Query is now the whole cost of a board.
 - **Sticky**: up to two rows — today's games (`sticky_games` of them, in `sticky_row_games`
   order, drawn from the rotation where one governs the day) sitting *above* the action row
-  Play · Scores · Yesterday · How it works, because the games are what the sticky is for
-  and the buttons are the chrome around them. How it works is the `/help` explainer one
-  tap from the message a newcomer lands on; it sits last so the daily buttons keep their
-  places whether or not Yesterday is showing. Above both sits the content: the heading carrying the
+  Play · Scores · Yesterday, because the games are what the sticky is for and the buttons
+  are the chrome around them. Above both sits the content: the heading carrying the
   server-wide streak inline — `👾 Now Playing · 🔥17` — over the day's game and play counts.
   The streak rides on the heading rather than the counts because it is the server's, not
   the day's; it survives a rollover the counts reset through.
@@ -644,9 +642,11 @@ retroactively.
   which is the screenful the sticky is trying not to be — and the cap and the config bound
   are the same constant, declared in `store` next to `PIN_CAP`.
   There is no More: Play is already everything the row isn't, so a second list button would
-  only ever re-list what is on screen. (`MORE_BUTTON_CUSTOM_ID` still routes to the
-  `all:true` view — a client can hold a pre-change sticky for a minute — it is simply never
-  rendered.) Yesterday appears only
+  only ever re-list what is on screen. There is no How it works either: the explainer
+  already finds a newcomer as the follow-up under their first live view, so the sticky
+  spends its width on the games rather than a door nobody needs twice. Neither custom ID is
+  routed any more — the sticky reposts whenever its buttons change, so a stale row lives a
+  minute at most. Yesterday appears only
   once the board covering the day before the tracked one has posted (`last_posted_day`),
   so a guild whose post hour is later than its day start loses the button for that morning
   window rather than pointing it at a day-older board. `sticky_games` is 0 by
@@ -708,14 +708,13 @@ retroactively.
   where they're on, and the command list — so it never describes a setting the server
   doesn't have: the sticky, the board and the Today's games post are named only where
   they're switched on. The scoring line follows the same rule, saying "today's games"
-  only where a rotation narrows them and plain "any game" otherwise. The sticky's How
-  it works button (`HELP_BUTTON_CUSTOM_ID`) is the same reply. Answered inline; nothing in
-  it reads a channel.
+  only where a rotation narrows them and plain "any game" otherwise. Answered inline;
+  nothing in it reads a channel.
 - **First interaction.** The first time a player opens any live view (Play, Scores,
   `/stats`), phase two of the deferred reply sends the same explainer as a second
   ephemeral follow-up on the interaction token, after the view they asked for, and stamps
-  `PROFILE.welcomed_at` (`store.mark_welcomed`). `/help` and the button stamp it too, so
-  nobody is welcomed twice. The check is one GetItem per deferred click. The inline
+  `PROFILE.welcomed_at` (`store.mark_welcomed`). `/help` stamps it too, so nobody is
+  welcomed twice. The check is one GetItem per deferred click. The inline
   fallback path (no self-invoke) skips it, and any store or Discord failure costs a repeat
   welcome later, never the reply.
 - **Usage log.** Every verified interaction except Discord's endpoint PING prints one
