@@ -8,7 +8,7 @@ from urllib3.util.retry import Retry
 
 import store
 from game_parser import (
-    compute_puzzle_numbers, build_games, scoring_players,
+    compute_puzzle_numbers, build_games, scoring_players, board_heading,
     make_timestamp_checker, match_message, _avatar_ahash, WORDLE_BOT_ID,
 )
 
@@ -26,7 +26,13 @@ FLAG_IS_COMPONENTS_V2        = 1 << 15   # 32768
 PLAY_BUTTON_CUSTOM_ID = 'sticky_play'
 MORE_BUTTON_CUSTOM_ID = 'sticky_more'
 SCORES_BUTTON_CUSTOM_ID = 'sticky_scores'
+HELP_BUTTON_CUSTOM_ID = 'sticky_help'
 STICKY_HEADING = "\U0001F47E **Now Playing**"
+# The commentary's midday board is a Components V2 board like the daily one,
+# and this title is what tells them apart: is_scoreboard_message leaves a
+# board headed with it alone, so it can never become the sticky's Yesterday
+# link or satisfy the posted-today check.
+MIDDAY_TITLE = 'Midday Standings'
 
 # The "Play now!" button the Wordle app puts on its daily recap message, and
 # only there -- its live-game message (the one whose finished grid the parser
@@ -150,6 +156,19 @@ AGGS_TTL_SECONDS = 300
 _aggs_cache = {}   # guild_pk -> (expires, {SK: item})
 
 
+def guild_aggs(guild_id):
+    """The guild's whole AGG# partition as {SK: item}, cached AGGS_TTL_SECONDS.
+    The board's streak bundle and the commentary's player roster both read it,
+    so one Query per pass serves both."""
+    gpk = store.guild_pk(guild_id)
+    cached = _aggs_cache.get(gpk)
+    if cached and cached[0] > time.monotonic():
+        return cached[1]
+    aggs = store.query_aggs(gpk)
+    _aggs_cache[gpk] = (time.monotonic() + AGGS_TTL_SECONDS, aggs)
+    return aggs
+
+
 def gather_streaks(guild_id, ref_date, results, games, minimum_players=1):
     """Display-ready SERVER streak numbers for one render, or None when the
     store can't serve them (no guild, IAM grant not applied yet, outage) --
@@ -190,13 +209,7 @@ def gather_streaks(guild_id, ref_date, results, games, minimum_players=1):
         # Poop scores earn 0 points and keep nothing alive; everything below
         # keys off who scored, never off who merely posted.
         scorers = scoring_players(results, games, minimum_players)
-        gpk = store.guild_pk(guild_id)
-        cached = _aggs_cache.get(gpk)
-        if cached and cached[0] > time.monotonic():
-            aggs = cached[1]
-        else:
-            aggs = store.query_aggs(gpk)
-            _aggs_cache[gpk] = (time.monotonic() + AGGS_TTL_SECONDS, aggs)
+        aggs = guild_aggs(guild_id)
         game_items = {store.game_key_from_sk(sk): item for sk, item in aggs.items()
                       if sk.startswith(store.GAME_AGG_PREFIX)}
 
@@ -326,7 +339,14 @@ def reference_date(now, tz, hours_after_midnight, days_back=0):
 
 
 def parse_results(messages, ref_date, tz, hours_after_midnight, time_window_hours,
-                  *, avatar_hashes=None, game_overrides=None):
+                  *, avatar_hashes=None, game_overrides=None, times=None):
+    """Parse one day's results out of `messages`: (results, puzzle_numbers).
+
+    times, when given, is filled with {user_id: ISO timestamp} of each player's
+    latest counted result -- what the commentary's nudge measures its "two
+    hours since" from. Discord's timestamps share one format, so the newest
+    is simply the greatest string.
+    """
     puzzle_numbers = compute_puzzle_numbers(ref_date)
     games = build_games(puzzle_numbers, game_overrides)
     checker = make_timestamp_checker(ref_date, tz, hours_after_midnight, time_window_hours)
@@ -339,6 +359,8 @@ def parse_results(messages, ref_date, tz, hours_after_midnight, time_window_hour
                        or msg['author']['id'])
             results[game_key][user_id] = score
             puzzle_numbers.update(metadata)
+            if times is not None:
+                times[user_id] = max(times.get(user_id, ''), msg['timestamp'])
     return results, puzzle_numbers
 
 
@@ -395,9 +417,54 @@ def is_scoreboard_message(msg, bot_id=None):
     flags = msg.get('flags') or 0
     if not flags & FLAG_IS_COMPONENTS_V2:
         return False
+    if is_midday_board(msg):
+        return False
     if bot_id:
         return (msg.get('author') or {}).get('id') == str(bot_id)
     return True
+
+
+def send_commentary(session, channel_id, post):
+    """Post one commentary.Post. A board goes out as Components V2, everything
+    else as content plus its button rows. Only the users the post names as its
+    audience are notified (allowed_mentions lists them); every other mention
+    renders without a ping, and a post with nobody to notify is sent silent so
+    it never lights up the channel. Shared by both passes that post commentary
+    (the daily lambda's hour, the sticky's minute). Returns the message."""
+    if post.board:
+        payload = {'components': post.components,
+                   'flags': FLAG_IS_COMPONENTS_V2 | FLAG_SUPPRESS_NOTIFICATIONS,
+                   'allowed_mentions': {'parse': []}}
+    else:
+        payload = {'content': post.content, 'flags': FLAG_SUPPRESS_EMBEDS,
+                   'allowed_mentions': {'parse': []}}
+        if post.mentions:
+            payload['allowed_mentions'] = {'users': [str(u) for u in post.mentions][:100]}
+        else:
+            payload['flags'] |= FLAG_SUPPRESS_NOTIFICATIONS
+        if post.components:
+            payload['components'] = post.components
+    response = session.post(f'{DISCORD_API_BASE}/channels/{channel_id}/messages', json=payload)
+    response.raise_for_status()
+    return response.json()
+
+
+def _first_text(msg):
+    """Content of the first Text Display in a Components V2 message, top level
+    or one container deep -- where every board keeps its heading."""
+    for comp in msg.get('components') or []:
+        for child in [comp] + list(comp.get('components') or []):
+            if child.get('type') == 10:
+                return child.get('content') or ''
+    return ''
+
+
+def is_midday_board(msg):
+    """True for the commentary's midday standings board, told from the daily
+    board by its heading (game_parser.board_heading with MIDDAY_TITLE)."""
+    if not (msg.get('flags') or 0) & FLAG_IS_COMPONENTS_V2:
+        return False
+    return _first_text(msg).startswith(board_heading(MIDDAY_TITLE))
 
 
 def is_sticky_message(msg, bot_id=None):

@@ -1,23 +1,27 @@
 import json
 import os
+import sys
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 from collections import defaultdict
 
 from game_parser import (
     compute_puzzle_numbers, build_games, top_game_buttons,
     match_message, make_timestamp_checker, shown_streak,
+    performance_tier, place_at_post, result_reactions, WORDLE_BOT_ID,
 )
 from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
     make_session, fetch_messages, reference_date, is_scoreboard_message,
     is_sticky_message, is_wordle_recap, build_avatar_pool, safe_guild_id,
-    gather_streaks,
-    PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
+    gather_streaks, guild_aggs, send_commentary,
+    PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID, HELP_BUTTON_CUSTOM_ID,
     STICKY_HEADING,
 )
+import commentary
 import store
 
 # Global bot identity only -- per-server settings come from each guild's
@@ -42,6 +46,10 @@ def build_sticky_components(yesterday_url=None, game_buttons=()):
     whole roster, so a second list button could only re-list what is on screen.
     (MORE_BUTTON_CUSTOM_ID still routes to the all:true view -- a client can be
     holding a sticky from before this change -- it is just never rendered.)
+
+    How it works closes the row: the same explainer as /help, one tap from the
+    message a newcomer lands on. Last, after Yesterday, so the three buttons
+    people use daily keep their positions whether or not a board has posted.
     """
     buttons = [
         {'type': 2, 'style': 1, 'label': 'Play', 'custom_id': PLAY_BUTTON_CUSTOM_ID},
@@ -49,6 +57,8 @@ def build_sticky_components(yesterday_url=None, game_buttons=()):
     ]
     if yesterday_url:
         buttons.append({'type': 2, 'style': 5, 'label': 'Yesterday', 'url': yesterday_url})
+    buttons.append({'type': 2, 'style': 2, 'label': '❓ How it works',
+                    'custom_id': HELP_BUTTON_CUSTOM_ID})
     rows = []
     if game_buttons:
         rows.append({'type': 1, 'components': list(game_buttons)})
@@ -98,6 +108,65 @@ def suppress_embeds(channel_id, message):
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages/{message["id"]}'
     r = _session.patch(url, json={'flags': flags | FLAG_SUPPRESS_EMBEDS})
     return r.ok
+
+
+# Reactions only go on results this fresh. Longer than PROBE_MAX_AGE on
+# purpose: a reaction that failed is retried by the full pass the probe lets
+# through once it expires, while the result is still new. It also bounds what
+# switching reactions on can touch, so the day's backlog is never swept.
+REACTION_WINDOW = timedelta(minutes=20)
+# Discord rate limits reactions tightly per channel, and the session sleeps
+# out a 429 inside the pass, so one pass sends at most this many; the rest wait.
+REACTIONS_PER_PASS = 20
+
+
+def react_to_results(channel_id, posts, games, now, react_keys=None):
+    """React to fresh results with how they went and where they placed.
+
+    posts is every (msg, game_key, user_id, score) the pass matched, newest
+    first as fetched, and games the day's games with this parse's totals. They
+    are walked oldest first, so a result's place counts only what was already
+    in when it was posted, and only a player's first result in a game counts
+    -- the one the board keeps -- so a repost gets nothing. The Wordle app's own
+    messages count toward places but get no reaction: several players share
+    one, and the app keeps editing it. react_keys, when given, limits the
+    reactions (never the places) to those games: the rotation, for a guild
+    that only wants the games that score today reacted to.
+
+    Stateless, like suppress_embeds: an emoji the bot already has on a message
+    is skipped, so the passes that see a result again add nothing. Returns a
+    note for the pass summary.
+    """
+    by_key = {g.key: g for g in games}
+    seen = defaultdict(dict)    # game_key -> {uid: score}, first results so far
+    added = sent = 0
+    for msg, game_key, uid, score in reversed(posts):
+        game = by_key.get(game_key)
+        earlier = seen[game_key]
+        if game is None or uid in earlier:
+            continue
+        place = place_at_post(game.metric, score, list(earlier.values()))
+        earlier[uid] = score
+        if (msg['author']['id'] == WORDLE_BOT_ID
+                or (react_keys is not None and game_key not in react_keys)
+                or now - datetime.fromisoformat(msg['timestamp']) > REACTION_WINDOW):
+            continue
+        mine = {(r.get('emoji') or {}).get('name')
+                for r in msg.get('reactions') or () if r.get('me')}
+        for emoji in result_reactions(performance_tier(game, score), place):
+            if emoji in mine:
+                continue
+            if sent == REACTIONS_PER_PASS:
+                return f'reactions: {added} added, capped'
+            sent += 1
+            r = _session.put(f'{DISCORD_API_BASE}/channels/{channel_id}/messages/'
+                             f'{msg["id"]}/reactions/{quote(emoji)}/@me')
+            if r.status_code == 403:
+                return f'reactions: {added} added, missing Add Reactions'
+            if not r.ok:
+                return f'reactions: {added} added, stopped on {r.status_code}'
+            added += 1
+    return f'reactions: {added} added'
 
 
 def find_stickies(messages):
@@ -224,6 +293,31 @@ def update_sticky(channel_id, channel_messages, results, server_streak=0,
     return 'collapsed' if len(stickies) > 1 else 'reposted'
 
 
+def run_commentary(cfg, now_local, day, messages, results, puzzle_numbers, times,
+                   streaks, force):
+    """One STICKY-cadence commentary pass over what run_guild has already
+    parsed (commentary.py decides; this is the I/O around it). A post it makes
+    is put at the head of `messages`, so update_sticky sees the channel as it
+    now is and settles the sticky beneath the post in this same pass. Test
+    runs (force) read the real state but record nothing. Returns a note."""
+    gid = cfg['guild_id']
+    state = store.get_commentary(gid, day)
+    tick = commentary.make_tick(cfg, now_local, messages, results, puzzle_numbers, times,
+                                streaks, guild_aggs(gid), None, state, DISCORD_BOT_ID)
+    post = commentary.evaluate(tick, commentary.STICKY)
+    # Record BEFORE posting: two passes share this state, and a post whose
+    # record failed would be re-detected and said again the next time a human
+    # posts, whereas a recorded post that failed to send is merely lost. A
+    # record that raises here therefore also stops the post.
+    if not force:
+        ids, snapshot = commentary.to_record(tick, post, sent=post is not None)
+        store.record_commentary(gid, day, ids, snapshot)
+    if post:
+        messages.insert(0, send_commentary(_session, cfg['input_channel_id'], post))
+        return f'commentary: posted {post.kind}'
+    return f"commentary: {commentary.blocked(tick) or 'quiet'}"
+
+
 # One entry per guild whose last pass ended settled; run_guild's probe uses it
 # to skip the full pass while nothing has moved. Process-lifetime state: the
 # every-minute schedule keeps this container warm, so entries usually survive
@@ -302,6 +396,8 @@ def run_guild(cfg, force=False):
     avatar_pool = build_avatar_pool(_session, messages, checker, cfg['guild_id'])
 
     results = defaultdict(dict)
+    times = {}      # uid -> ISO timestamp of their latest counted result
+    posts = []      # (msg, game_key, uid, score) per entry, for the reactions
     suppressed = 0
     for msg in messages:
         entries = match_message(msg, games, checker, avatar_hashes=avatar_pool)
@@ -313,6 +409,8 @@ def run_guild(cfg, force=False):
             user_id = uid_override or msg.get('interaction_metadata', {}).get('user', {}).get('id') or msg['author']['id']
             results[game_key][user_id] = score
             puzzle_numbers.update(metadata)
+            times[user_id] = max(times.get(user_id, ''), msg['timestamp'])
+            posts.append((msg, game_key, user_id, score))
 
     # Server-wide streak flair, bare fire+number at the end of the content
     # line -- kept alive today (live +1) or still extendable from yesterday.
@@ -334,6 +432,19 @@ def run_guild(cfg, force=False):
     # partition the roster between them instead of repeating it.
     game_buttons = top_game_buttons(playable, results, streaks, cfg['sticky_games'])
 
+    # Commentary at the sticky cadence: the kinds that answer a result as it
+    # lands (a first result, a lead change, a clean sweep) post from here,
+    # within a minute of the message that caused them. Its own try/except: a
+    # commentary failure must never cost the channel its sticky.
+    notes = []
+    if cfg['commentary_enabled'] and commentary.enabled_triggers(cfg, commentary.STICKY):
+        try:
+            notes.append(run_commentary(cfg, now_local, today_day, messages, results,
+                                        puzzle_numbers, times, streaks, force))
+        except Exception as e:
+            traceback.print_exc()
+            notes.append(f'commentary FAILED {type(e).__name__}: {e}')
+
     # Yesterday links the newest board in the channel, which only covers the
     # day before this one once today's board has posted -- between day start
     # and post hour it is still the board for the day before THAT. Drop the
@@ -350,7 +461,20 @@ def run_guild(cfg, force=False):
         _probe_state[gid] = {'fingerprint': fingerprint,
                              'newest_id': messages[0]['id'],
                              'expires': time.monotonic() + PROBE_MAX_AGE}
-    notes = []
+
+    # Reactions once the sticky has settled: they move no message, so they
+    # can't unsettle it, and a slow or rate-limited one can't hold it up. Own
+    # try/except, like the commentary's. The games are rebuilt off this
+    # parse, so bandle and minute cryptic carry the totals their shares gave.
+    if cfg['reactions_enabled']:
+        react_keys = rot if cfg['reactions_rotation_only'] else None
+        try:
+            notes.append(react_to_results(
+                channel_id, posts, build_games(puzzle_numbers, cfg['game_overrides']),
+                now_local, react_keys))
+        except Exception as e:
+            traceback.print_exc()
+            notes.append(f'reactions FAILED {type(e).__name__}: {e}')
     if cfg['suppress_embeds']:
         notes.append(f'embeds suppressed: {suppressed}')
     if cfg['delete_wordle_recap']:
@@ -418,4 +542,13 @@ def lambda_handler(event, context):
 
 
 if __name__ == '__main__':
-    print(lambda_handler({'test': True}, None))
+    # No argument runs the plain test event. Pass inline JSON (or a fixture
+    # path) to override config fields for the run, e.g. to preview the
+    # sticky-cadence commentary on the test channel:
+    #   dotenv run -- python3 src/sticky_lambda.py '{"test": true, "commentary_enabled": true}'
+    arg = sys.argv[1] if len(sys.argv) > 1 else None
+    if arg:
+        event = json.loads(arg if arg.lstrip().startswith('{') else open(arg).read())
+    else:
+        event = {'test': True}
+    print(lambda_handler(event, None))
