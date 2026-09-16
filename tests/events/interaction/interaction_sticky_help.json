@@ -1,0 +1,12 @@
+{
+  "type": 3,
+  "guild_id": "${TEST_GUILD_ID}",
+  "channel_id": "${TEST_CHANNEL_ID}",
+  "member": {
+    "user": {"id": "${TEST_USER_ID}"}
+  },
+  "data": {
+    "custom_id": "sticky_help",
+    "component_type": 2
+  }
+}

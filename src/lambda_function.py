@@ -13,10 +13,11 @@ from game_parser import (format_scoreboard_components, make_timestamp_checker,
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date,
     parse_results, build_avatar_pool, build_name_map, is_scoreboard_message,
-    gather_streaks,
+    gather_streaks, guild_aggs, send_commentary,
     FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS, FLAG_IS_COMPONENTS_V2,
     MAX_BUTTONS_PER_ROW, MAX_ACTION_ROWS,
 )
+import commentary
 import store
 
 # Global bot identity only -- every per-server setting (channels, timezone,
@@ -27,12 +28,15 @@ DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
 _session = make_session(DISCORD_BOT_TOKEN)
 
 
-def send_message(channel_id, components):
+def send_message(channel_id, components, allowed_mentions=None, flags=FLAG_IS_COMPONENTS_V2):
+    """Post a Components V2 message. The daily board pings the players it
+    names; a caller that wants its mentions rendered silently (the midday
+    board) passes allowed_mentions={'parse': []} and the silent flag."""
     url = f'{DISCORD_API_BASE}/channels/{channel_id}/messages'
     payload = {
         'components': components,
-        'flags': FLAG_IS_COMPONENTS_V2,
-        'allowed_mentions': {'parse': ['users']},
+        'flags': flags,
+        'allowed_mentions': allowed_mentions or {'parse': ['users']},
     }
     response = _session.post(url, json=payload)
     response.raise_for_status()
@@ -154,12 +158,12 @@ def persist_results(cfg, results, puzzle_numbers, ref_date, games, rotation=None
         # what the board printed. Doubles as the streak-eligibility signal:
         # finalize_day counts a play only where points landed.
         points_by_game = points_per_game(results, games, cfg['minimum_players'],
-                                         rotation)
+                                         rotation, cfg['scoring'])
         if not write:
             n_scored = sum(1 for pts in points_by_game.values() if pts)
             return f'store: dry run, would write day={day} ({n_scored} scored games)'
         archived = store.write_day(cfg['guild_id'], day, results, points_by_game,
-                                   puzzle_numbers, rotation)
+                                   puzzle_numbers, rotation, cfg['scoring'])
         stats = store.finalize_day(cfg['guild_id'], day, results, points_by_game,
                                    [g.key for g in games])
         return (f'store: day={day} archived={archived} '
@@ -421,7 +425,8 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
                                                   game_overrides=cfg['game_overrides'],
                                                   rotation=rotation,
                                                   rotation_off=cfg['rotation_off_mode'],
-                                                  names=build_name_map(messages))
+                                                  names=build_name_map(messages),
+                                                  scoring=cfg['scoring'])
         board_channel = test_channel_id if is_test else cfg['output_channel_id']
         response = send_message(board_channel, components=components)
         note('posted scoreboard')
@@ -495,6 +500,87 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
     return '; '.join(parts)
 
 
+# --- Commentary: the hourly posts between boards ----------------------------------
+# The third stage on the tick, at commentary's HOURLY cadence (the sticky pass
+# runs the STICKY one). commentary.py decides what to say (pure); this side
+# gathers the tick's inputs from the live channel and the store, sends the
+# post, and records the outcome. See the module docstring there for the shape.
+
+def build_tick(cfg, now_local):
+    """Everything commentary.evaluate needs about this guild's day: one fetch
+    of the input channel, its parse, the streak bundle, the aggregate
+    partition, the day's state. Per-player aggregates are fetched lazily and
+    memoized: only the last call reads them, and only on the ticks it is due."""
+    gid = cfg['guild_id']
+    tz = now_local.tzinfo
+    today = reference_date(now_local, tz, cfg['hours_after_midnight'])
+    messages = fetch_messages(_session, cfg['input_channel_id'],
+                              limit=cfg['hundreds_of_messages'] * 100)
+    checker = make_timestamp_checker(today, tz, cfg['hours_after_midnight'],
+                                     cfg['time_window_hours'])
+    avatar_pool = build_avatar_pool(_session, messages, checker, gid)
+    times = {}
+    results, puzzle_numbers = parse_results(
+        messages, today, tz, cfg['hours_after_midnight'], cfg['time_window_hours'],
+        avatar_hashes=avatar_pool, game_overrides=cfg['game_overrides'], times=times)
+    games = build_games(puzzle_numbers, cfg['game_overrides'])
+    streaks = gather_streaks(gid, today, results, games, cfg['minimum_players'])
+    try:
+        aggs = guild_aggs(gid)
+    except Exception as e:
+        print(f'commentary: aggregate read failed, no roster -- {type(e).__name__}: {e}')
+        aggs = {}
+
+    cache = {}
+
+    def player_aggs(uid):
+        if uid not in cache:
+            try:
+                cache[uid] = store.query_aggs(store.player_pk(gid, uid))
+            except Exception as e:
+                print(f'commentary: player read failed for {uid} -- {type(e).__name__}: {e}')
+                cache[uid] = {}
+        return cache[uid]
+
+    try:
+        state = store.get_commentary(gid, store.day_str(today))
+    except Exception as e:
+        print(f'commentary: state read failed, starting blank -- {type(e).__name__}: {e}')
+        state = {}
+    return commentary.make_tick(cfg, now_local, messages, results, puzzle_numbers, times,
+                                streaks, aggs, player_aggs, state, DISCORD_BOT_ID)
+
+
+def commentary_tick(cfg, is_test, test_channel_id, samples=False):
+    """Post this hour's commentary for one guild, if any is due.
+
+    Posts go to the input channel -- where the players are -- or to the test
+    channel on a test run, which reads the real channel and the real state
+    but writes nothing back. samples renders one post per registered message
+    kind from fabricated events instead of evaluating the hour: the preview.
+    """
+    if not cfg['input_channel_id']:
+        return 'commentary: input channel not configured (run /setup)'
+    now_local = datetime.now(ZoneInfo(cfg['timezone']))
+    tick = build_tick(cfg, now_local)
+    channel = test_channel_id if is_test else cfg['input_channel_id']
+    if samples:
+        posts = commentary.samples(tick)
+        for post in posts:
+            send_commentary(_session, channel, post)
+        return f'commentary samples: {len(posts)} posted to {channel}'
+    post = commentary.evaluate(tick, commentary.HOURLY)
+    # Record before posting, for the reason sticky_lambda.run_commentary gives:
+    # a lost post beats a repeated one.
+    if not is_test:
+        ids, snapshot = commentary.to_record(tick, post, sent=post is not None)
+        store.record_commentary(cfg['guild_id'], tick.day, ids, snapshot)
+    if post:
+        send_commentary(_session, channel, post)
+        return f'commentary: posted {post.kind}'
+    return f"commentary: {commentary.blocked(tick) or 'nothing to say'}"
+
+
 def lambda_handler(event, context):
     """Hourly tick: for every guild, post the daily scoreboard if it is due and
     draw today's rotation if the day has rolled over.
@@ -511,6 +597,12 @@ def lambda_handler(event, context):
       days_back        which day the board scores, counting back from the
                        guild's current day (default 1, the closed day). 0
                        scores today so far -- a preview, never persisted.
+      commentary       test mode only. true runs the commentary stage alone,
+                       for every guild whether or not it has it switched on
+                       (the real hour's evaluation, to the test channel);
+                       'samples' posts one example of every message kind
+                       instead. Absent, a test run does what a real one
+                       does: the stage runs for guilds that have it on.
     """
     event = event if isinstance(event, dict) else {}
     is_test = 'test' in event
@@ -532,15 +624,30 @@ def lambda_handler(event, context):
     configs = store.all_configs()
     if event.get('guild_id'):
         configs = [c for c in configs if c['guild_id'] == str(event['guild_id'])]
+    commentary_mode = event.get('commentary') if is_test else None
 
     summary = {}
     for cfg in configs:
         gid = cfg['guild_id']
-        try:
-            summary[gid] = process_guild(cfg, is_test, test_channel_id, days_back)
-        except Exception as e:
-            traceback.print_exc()
-            summary[gid] = f'FAILED {type(e).__name__}: {e}'
+        parts = []
+        # The third stage stands in its own right: a failed board must not cost
+        # the hour its commentary, nor the reverse. That takes two guards side
+        # by side -- one wrapping the other only ever protected one direction,
+        # since a raise in the board skips everything after it in the block.
+        if not commentary_mode:
+            try:
+                parts.append(process_guild(cfg, is_test, test_channel_id, days_back))
+            except Exception as e:
+                traceback.print_exc()
+                parts.append(f'FAILED {type(e).__name__}: {e}')
+        if commentary_mode or (cfg['commentary_enabled'] and cfg['input_channel_id']):
+            try:
+                parts.append(commentary_tick(cfg, is_test, test_channel_id,
+                                             samples=commentary_mode == 'samples'))
+            except Exception as e:
+                traceback.print_exc()
+                parts.append(f'commentary FAILED {type(e).__name__}: {e}')
+        summary[gid] = '; '.join(parts)
         print(f'guild {gid}: {summary[gid]}')
 
     if not summary:

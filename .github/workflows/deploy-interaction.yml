@@ -11,6 +11,8 @@ on:
       - 'src/game_parser.py'
       - 'src/scoreboard.py'
       - 'src/store.py'
+      - 'src/commentary.py'
+      - 'tools/register_commands.py'
       - '.github/workflows/deploy-interaction.yml'
 
 jobs:
@@ -49,14 +51,14 @@ jobs:
         cd package && zip -r ../function.zip . && cd ..
         # -j flattens src/ away: the handler is "<module>.lambda_handler", so
         # these modules must sit at the zip root, not under src/.
-        zip -j function.zip src/${{ env.FILE_NAME }} src/game_parser.py src/scoreboard.py src/store.py
+        zip -j function.zip src/${{ env.FILE_NAME }} src/game_parser.py src/scoreboard.py src/store.py src/commentary.py
         echo "Package created: $(ls -lh function.zip | awk '{print $5}')"
 
         echo "Verifying handler modules and vendored deps are at the zip root..."
         python3 - "$FILE_NAME" <<'PY'
         import sys, zipfile
         roots = {n.split("/")[0] for n in zipfile.ZipFile("function.zip").namelist()}
-        modules = {sys.argv[1], "game_parser.py", "scoreboard.py", "store.py"}
+        modules = {sys.argv[1], "game_parser.py", "scoreboard.py", "store.py", "commentary.py"}
         deps = {"requests", "dateutil", "PIL", "nacl"}
         missing = sorted((modules | deps) - roots)
         if missing:
@@ -79,3 +81,18 @@ jobs:
         aws lambda wait function-updated \
           --function-name $LAMBDA_FUNCTION_NAME
         echo "Deployment complete!"
+
+    - name: Register slash commands
+      # After the deploy, so the function already answers any new command or
+      # option by the time Discord offers it. register_commands.py is a bulk
+      # overwrite, so a run with nothing new changes nothing. The bot's identity
+      # is read off the function's own environment, where it already lives,
+      # rather than kept a second time as a repository secret.
+      run: |
+        pip install --quiet requests python-dateutil boto3 python-dotenv
+        token=$(aws lambda get-function-configuration --function-name "$LAMBDA_FUNCTION_NAME" \
+          --query 'Environment.Variables.DISCORD_BOT_TOKEN' --output text)
+        echo "::add-mask::$token"
+        bot_id=$(aws lambda get-function-configuration --function-name "$LAMBDA_FUNCTION_NAME" \
+          --query 'Environment.Variables.DISCORD_BOT_ID' --output text)
+        DISCORD_BOT_TOKEN="$token" DISCORD_BOT_ID="$bot_id" python3 tools/register_commands.py

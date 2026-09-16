@@ -1,0 +1,11 @@
+{
+  "type": 2,
+  "guild_id": "${TEST_GUILD_ID}",
+  "channel_id": "${TEST_CHANNEL_ID}",
+  "member": {
+    "user": {"id": "${TEST_USER_ID}"}
+  },
+  "data": {
+    "name": "help"
+  }
+}

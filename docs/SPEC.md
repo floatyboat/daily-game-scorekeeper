@@ -10,12 +10,15 @@ all per-server configuration lives in the table.
 
 | Lambda | Module | Trigger | Role |
 |---|---|---|---|
-| `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Two stages per tick, draw first: draws the rotation at each guild's day start, posts and pins yesterday's scoreboard at its post hour, and announces "Today's games" on either — so a later post hour gets it twice, and `rotation_announce` off gets it never; the only writer of day and aggregate items |
-| `daily-game-sticky` | `src/sticky_lambda.py` | EventBridge rule `daily-game-sticky`, `cron(* * * * ? *)` | Maintains the one sticky ("Now Playing") at the bottom of the input channel |
-| `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, `/stats`, `/setup`, `/suggest`, sticky Play/Scores buttons; live ephemeral views |
+| `daily-game-score` | `src/lambda_function.py` | EventBridge rule `time`, `cron(0 * * * ? *)` | Three stages per tick, draw first: draws the rotation at each guild's day start, posts and pins yesterday's scoreboard at its post hour, and announces "Today's games" on either — so a later post hour gets it twice, and `rotation_announce` off gets it never; then, for guilds with it on, the hour's commentary (see Commentary); the only writer of day and aggregate items, and one of the two writers of the commentary-state item |
+| `daily-game-sticky` | `src/sticky_lambda.py` | EventBridge rule `daily-game-sticky`, `cron(* * * * ? *)` | Maintains the one sticky ("Now Playing") at the bottom of the input channel, reacts to each fresh result with how it went and where it placed (see Reactions), and posts the commentary kinds that react to a result as it lands (see Commentary) |
+| `daily-game-play` | `src/interaction_lambda.py` | Discord Function URL | `/play`, `/stats`, `/help`, `/setup`, `/suggest`, sticky Play/Scores/How-it-works buttons; live ephemeral views, plus the one-time welcome under a player's first one |
 
 Shared modules: `game_parser.py` (game specs, parsing, scoring, render), `scoreboard.py`
-(Discord fetch/format helpers), `store.py` (all DynamoDB I/O and the config schema).
+(Discord fetch/format helpers), `store.py` (all DynamoDB I/O and the config schema), and
+`commentary.py` (the registry of message kinds the commentary can post — pure; the daily
+and sticky lambdas run it, one cadence each, and the interaction lambda reads it for the
+`/setup commentary` menu).
 
 Deployment is zip upload from three GitHub Actions workflows into `us-east-1`; there is
 no IaC. Each workflow packs `src/` **flat** (`zip -j`) so the modules land at the archive
@@ -29,7 +32,10 @@ they are present at the archive root before uploading. No lambda declares a laye
 `tools/infra_setup.py` is the declaration of the stack — table, one IAM role per lambda,
 the three functions, log retention, both schedules, the Function URL — and converges live
 state to it. `tools/backfill.py` replays channel history into day items and recomputes
-aggregates. `tools/register_commands.py` registers the slash commands.
+aggregates. `tools/register_commands.py` registers the slash commands; the interaction
+lambda's workflow runs it after every deploy of that function, with the bot's identity
+read off the function's own environment, so a new command or option goes live together
+with the code that answers it.
 
 ## Database: DynamoDB
 
@@ -60,9 +66,15 @@ GUILDS                      GUILD#<guild_id>   per-server config: input_channel_
                                                displaced, still needed by the board)
 GUILD#<guild_id>            DAY#<YYYY-MM-DD>   full parsed results for the day:
                                                {game: {user_id: {score, points}}}, puzzle
-                                               numbers, and the governing rotation when
-                                               one did. The durable archive + rebuild
+                                               numbers, the governing rotation when one
+                                               did, and the scoring mode the points were
+                                               frozen on. The durable archive + rebuild
                                                source.
+GUILD#<guild_id>            COMMENTARY#<day>   the commentary's state for the day:
+                                               `announced` (string set of event ids that
+                                               have gone out, ADDed to) and `standings`
+                                               (JSON snapshot of the last pass, SET);
+                                               shared by the daily and sticky lambdas
 GUILD#<guild_id>            AGG#SERVER         overall server streak (points scored in ANY
                                                game that day): current_streak, best_streak,
                                                last_played_day
@@ -77,7 +89,9 @@ GUILD#<gid>#PLAYER#<uid>    AGG#SERVER         per-player overall streak (points
 GUILD#<gid>#PLAYER#<uid>    AGG#GAME#<key>     per-player-per-game: current_streak,
                                                best_streak, last_played_day, total_plays,
                                                best/sum score fields where numeric
-GUILD#<gid>#PLAYER#<uid>    PROFILE            display-name snapshot, totals, dm_opt_in
+GUILD#<gid>#PLAYER#<uid>    PROFILE            welcomed_at (the explainer has been shown,
+                                               see /help); dm_opt_in and a display-name
+                                               snapshot are planned
 SUGGESTIONS                 <gid>#<uid>#<name> one forwarded /suggest: guild_id, user_id,
                                                name, url, text (the paste), suggested_at
                                                (first asked), thanked_at (stamped by
@@ -130,6 +144,8 @@ registrar and the handler.
 | `sticky_games` | `sticky games` | `0` | Today's games as play buttons on the sticky (0–`MAX_BUTTONS_PER_ROW`, one row's worth); 0 skips the ranking pass entirely and hands Play the whole roster |
 | `delete_wordle_recap` | `sticky delete_wordle_recap` | `false` | Whether the sticky pass deletes the Wordle app's daily recap of yesterday's results |
 | `suppress_embeds` | `embeds suppress` | `true` | Whether link previews are stripped off counted results |
+| `reactions_enabled` | `reactions enabled` | `false` | Whether the sticky pass reacts to each fresh result with how it went and where it placed — see Reactions |
+| `reactions_rotation_only` | `reactions rotation_only` | `false` | While a rotation governs the day, react only to its games |
 | `rotation_enabled` | `rotation enabled` | `true` | Score only a rotating subset of the enabled games each day |
 | `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 22), so adding a game widens the option — re-run `register_commands.py` for the picker to follow |
 | `rotation_mode` | `rotation mode` | `swap` | `swap` replaces under-played members, `random` re-draws daily |
@@ -137,6 +153,12 @@ registrar and the handler.
 | `rotation_promote_players` | `rotation promote_players` | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
 | `rotation_off_mode` | `rotation off_rotation` | `shown` | Board display of off-rotation plays: `shown` below the scored games, or `hidden` |
 | `rotation_announce` | `rotation announce` | `true` | Whether "Today's games" is posted; `false` draws the rotation silently and changes nothing else |
+| `scoring` | `scoring mode` | `placement` | The points scale: `placement` (1st is worth the day's turnout), `per_game` (1 + players beaten, game by game) or `off` (scores only, no points) — see Scoring modes |
+| `commentary_enabled` | `commentary enabled` | `true` | Whether the hourly commentary posts between boards — see Commentary |
+| `commentary_overrides` | `commentary` (bare, a menu) | `{}` | Explicit per-guild flips of each message kind's default, keyed by `Trigger.key` |
+| `commentary_midday_hour` | `commentary midday_hour` | `13` | Guild-local hour the midday standings board posts |
+| `commentary_last_call_hours` | `commentary last_call_hours` | `3` | Hours before the window closes that the streak last call posts; `0` turns it off |
+| `commentary_nudge_after_hours` | `commentary nudge_after_hours` | `2` | Hours since a player's last result before the nudge names them |
 | `game_overrides` | `games` | `{}` | Explicit per-guild flips of each game's default state |
 | `last_finalized_day` | — | — | Written at finalize; records how far aggregates are folded |
 | `last_posted_day` | — | — | Written after a real post; the post gate |
@@ -164,6 +186,16 @@ afterwards; every reply from them says so.
   per guild. `config.game_overrides` stores just the explicit deviations, so a newly added
   game reaches every guild with its coded default rather than a frozen snapshot of an old
   menu submission.
+- `GameSpec.breakpoints` is `(good, medium)`: where a result stops being good and where it
+  stops being medium, for its reaction (`game_parser.performance_tier`, see Reactions). In
+  the metric's own number, lower is better: guesses, connections mistakes, cryptic weighted
+  hints, `time` and `timed_win` seconds, travle +N, `reverse_score` the score. `score` and
+  `maptap` compare the result's percentage of `total` instead, higher is better, so every
+  score game carries its real ceiling in `total` (Chronophoto 5000, Krillion 700, Size It
+  Up 500, MapTap 1000), and a result at that ceiling is aced. No score game's board line
+  prints its total — the line is the
+  bare number, while guesses, connections and cryptic lines keep their "/N" — so the
+  ceiling never reads as a fraction. A spec without breakpoints gets no good, medium or bad.
 - The effective list is resolved by `spec_enabled(spec, overrides)` / `build_games(pn,
   overrides)` and used by **all** paths: daily parse, aggregate updates, sticky counts, Play
   list, Scores, scoreboard render.
@@ -217,8 +249,22 @@ afterwards; every reply from them says so.
   Games below `minimum_players` still score nobody and are out of the pool as well,
   which keeps the pool ≥ any scoring game's field, so no place can drop below 1 point.
   Poops are *in* the pool — a failed result is participation, the same rule swap-mode
-  earn-in uses. An ungoverned day keeps the per-game scale (`compute_points` with no
-  `first_place_points`), unchanged in every respect.
+  earn-in uses.
+- **Scoring modes** (`scoring`, `/setup scoring mode`). The rotation picks *which* games
+  score each day; this setting picks *how*, and `game_parser.points_per_game` is the one
+  place the scale is applied — the archive, the board, the Scores button and the live
+  standings all fold through it. `placement` (the default) is the rotation scale above,
+  and on an unrestricted day it pools everyone who played *any* game, so first place in
+  each game is worth the day's whole turnout even before the first draw lands. `per_game`
+  is the pre-rotation scale on every game: 1 point plus one per player beaten, ties paying
+  what the group's last place would. `off` scores nothing — no points summary, no crown,
+  scores still listed and ranked. Off-rotation games always freeze on the per-game scale
+  whatever the mode, since they earn no board points at all. Streaks are untouched by the
+  mode: `scoring_players()` keys on `is_poop()`, not on points, so a server with points
+  off still keeps every streak. The change is forward-only — each `DAY#` item freezes its
+  points on the scale that scored it (and records which, as `scoring`), and
+  `tools/backfill.py` always replays history per game, the only scale a rotation-less
+  archive can honestly carry.
 - **Two slots** (`rotation_day`/`rotation_games` and `rotation_prev_day`/`rotation_prev_games`).
   Day D's draw lands at D's **start**, while the board scoring D−1 posts later that
   morning at `post_hour`, so the draw shifts the pair it displaces into the previous
@@ -310,6 +356,169 @@ afterwards; every reply from them says so.
   `daily_enabled` off stops only the board: the rotation still draws and announces
   (`rotation_announce` off is the switch for the announcement alone, and stops nothing
   else).
+
+## Commentary
+
+The posts between boards: a nudge to whoever left today's games half-played, a midday
+standings board, a last call for streaks about to break, and one-line callouts — lead
+changes, beatable ties, a clean sweep, a first-ever result. On by default;
+`/setup commentary enabled:False` stops it. The nudge is the one kind that ships **off**
+(`Trigger.default`), until its own cadence is settled; every other kind is on.
+Posts go to the **input** channel, where the
+players are (the test channel on a test run).
+
+- **A registry, not a pipeline.** `commentary.TRIGGERS` is a list of `Trigger` entries in
+  priority order; each is one message kind with its own `detect(tick) -> events`,
+  `render(events, tick)`, `sample(tick)` (for the preview), `cadence`, `ping` policy,
+  coded `default` and `once` flag. Adding a kind is one entry; the engine supplies dedup,
+  the one-post rule, the gates, the ping policy, the `/setup commentary` menu (built from
+  the registry, so a new kind needs no `register_commands` run) and persistence. The
+  per-kind switch is `commentary_overrides`, an explicit-deviations map resolved by
+  `trigger_enabled()` exactly like `game_overrides` by `spec_enabled()`.
+- **Two cadences.** `HOURLY` kinds run on the daily lambda's tick
+  (`lambda_function.commentary_tick`): the scheduled ones — last call, midday board,
+  nudge — and the beatable-tie line, a nudge in spirit that waits for the hour and reads
+  beneath the nudge when both fire. `STICKY` kinds run on the sticky's every-minute pass
+  (`sticky_lambda.run_commentary`), which already holds the parse: the ones that answer a
+  result the moment it lands — first result, lead change, clean sweep — so they post within a
+  minute of the message that caused them, and the sticky reposts beneath them in the same
+  pass (the post is put at the head of the working list before `update_sticky` runs).
+  Each pass evaluates only its own cadence, and both persist to the same state item.
+- **Three kinds.** `BODY` is the message itself (last call, nudge): at most one body per
+  pass, the first in registry order wins and the rest re-detect next time. `BOARD` is a
+  Components V2 board as the body (midday standings). `FLAVOR` lines ride beneath whatever
+  body posts in the same pass — under a board as one more Text Display, unless that breaks
+  the board's budget, in which case they wait — or post on their own. **One post per guild
+  per pass**, whatever fired.
+- **The tick.** `commentary.make_tick` assembles one `Tick` from what a pass has already
+  fetched and parsed: today's results with each player's latest result time
+  (`parse_results(times=...)`, or the sticky's own loop), the built games, today's
+  rotation, the streak bundle, the guild's aggregate partition (`scoreboard.guild_aggs`,
+  the cached Query the board already makes — its `players` sets are the roster), a
+  memoized per-player aggregate loader that only the last call spends (the daily lambda
+  supplies it; the sticky passes none), the day's state, and the two gate flags below.
+  Derived views (`scored`, `scorers`, `pool`, `totals`) are cached properties, so a
+  trigger never repeats a fold.
+- **Gates** (`commentary.blocked`, every kind, both cadences): nothing before one hour
+  after day start or after the window closes; nothing until the board covering yesterday
+  has posted (`last_posted_day`, the same gate the sticky's Yesterday link uses — the
+  morning board opens the conversation; a guild with the board off skips this one); and
+  a quiet rule, per kind (`Trigger.waits`), over the bot's own messages since anyone else
+  last spoke, the sticky aside (`unanswered_posts`: a board, an announcement, a commentary
+  post). By default (`ANY`) a kind waits while there are any, so the bot never stacks two
+  messages in a row. The nudge (`OWN`) waits only while one of them is itself a nudge, told
+  apart by its openings (`NUDGE_HEADINGS`): a lead-change line, the midday board or the
+  morning board never hold a nudge back, but two nudges never stack. The midday board and
+  the last call (`NEVER`) wait on nothing, because a scheduled post is not the bot talking
+  twice and a one-liner an hour earlier must not push it back for hours (a replay of a busy
+  day showed exactly that). The last call needs it for a second reason: its server-streak
+  branch fires only on a day nobody has played, and on exactly such a day nothing ever
+  clears the morning board out of `unanswered`, so `ANY` held it back on every day it had
+  something to say. Bodies then gate
+  themselves: the last call fires on the first pass within
+  `commentary_last_call_hours` of the close, the midday board on the first pass at or
+  after `commentary_midday_hour` with a scored result to show, the nudge
+  `commentary_nudge_after_hours` after a player's last result and never inside the final
+  hour (the last call owns it).
+- **What each kind says.** *Nudge* (the kind that ships off): everyone who has a result in
+  a scored game, has scored games left, and last posted at least
+  `commentary_nudge_after_hours` ago — one line each
+  with the games still open and what first place there pays right now (`placement`: the
+  day's pool, `per_game`: one more than the players already in it, `off`: no number), plus
+  one row of link buttons for the union; pings. *Last call*: players whose server streak
+  (alive through yesterday, nothing scored today) or per-game streak (same, that game
+  unplayed today, off-rotation included — streaks survive off-rotation) dies at the close,
+  filtered through the same `shown_streak()` floor (`MINIMUM_STREAK`) every other surface
+  spends, so the ping never names a streak the board wouldn't print;
+  longest first, at most 10 names; pings; notes the server's own streak when nobody has
+  scored yet. *Midday*: today's board so far (`format_scoreboard_components` with
+  `MIDDAY_TITLE`), **scored games only** — under a rotation the off-rotation section is
+  hidden whatever `rotation_off_mode` says for the morning board — and silent; when
+  off-rotation games were played, and the Scores button would show them (`rotation_off_mode`
+  `shown`, sticky on), one subtext line says how many and points at the button. *First
+  result*: a player in today's results who is in no game's all-time `players` set —
+  checked only once yesterday is finalized, since the sets fold at post hour. *Lead
+  change*: a new **sole** leader who is clear of one win's worth of points (`one_win`: the
+  pool under `placement`, the biggest game's field under `per_game`), at most once per
+  clock hour — the event id is the hour, so a second change in the same hour dedups away.
+  Replays of real days showed the lead flipping on every result through the first two
+  hours at 2 to 6 points, and shared leads flipping back within minutes; this rule kept
+  the two or three changes a day that were news. *Clean sweep*: one player sole first in
+  every contested (≥ 2 players) scored game, at least two of them. How a single result
+  went is no line at all: it is that result's own reaction (see Reactions). *Tie*: a scored
+  `guesses`/`connections`/`cryptic` game whose best non-poop score is shared and beatable,
+  with what first outright would pay. Every line has two or three phrasings, picked by a
+  hash of the day and the event, so a retried pass repeats itself rather than rewording.
+  House style: no em dashes in any line except the per-player nudge lines.
+- **Pings.** Only the users a body names as its audience are in `allowed_mentions`; every
+  other mention renders without notifying, and a post with nobody to notify goes out with
+  the silent flag (`scoreboard.send_commentary`, shared by both passes). The nudge and the
+  last call are the two kinds that ping.
+- **State** (`COMMENTARY#<day>`, two attributes): `announced`, a string set of every event
+  id that has gone out — nothing is said twice, and a body that lost a pass to a
+  higher-priority one is simply re-detected next time — and `standings`, the last pass's
+  snapshot the lead-change trigger compares against. Two writers share it, so
+  `store.record_commentary` **updates** rather than overwrites: `ADD` on the set, `SET` on
+  the snapshot, and only when a pass has something to fold (`to_record`) — **before** the
+  post goes out, so a record that fails stops the post rather than letting an unrecorded
+  one be said again the next time a human posts. `once` kinds
+  (last call, midday) have their key as their one id and are not even asked again after
+  it: that is what keeps the last call from re-reading every player's partition on the
+  hours after it fired. Never written on a test run.
+- **The midday board is not a scoreboard.** `is_scoreboard_message` matches any Components
+  V2 message, which would make a midday board in the input channel the sticky's Yesterday
+  link and satisfy the posted-today check — so it excludes a board whose first Text Display
+  starts with `board_heading(MIDDAY_TITLE)` (`is_midday_board`). The daily board, the Scores
+  button and the midday board all open with `game_parser.board_heading`, so the title is the
+  only thing that tells them apart and nothing else can drift.
+- **Previewing.** `{'test': true, 'commentary': true}` on the daily lambda runs its stage
+  alone for every guild, switched on or not, to the test channel — the real hour's
+  evaluation against the real channel and state, writing nothing. `{'test': true,
+  'commentary': 'samples'}` posts one example of every registered kind (both cadences)
+  from fabricated events over the live parse (real players, real games), overrides and
+  gates ignored, so a message is on screen before it is switched on. The sticky's cadence
+  previews with `python3 src/sticky_lambda.py '{"test": true, "commentary_enabled": true}'`
+  (any config field overrides straight from the event, as always). Fixtures:
+  `tests/events/daily/commentary_test.json`, `commentary_samples.json`.
+- **Replaying history.** `tools/replay_commentary.py` walks one archived day of the input
+  channel minute by minute through both cadences — streak state rebuilt from the `DAY#`
+  archive as it stood the evening before, the board landing at post hour, every post the
+  bot makes fed back into the stream so the quiet gate sees it — and prints the timeline:
+  results as they landed, what posted, what was held and why. Read-only. The way to see
+  what a trigger change would have done before shipping it.
+
+## Reactions
+
+With `reactions_enabled` on (off by default), the sticky pass reacts to every fresh result
+with two emoji: how it went, then where it placed in its game the moment it was posted.
+`sticky_lambda.react_to_results` does the Discord side; the rules are pure, in `game_parser`.
+
+- **How it went** (`performance_tier`). A poop is `is_poop`, so the reaction and the
+  board's medal agree. Aced is the perfect result of the games that have one: a `guesses`
+  game in 1, a connections grid with no mistakes (a VERT, which ranks above that, too), a
+  cryptic with no hints, a `score` or `maptap` result at its ceiling (`total`). Anything
+  else is good, medium or bad against the game's
+  `breakpoints` (see Games and per-server enabling). A Travle that missed the target is
+  bad; a Gerrymandle won with the timer hidden has no time to measure, so no tier. Emoji
+  (`TIER_EMOJI`): 💯 aced, 😎 good, 🙂 medium, 😬 bad, 💩 poop.
+- **Where it placed** (`place_at_post`): 1 plus every earlier first result in that game
+  strictly better by `score_sort_key`, so a tie shares the better place, as on the board.
+  👑 🥈 🥉 (`MEDALS`, the board's own), 👍 below third; nothing for the first result in a
+  game, and nothing on a poop.
+- **Which results.** Matches are walked oldest first. A player's first result in a game is
+  the one that counts, as on the board, and a repost gets nothing. The Wordle app's own
+  messages count toward places but get no reaction: several players share one, and the app
+  keeps editing it. With `reactions_rotation_only` on and a rotation governing the day,
+  only that rotation's games get reactions; places still count every result.
+- **Stateless and bounded.** An emoji the bot already has on a message (`me`) is skipped,
+  so the several full passes that see a result add nothing twice. Only results newer than
+  `REACTION_WINDOW` (20 minutes, past the probe's ten, so a reaction that failed is retried
+  by the full pass the probe lets through) are touched, and a pass sends at most
+  `REACTIONS_PER_PASS` (20), so switching it on never sweeps the backlog. It runs after
+  `update_sticky`, in its own try/except, so a reaction never delays or costs the sticky.
+  A 403 ends that pass's reactions with a note: the bot needs **Add Reactions** there. The
+  invite asks for it; older invites didn't, which only matters where a server has taken it
+  from `@everyone`.
 
 ## Streak semantics
 
@@ -416,8 +625,10 @@ retroactively.
   them — one partition Query is now the whole cost of a board.
 - **Sticky**: up to two rows — today's games (`sticky_games` of them, in `sticky_row_games`
   order, drawn from the rotation where one governs the day) sitting *above* the action row
-  Play · Scores · Yesterday, because the games are what the sticky is for and the buttons
-  are the chrome around them. Above both sits the content: the heading carrying the
+  Play · Scores · Yesterday · How it works, because the games are what the sticky is for
+  and the buttons are the chrome around them. How it works is the `/help` explainer one
+  tap from the message a newcomer lands on; it sits last so the daily buttons keep their
+  places whether or not Yesterday is showing. Above both sits the content: the heading carrying the
   server-wide streak inline — `👾 Now Playing · 🔥17` — over the day's game and play counts.
   The streak rides on the heading rather than the counts because it is the server's, not
   the day's; it survives a rollover the counts reset through.
@@ -447,7 +658,13 @@ retroactively.
   `toggle_sub` appends the same way `field_sub` builds a whole subcommand) ·
   `rotation on|off` (carries the four
   `rotation`-group fields the same way; the mode fields register fixed choice menus off
-  `ConfigField.choices`) · `embeds suppress:on|off` ·
+  `ConfigField.choices`) · `scoring mode` (a `field_sub` like `time`, one choice option)
+  · `commentary [enabled] [midday_hour] [last_call_hours]` (the one toggle whose boolean is
+  optional: with no options at all it answers with the per-kind menu, one option per
+  `commentary.TRIGGERS` entry ticked to the effective state, written back as
+  `commentary_overrides` exactly the way `/setup games` writes `game_overrides`) ·
+  `embeds suppress:on|off` · `reactions on|off` (carries `rotation_only`, the one
+  `reactions`-group field) ·
   `input`/`output` (override one side of `channel`, so they sit last). `limits` carries
   the display minimum and the message volume only — the Wordle bot is a code constant, not
   a per-server option. That array is
@@ -477,6 +694,21 @@ retroactively.
   one item) before the post goes out — it outlives a failed post and the 30-day log, and
   `tools/broadcast.py --game` reads it back to thank the sender in that server once the
   game ships. Keeping it never fails the reply.
+- **`/help`** — open to everyone: the explainer (`interaction_lambda.build_help_text`),
+  an ephemeral reply built off the live config every time — how to play, what a result is
+  worth under the server's `scoring`, the rotation, the day's clock, streaks, reactions
+  where they're on, and the command list — so it never describes a setting the server
+  doesn't have: the sticky, the board and the Today's games post are named only where
+  they're switched on. The sticky's How
+  it works button (`HELP_BUTTON_CUSTOM_ID`) is the same reply. Answered inline; nothing in
+  it reads a channel.
+- **First interaction.** The first time a player opens any live view (Play, Scores,
+  `/stats`), phase two of the deferred reply sends the same explainer as a second
+  ephemeral follow-up on the interaction token, after the view they asked for, and stamps
+  `PROFILE.welcomed_at` (`store.mark_welcomed`). `/help` and the button stamp it too, so
+  nobody is welcomed twice. The check is one GetItem per deferred click. The inline
+  fallback path (no self-invoke) skips it, and any store or Discord failure costs a repeat
+  welcome later, never the reply.
 - **Usage log.** Every verified interaction except Discord's endpoint PING prints one
   JSON line before it is routed (`interaction_lambda.log_interaction`):
   `{"event": "interaction", "kind": "command" | "component" | "modal", "name": "setup
@@ -521,8 +753,17 @@ retroactively.
   dropped from the working list, so a recap that landed on a settled sticky doesn't force
   a repost. A failed delete leaves the message in the list and the sticky reposts below
   it as usual.
+- Reactions ride on it too (`reactions_enabled`, off by default; see Reactions): after the
+  sticky settles, in their own try/except, needing Add Reactions, and nothing at all in a
+  guild with the sticky off.
 - With `daily_enabled` off the board stops and the sticky drops its Yesterday link; the
   rotation stage keeps running, so today's games are still drawn and announced.
+- The commentary's `HOURLY` kinds ride the same hourly rule, after the board and the
+  draw, for guilds with `commentary_enabled` on: their own parse of *today's* input
+  channel, their own try/except, their own summary part — a failed board never costs the
+  hour its commentary, nor the reverse. Its `STICKY` kinds ride the sticky's every-minute
+  pass, on the parse it already makes, again in their own try/except so a commentary
+  failure never costs the channel its sticky. See Commentary.
 - Onboarding is automatic: `/setup` writes the config item and the next tick picks the guild
   up, with no deploy or schedule change.
 - **Test mode is event-driven.** `{'test': true}` on the daily posts every guild's board to

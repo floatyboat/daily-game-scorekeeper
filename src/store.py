@@ -44,7 +44,7 @@ from botocore.exceptions import ClientError
 # game_parser imports nothing local, so this stays a leaf-ward dependency --
 # scoreboard already pulls in both. Only the game count is needed here, to
 # bound the rotation size against the games that actually exist.
-from game_parser import GAME_SPECS
+from game_parser import GAME_SPECS, SCORING_PLACEMENT, SCORING_PER_GAME, SCORING_OFF
 
 TABLE_NAME = os.getenv('TABLE_NAME') or 'daily-game-tracker'
 AWS_REGION = os.getenv('AWS_REGION') or 'us-east-1'
@@ -164,6 +164,15 @@ OFF_ROTATION_MODES = (
     ('shown — on the board for zero points', 'shown'),
     ('hidden — off the board entirely', 'hidden'),
 )
+# The points scale (/setup scoring). The values are game_parser's: the
+# semantics live with points_per_game, this is only the menu.
+SCORING_MODES = (
+    ("placement — 1st is worth the day's turnout, one fewer per place",
+     SCORING_PLACEMENT),
+    ('per_game — 1 point plus one per player you beat, game by game',
+     SCORING_PER_GAME),
+    ('off — scores only, no points and no crown', SCORING_OFF),
+)
 
 
 def _choice(choices, default):
@@ -212,10 +221,10 @@ CONFIG_FIELDS = [
                 option='pin_days', minimum=1, maximum=PIN_CAP,
                 describe=f'Days of scoreboards kept pinned, 1-{PIN_CAP} (default 30)'),
 
-    # Toggles (/setup daily, /setup sticky, /setup embeds) and the game menu
-    # (/setup games). sticky_games and delete_wordle_recap ride along on the
-    # sticky toggle as optional options, since they only mean anything while
-    # the sticky is on.
+    # Toggles (/setup daily, /setup sticky, /setup embeds, /setup reactions)
+    # and the game menu (/setup games). sticky_games and delete_wordle_recap
+    # ride along on the sticky toggle as optional options, since they only
+    # mean anything while the sticky is on.
     ConfigField('daily_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     ConfigField('sticky_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     # Capped at the width of one action row: a sixth button wraps to a second
@@ -229,6 +238,17 @@ CONFIG_FIELDS = [
                 describe="Delete the Wordle app's daily recap of yesterday's "
                          'results (default off)'),
     ConfigField('suppress_embeds', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
+    # The sticky pass reacts to each fresh result with how it went and where it
+    # placed (sticky_lambda.react_to_results). Off by default: it needs the Add
+    # Reactions permission, which older invites didn't ask for (most servers give
+    # it to @everyone anyway).
+    # rotation_only rides along on the toggle, for a server that only wants the
+    # games that score today reacted to; it changes nothing on an unrestricted day.
+    ConfigField('reactions_enabled', default=False, coerce=bool, opt_type=OPT_BOOLEAN),
+    ConfigField('reactions_rotation_only', default=False, coerce=bool, group='reactions',
+                option='rotation_only', opt_type=OPT_BOOLEAN,
+                describe="Only react to today's rotation games while the rotation is on "
+                         '(default off)'),
     ConfigField('game_overrides', default={}, coerce=_overrides),
 
     # /setup rotation: score only a rotating subset of the enabled games each
@@ -263,6 +283,33 @@ CONFIG_FIELDS = [
     ConfigField('rotation_announce', default=True, coerce=bool, group='rotation',
                 option='announce', opt_type=OPT_BOOLEAN,
                 describe="Post \"Today's games\" when the rotation is drawn (default on)"),
+
+    # /setup scoring: how much a result is worth. The rotation picks WHICH
+    # games score each day; this picks HOW. Placement is the rotation's own
+    # scale and the default, so a server that never touches it sees no change
+    # on any rotation day.
+    ConfigField('scoring', default=SCORING_PLACEMENT,
+                coerce=_choice(SCORING_MODES, SCORING_PLACEMENT), group='scoring',
+                option='mode', opt_type=OPT_STRING, choices=SCORING_MODES,
+                describe='Points scale for the board (default placement)'),
+
+    # /setup commentary: the hourly posts between boards (commentary.py). The
+    # master switch, on by default (a server that doesn't want it stores
+    # enabled:False like any other choice); the per-kind overrides, a map like
+    # game_overrides that the bare command's menu edits -- so a new Trigger
+    # reaches every server with its coded default and needs no re-registration;
+    # and the numbers the triggers are tuned by, which ride along on the toggle.
+    ConfigField('commentary_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
+    ConfigField('commentary_overrides', default={}, coerce=_overrides),
+    ConfigField('commentary_midday_hour', default=13, coerce=int, group='commentary',
+                option='midday_hour', minimum=0, maximum=23,
+                describe='Local hour the midday standings post (default 13)'),
+    ConfigField('commentary_last_call_hours', default=3, coerce=int, group='commentary',
+                option='last_call_hours', minimum=0, maximum=12,
+                describe='Hours before the close for the streak last call; 0 = off (default 3)'),
+    ConfigField('commentary_nudge_after_hours', default=2, coerce=int, group='commentary',
+                option='nudge_after_hours', minimum=1, maximum=12,
+                describe="Hours since a player's last result before the nudge (default 2)"),
 
     # Run markers, written by the daily lambda. last_posted_day is the post
     # gate; last_finalized_day is diagnostic only -- nothing reads it, it just
@@ -376,6 +423,10 @@ def current_rotation(cfg, day):
 
 _resource = None
 _table = None
+
+
+def _now_iso():
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
 
 
 def _dynamodb():
@@ -689,14 +740,17 @@ def update_config(guild_id, updates):
     )
 
 
-def write_day(guild_id, day, results, points_by_game, puzzle_numbers, rotation=None):
+def write_day(guild_id, day, results, points_by_game, puzzle_numbers, rotation=None,
+              scoring=None):
     """Freeze one day's parsed results as the durable archive item.
 
     Points are stored per player per game so historical rollups survive future
     scoring-rule changes. Returns False (and writes nothing) on a no-play day.
     rotation is the key list that governed the day, archived so rollups can
     tell scored results from off-rotation ones; None (feature off, stale
-    state, backfilled history) archives an unrestricted day.
+    state, backfilled history) archives an unrestricted day. scoring is the
+    scale the points were frozen on (a game_parser.SCORING_* value), archived
+    for the same reason; None leaves it unrecorded.
     """
     games = {}
     for game_key, scores in results.items():
@@ -711,6 +765,8 @@ def write_day(guild_id, day, results, points_by_game, puzzle_numbers, rotation=N
     data = {'games': games, 'puzzles': puzzle_numbers}
     if rotation is not None:
         data['rotation'] = sorted(rotation)
+    if scoring is not None:
+        data['scoring'] = scoring
     table().put_item(Item={
         'PK': guild_pk(guild_id), 'SK': day_sk(day), 'day': day,
         'player_count': len(players),
@@ -999,6 +1055,71 @@ def rebuild_aggregates(guild_id, through_day):
     }
 
 
+# --- Commentary state -----------------------------------------------------------
+# One item per guild per day for the commentary (commentary.py), written by BOTH
+# passes that post it -- the daily lambda's hour and the sticky's minute -- so it
+# is updated, never overwritten: the announced ids are a string set the writers
+# ADD to (a union, so whoever writes second loses nothing), and the standings
+# snapshot is a plain SET of the latest view.
+
+COMMENTARY_PREFIX = 'COMMENTARY#'
+
+
+def commentary_sk(day):
+    return f'{COMMENTARY_PREFIX}{day}'
+
+
+def get_commentary(guild_id, day):
+    """{'announced': [ids], 'standings': [[uid, pts], ...]} for the day, empty
+    before the first pass -- the shape commentary.Tick.state carries."""
+    resp = table().get_item(Key={'PK': guild_pk(guild_id), 'SK': commentary_sk(day)})
+    item = resp.get('Item') or {}
+    return {'announced': sorted(item.get('announced') or ()),
+            'standings': json.loads(item['standings']) if item.get('standings') else []}
+
+
+def record_commentary(guild_id, day, announced=(), standings=None):
+    """Fold one pass's outcome in: ADD the ids it announced, SET the standings
+    it saw. Either alone is fine; nothing to fold is a no-op."""
+    parts, values = [], {}
+    if standings is not None:
+        parts.append('SET standings = :s')
+        values[':s'] = json.dumps(standings, default=str)
+    if announced:
+        parts.append('ADD announced :ids')
+        values[':ids'] = {str(i) for i in announced}
+    if not parts:
+        return
+    table().update_item(Key={'PK': guild_pk(guild_id), 'SK': commentary_sk(day)},
+                        UpdateExpression=' '.join(parts),
+                        ExpressionAttributeValues=values)
+
+
+# --- Player profiles --------------------------------------------------------------
+# One small item per player per server for facts that are neither a streak nor a
+# day: so far, whether the one-time explainer has gone out. Read once per
+# deferred live view (a GetItem), written once per player ever.
+
+PROFILE_SK = 'PROFILE'
+
+
+def get_profile(guild_id, user_id):
+    """The player's PROFILE item, or {} for a player who has none yet."""
+    resp = table().get_item(Key={'PK': player_pk(guild_id, user_id), 'SK': PROFILE_SK})
+    return resp.get('Item') or {}
+
+
+def mark_welcomed(guild_id, user_id):
+    """Record that the explainer has been shown to this player in this server.
+    Keeps the first timestamp: /help, the sticky's How it works button and the
+    automatic first-click follow-up all call this, and only the earliest matters."""
+    table().update_item(
+        Key={'PK': player_pk(guild_id, user_id), 'SK': PROFILE_SK},
+        UpdateExpression='SET welcomed_at = if_not_exists(welcomed_at, :now)',
+        ExpressionAttributeValues={':now': _now_iso()},
+    )
+
+
 # --- Suggestions ------------------------------------------------------------------
 # A forwarded /suggest is a promise: if the game ships, whoever asked should hear
 # about it, in the server they asked from. The dev-channel post can't keep it --
@@ -1015,10 +1136,6 @@ def suggestion_sk(guild_id, user_id, name):
     test fixture replayed, lands on the item already there rather than stacking
     duplicates. Case and spacing don't make a different suggestion."""
     return f"{guild_id}#{user_id}#{' '.join(str(name).lower().split())}"
-
-
-def _now_iso():
-    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
 
 
 def record_suggestion(guild_id, user_id, name, url='', text='', suggested_at=None):

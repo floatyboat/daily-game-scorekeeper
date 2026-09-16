@@ -11,6 +11,7 @@ on:
       - 'src/game_parser.py'
       - 'src/scoreboard.py'
       - 'src/store.py'
+      - 'src/commentary.py'
       - '.github/workflows/deploy.yml'
 
 jobs:
@@ -47,14 +48,14 @@ jobs:
         cd package && zip -r ../function.zip . && cd ..
         # -j flattens src/ away: the handler is "<module>.lambda_handler", so
         # these modules must sit at the zip root, not under src/.
-        zip -j function.zip src/${{ env.FILE_NAME }} src/game_parser.py src/scoreboard.py src/store.py
+        zip -j function.zip src/${{ env.FILE_NAME }} src/game_parser.py src/scoreboard.py src/store.py src/commentary.py
         echo "✅ Package created: $(ls -lh function.zip | awk '{print $5}')"
 
         echo "🔎 Verifying handler modules and vendored deps are at the zip root..."
         python3 - "$FILE_NAME" <<'PY'
         import sys, zipfile
         roots = {n.split("/")[0] for n in zipfile.ZipFile("function.zip").namelist()}
-        modules = {sys.argv[1], "game_parser.py", "scoreboard.py", "store.py"}
+        modules = {sys.argv[1], "game_parser.py", "scoreboard.py", "store.py", "commentary.py"}
         deps = {"requests", "dateutil", "PIL"}
         missing = sorted((modules | deps) - roots)
         if missing:
