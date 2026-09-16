@@ -18,8 +18,7 @@ from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
     build_avatar_pool, build_name_map, safe_guild_id, gather_streaks,
     gather_player_stats, is_sticky_message,
-    PLAY_BUTTON_CUSTOM_ID, MORE_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
-    HELP_BUTTON_CUSTOM_ID,
+    PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     TEXT_CHANNEL_TYPES, PERM_ADMINISTRATOR, PERM_MANAGE_GUILD, MAX_BUTTONS_PER_ROW,
     MAX_ENABLED_GAMES,
     MAX_MESSAGE_LENGTH, FLAG_EPHEMERAL, FLAG_IS_COMPONENTS_V2,
@@ -246,15 +245,15 @@ def build_stats_response(channel_id, user_id=None, guild_id=None, cfg=None):
 
 
 # --- /help and the one-time welcome ----------------------------------------------
-# One explainer, three doors: `/help`, the sticky's How it works button, and an
-# automatic ephemeral follow-up under a player's first live view. Built off the
-# live config every time, so it never describes a setting the server doesn't
-# have -- the scoring blurb in particular says what a result is worth HERE.
+# One explainer, two doors: `/help`, and an automatic ephemeral follow-up under a
+# player's first live view. Built off the live config every time, so it never
+# describes a setting the server doesn't have -- the scoring blurb in particular
+# says what a result is worth HERE.
 
 HELP_HEADING = "### ❓ How the scoreboard works"
 
 
-def _scoring_blurb(mode, board):
+def _scoring_blurb(mode, board, rotation):
     crown = 'takes the \U0001F451 on the morning board' if board else 'takes the \U0001F451'
     if mode == SCORING_PER_GAME:
         return ("each game pays **1 point plus one for every player you beat**; the "
@@ -262,7 +261,11 @@ def _scoring_blurb(mode, board):
     if mode == SCORING_OFF:
         return ("no points here: every score is ranked, best first, and the streaks "
                 "are the game.")
-    return ("first place in any of today's games is worth **the number of players "
+    # "today's games" is the rotation's own term for the games that score, so a
+    # server running without one says plain "any game"; the scale is the same
+    # either way (first place is worth the day's turnout).
+    where = "any of today's games" if rotation else 'any game'
+    return (f"first place in {where} is worth **the number of players "
             "who showed up today**, one fewer for each place below; the most points "
             f"across the day {crown}.")
 
@@ -305,7 +308,7 @@ def build_help_text(cfg):
         f"\U0001F3AE **Play**: pick a game from {'the sticky or ' if sticky else ''}`/play`, "
         f"then paste the share text it gives you into {channel}. That's it: the bot "
         "reads it from there.",
-        f"\U0001F3C6 **Points**: {_scoring_blurb(cfg['scoring'], board)}",
+        f"\U0001F3C6 **Points**: {_scoring_blurb(cfg['scoring'], board, cfg['rotation_enabled'])}",
         f"\U0001F504 **Today's games**: {rotation}",
         day,
         streaks,
@@ -338,9 +341,9 @@ def _mark_welcomed(guild_id, user_id, where):
 
 
 def handle_help(body):
-    """`/help` and the sticky's How it works button. Answered inline -- nothing
-    here reads a channel -- and the player is marked welcomed, so the automatic
-    first-click copy never follows something they have already read."""
+    """`/help`. Answered inline -- nothing here reads a channel -- and the player
+    is marked welcomed, so the automatic first-click copy never follows something
+    they have already read."""
     guild_id = interaction_guild_id(body)
     _mark_welcomed(guild_id, interaction_user_id(body), 'help')
     return build_help_response(guild_cfg(guild_id))
@@ -389,14 +392,10 @@ def interaction_user_id(body):
 def _wants_all(body):
     """True when the caller asked for the whole roster in one list -- the games
     on the sticky included -- rather than the everything-else list Play gives.
-
-    That is `/play all:true`, plus a click on a legacy More button: the sticky
-    stopped rendering one when Play became the complement of its game row, but
-    a client can still be holding a sticky from before that.
+    That is `/play all:true`, the only way in now that the sticky's More button
+    is gone.
     """
     data = body.get('data') or {}
-    if data.get('custom_id') == MORE_BUTTON_CUSTOM_ID:
-        return True
     return any(o.get('name') == 'all' and o.get('value')
                for o in data.get('options') or [])
 
@@ -1498,14 +1497,10 @@ def lambda_handler(event, context):
     # MESSAGE_COMPONENT (type 3) — sticky buttons + setup selects
     if body.get('type') == 3:
         custom_id = body.get('data', {}).get('custom_id', '')
-        # Both open the Play list; _wants_all reads the custom_id to decide
-        # whether it stays narrowed to today's rotation.
-        if custom_id in (PLAY_BUTTON_CUSTOM_ID, MORE_BUTTON_CUSTOM_ID):
+        if custom_id == PLAY_BUTTON_CUSTOM_ID:
             return _http(defer(ACTION_PLAY, body))
         if custom_id == SCORES_BUTTON_CUSTOM_ID:
             return _http(defer(ACTION_SCORES, body))
-        if custom_id == HELP_BUTTON_CUSTOM_ID:
-            return _http(guarded(handle_help, body))
         if (custom_id in (GAMES_SELECT_ID, COMMENTARY_SELECT_ID)
                 or custom_id.startswith(CHANNEL_SELECT_PREFIX)):
             return _http(admin_dispatch(handle_setup_component, body))

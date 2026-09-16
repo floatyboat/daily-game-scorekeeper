@@ -10,8 +10,8 @@ Adding a message kind is one Trigger entry: a `detect` returning the events it
 sees, a `render` turning them into text (or a board), a `sample` so the
 test-channel preview covers it, the cadence it runs on, and the key it is
 switched by. The engine does the rest -- dedup against what the day has already
-announced, the one-post-per-tick rule, the ping policy, the /setup menu,
-persistence.
+announced, the one-post-per-tick rule, the notification policy, the /setup
+menu, persistence.
 
 Cadences:
   HOURLY  the daily lambda's tick (lambda_function.commentary_tick): the
@@ -32,6 +32,14 @@ Kinds:
           lines of the same tick go beneath it as one more text display.
   FLAVOR  one-liners (first result, lead change, clean sweep, ties). They ride
           under whatever body posts, or post on their own when no body is due.
+
+How loud (Trigger.notify), quietest first: SILENT carries Discord's
+suppress-notifications flag, so it lands without a push for anyone; NOTIFY
+drops the flag but mentions nobody, so it notifies on each member's own channel
+setting (the midday board and the tie line, which are once-a-day-ish and worth
+noticing); PING also puts the people the render names into allowed_mentions
+(the last call and the nudge). A composed post takes the LOUDEST of the kinds
+that fired into it (see loudest), since one message carries one flag.
 
 Two rules gate every kind, whatever its cadence (see blocked): nothing posts
 before the day's board has (the morning board opens the conversation), and a
@@ -72,8 +80,8 @@ from game_parser import (
     shown_streak, total_points, SCORING_OFF, SCORING_PLACEMENT,
 )
 from scoreboard import (
-    MAX_ACTION_ROWS, MAX_BUTTONS_PER_ROW, MIDDAY_TITLE, build_name_map,
-    is_sticky_message, reference_date,
+    LOUDNESS, MAX_ACTION_ROWS, MAX_BUTTONS_PER_ROW, MIDDAY_TITLE, NOTIFY, PING,
+    SILENT, build_name_map, is_sticky_message, reference_date,
 )
 import store
 
@@ -223,6 +231,7 @@ class Post:
     mentions: list = field(default_factory=list)    # only these get notified
     event_ids: list = field(default_factory=list)   # marked announced once sent
     board: bool = False
+    notify: str = SILENT                            # SILENT, NOTIFY or PING
 
 
 @dataclass(frozen=True)
@@ -237,7 +246,9 @@ class Trigger:
         detect    callable(tick) -> [event]; pure, may read tick.state
         render    callable(events, tick) -> Rendered
         sample    callable(tick) -> [event]; fabricated, for the preview
-        ping      BODY only: notify the users the render names as mentions
+        notify    how loudly it arrives: SILENT (no push), NOTIFY (no mention,
+                  but no suppress flag either) or PING (BODY only, which also
+                  notifies the users the render names as mentions)
         default   the coded state before any /setup choice, like GameSpec.disabled:
                   every kind ships on except the nudge
         once      one event per day, id == key; not re-detected once announced
@@ -254,7 +265,7 @@ class Trigger:
     detect: object
     render: object
     sample: object
-    ping: bool = False
+    notify: str = SILENT
     default: bool = True
     once: bool = False
     waits: str = ANY
@@ -713,15 +724,15 @@ TRIGGERS = [
     # server streak only when nobody has played.
     Trigger('last_call', 'Last call', 'Streaks about to break, a few hours before the close',
             BODY, HOURLY, detect_last_call, render_last_call, sample_last_call,
-            ping=True, once=True, waits=NEVER),
+            notify=PING, once=True, waits=NEVER),
     Trigger('midday', 'Midday standings', "Today's scored games so far, once, at the midday hour",
             BOARD, HOURLY, detect_midday, render_midday, sample_midday, once=True,
-            waits=NEVER),
+            notify=NOTIFY, waits=NEVER),
     # Off until its cadence is settled: a nudge per player, each on the hour that
     # player goes quiet, put four pinging posts into a 40-message day (the
     # 2026-09-15 replay). A server that wants it says so in /setup commentary.
     Trigger('nudge', 'Points nudge', 'Ask someone back for the games they left open',
-            BODY, HOURLY, detect_nudge, render_nudge, sample_nudge, ping=True,
+            BODY, HOURLY, detect_nudge, render_nudge, sample_nudge, notify=PING,
             default=False, waits=OWN, headings=NUDGE_HEADINGS),
     Trigger('first_play', 'First result', "A welcome under someone's first ever result",
             FLAVOR, STICKY, detect_first_play, render_first_play, sample_first_play),
@@ -730,7 +741,7 @@ TRIGGERS = [
     Trigger('sweep', 'Clean sweep', 'One player alone in 1st in every contested game so far',
             FLAVOR, STICKY, detect_sweep, render_sweep, sample_sweep),
     Trigger('tie', 'Beatable ties', 'A tie for first that one better result would break',
-            FLAVOR, HOURLY, detect_tie, render_tie, sample_tie),
+            FLAVOR, HOURLY, detect_tie, render_tie, sample_tie, notify=NOTIFY),
 ]
 
 TRIGGERS_BY_KEY = {t.key: t for t in TRIGGERS}
@@ -789,18 +800,35 @@ def evaluate(tick, cadence):
     return compose(found, tick)
 
 
+def loudest(triggers):
+    """The level a composed post goes out at: the loudest of the kinds whose
+    words are actually IN it. A quiet flavor line riding under a pinging body is
+    already part of a message that pings, and a NOTIFY line under a SILENT body
+    would be suppressed by it, so the message takes the loudest of its parts
+    rather than the body's alone.
+
+    Only the parts that landed count. A losing body (the second BODY of a tick,
+    or flavor lines dropped for the board's budget) is left out of the post
+    entirely and waits for a later pass, so it must not raise the level of a
+    message it contributed nothing to -- which is how the midday board briefly
+    went out as a ping on an hour the nudge also fired."""
+    return max((t.notify for t in triggers), key=LOUDNESS.get, default=SILENT)
+
+
 def compose(found, tick):
     """One post out of everything that fired: the first body (or board) plus
     every flavor line. Shared with the preview, which composes one kind at a time."""
     body = next(((t, ev) for t, ev in found if t.kind != FLAVOR), None)
-    lines, ids = [], []
+    lines, ids, flavors = [], [], []
     for trigger, events in found:
         if trigger.kind != FLAVOR:
             continue
         lines += trigger.render(events, tick).lines
         ids += [e['id'] for e in events]
+        flavors.append(trigger)
     if body is None:
-        return Post(kind='flavor', content='\n'.join(lines), event_ids=ids)
+        return Post(kind='flavor', content='\n'.join(lines), event_ids=ids,
+                    notify=loudest(flavors))
     trigger, events = body
     rendered = trigger.render(events, tick)
     body_ids = [e['id'] for e in events]
@@ -812,15 +840,15 @@ def compose(found, tick):
             # the board's own id is announced, so they fire again next pass.
             with_lines = components + [{'type': 10, 'content': '\n'.join(lines)}]
             if over_budget(with_lines):
-                ids = []
+                ids, flavors = [], []
             else:
                 components = with_lines
         return Post(kind=trigger.key, components=components, event_ids=body_ids + ids,
-                    board=True)
+                    board=True, notify=loudest([trigger] + flavors))
     content = rendered.content + ('\n' + '\n'.join(lines) if lines else '')
     return Post(kind=trigger.key, content=content, components=button_rows(rendered.buttons),
-                mentions=list(rendered.mentions) if trigger.ping else [],
-                event_ids=body_ids + ids)
+                mentions=list(rendered.mentions) if trigger.notify == PING else [],
+                event_ids=body_ids + ids, notify=loudest([trigger] + flavors))
 
 
 def to_record(tick, post, sent):
@@ -839,16 +867,17 @@ def samples(tick):
     screen before it is switched on. Overrides and gates are ignored: the
     preview shows the whole menu.
 
-    Nobody is notified. The fabricated events name real players, so a pinging
-    kind would ping them for a message that is only a preview -- and because
-    overrides are ignored, that includes the nudge, which the server may not
-    have switched on at all. The mention still renders as text; it just carries
-    no allowed_mentions."""
+    Nobody is notified: every sample goes out SILENT with no allowed_mentions.
+    The fabricated events name real players, so a pinging kind would ping them
+    for a message that is only a preview -- and because overrides are ignored,
+    that includes the nudge, which the server may not have switched on at all.
+    The mention still renders as text; it just carries no allowed_mentions."""
     posts = []
     for trigger in TRIGGERS:
         events = trigger.sample(tick)
         if events:
             post = compose([(trigger, events)], tick)
             post.mentions = []
+            post.notify = SILENT
             posts.append(post)
     return posts
