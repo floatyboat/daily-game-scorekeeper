@@ -419,6 +419,9 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
                              write=not is_test and days_back >= 1))
 
         streaks = gather_streaks(gid, scored, results, games, cfg['minimum_players'])
+        # live only for the days_back=0 preview: that board's day is still
+        # open, so an empty one means "nobody has played yet", while the
+        # scheduled board's day is closed and means "nobody played".
         components = format_scoreboard_components(results, scored, puzzle_numbers,
                                                   minimum_players=cfg['minimum_players'],
                                                   streaks=streaks,
@@ -426,7 +429,8 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
                                                   rotation=rotation,
                                                   rotation_off=cfg['rotation_off_mode'],
                                                   names=build_name_map(messages),
-                                                  scoring=cfg['scoring'])
+                                                  scoring=cfg['scoring'],
+                                                  live=(days_back == 0))
         board_channel = test_channel_id if is_test else cfg['output_channel_id']
         response = send_message(board_channel, components=components)
         note('posted scoreboard')

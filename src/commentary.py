@@ -545,7 +545,7 @@ def render_midday(events, tick):
         tick.results, tick.today, tick.puzzle_numbers, title=MIDDAY_TITLE,
         minimum_players=cfg['minimum_players'], streaks=tick.streaks,
         game_overrides=cfg['game_overrides'], rotation=tick.rotation,
-        names=tick.names, scoring=cfg['scoring'], standings_only=True)
+        names=tick.names, scoring=cfg['scoring'], standings_only=True, live=True)
     hint = midday_hint(tick)
     if hint:
         with_hint = components + [{'type': 10, 'content': hint}]

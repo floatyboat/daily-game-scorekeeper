@@ -120,6 +120,21 @@ def _ephemeral(content, components=None):
     return {'type': 4, 'data': data}
 
 
+def empty_board_hint(channel_id, cfg):
+    """What an empty live board should say instead of its default nudge, or
+    None to keep it.
+
+    A live view parses the channel it was run in, so `/scoreboard` typed
+    anywhere else comes back empty however busy the day has been. That is the
+    one thing the board itself cannot know, and the only useful thing to say
+    about it, so it displaces the nudge rather than joining it.
+    """
+    home = cfg.get('input_channel_id')
+    if home and str(channel_id) != str(home):
+        return f'This reads the channel you ran it in. Scores go in <#{home}>.'
+    return None
+
+
 def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
     """Build today's scoreboard as an ephemeral Components V2 reply.
 
@@ -138,7 +153,8 @@ def build_scoreboard_response(channel_id, guild_id=None, cfg=None):
         title="Today's Scores", minimum_players=cfg['minimum_players'], streaks=streaks,
         game_overrides=cfg['game_overrides'], rotation=rotation,
         rotation_off=cfg['rotation_off_mode'], names=names,
-        scoring=cfg['scoring'],
+        scoring=cfg['scoring'], live=True,
+        empty_hint=empty_board_hint(channel_id, cfg),
     )
 
     # V2 messages can't have a content field, so the builder's output goes

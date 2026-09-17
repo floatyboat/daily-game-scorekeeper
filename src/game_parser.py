@@ -2033,7 +2033,7 @@ _REDUCTIONS = (
 )
 
 
-def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None, rotation=None, rotation_off='shown', names=None, scoring=SCORING_PLACEMENT, standings_only=False):
+def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None, rotation=None, rotation_off='shown', names=None, scoring=SCORING_PLACEMENT, standings_only=False, live=False, empty_hint=None):
     """Format the scoreboard as Discord Components V2, within Discord's caps.
 
     Renders the full board, measures it, and if it breaks either cap re-renders
@@ -2073,6 +2073,13 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     there, and the per-game breakdown is a tap away on the sticky. It makes
     `rotation_off` moot, since neither games section renders either way.
 
+    live marks a board whose day is still open (the Scores button, the midday
+    standings, a days_back=0 preview) rather than the closed day the posted
+    board scores. It changes nothing about a day that was played: the whole of
+    its effect is the empty board (empty_board_lines), which has to say "nobody
+    has played yet" on one and "nobody played" on the other. empty_hint
+    replaces that board's closing line with the caller's own.
+
     Returns a list[dict] suitable for the 'components' field in a Discord message.
     """
     style, applied = _FULL_STYLE, set()
@@ -2080,7 +2087,7 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
         components = _render_scoreboard(
             results, reference_date, puzzle_numbers, title, minimum_players,
             streaks, game_overrides, rotation, rotation_off, names, style,
-            scoring, standings_only)
+            scoring, standings_only, live, empty_hint)
         over = over_budget(components)
         if not over:
             return components
@@ -2101,10 +2108,95 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
             return components
 
 
+# --- The empty board ---------------------------------------------------------
+# A day with nothing on it used to get "No results found!" and nothing else,
+# on two surfaces that don't mean the same thing by it: a live view (the Scores
+# button, the midday standings, a days_back=0 preview) is a day still open,
+# where nobody has played YET, and the posted board is a day that is over.
+# Each gets its own headline, drawn from a small pool by the date so a run of
+# quiet days doesn't read like a stuck record, and a subtext line naming the
+# next thing the reader can do about it. The accent goes gray with them: gold
+# on this board means the day was scored, and this one wasn't.
+EMPTY_LIVE_EMOJI = '\u23F3'
+EMPTY_LIVE_LINES = (
+    'No scores yet today.',
+    'Nothing on the board yet today.',
+    'The board is still empty today.',
+)
+EMPTY_CLOSED_EMOJI = '\U0001F997'
+EMPTY_CLOSED_LINES = (
+    'Nobody played this one.',
+    'A quiet day: nobody scored.',
+    'This day went unplayed.',
+)
+EMPTY_LIVE_NUDGE = 'Post a result in this channel and it lands on the board right away.'
+EMPTY_CLOSED_NUDGE = "Today's board is wide open. The first result of the day takes the lead."
+# How many of the day's games the live empty board names before it stops
+# counting them out, the same cap the sticky's own game row keeps.
+EMPTY_GAMES_SHOWN = 5
+
+
+def empty_board_lines(reference_date, games, rotation, streaks, live, hint=None):
+    """The body of a board with no results on it: a headline, the day's games,
+    and one line of what to do next.
+
+    Returns (lines, closing): everything that sits directly under the heading,
+    and the one line that closes the board. They are split because the day's
+    streak callouts go between them -- a broken streak is news about the day,
+    and the closing line is what to do about the next one, so it reads last.
+
+    live is "the day this board covers is still open" -- the Scores button and
+    the midday standings, against the closed day the posted board scores. It
+    decides every line here: a closed day is told plainly that nobody played,
+    an open one that nobody has played yet, and only an open day has "today's
+    games" to name at all, since a closed board's games and puzzle numbers are
+    that day's rather than this one's.
+
+    hint replaces the closing line with the caller's own (interaction_lambda
+    points at the scoreboard channel when the view was run somewhere else).
+    """
+    pool = EMPTY_LIVE_LINES if live else EMPTY_CLOSED_LINES
+    emoji = EMPTY_LIVE_EMOJI if live else EMPTY_CLOSED_EMOJI
+    # Stable for the day, like every other pick the app makes from a pool: two
+    # clicks an hour apart are the same empty board, not two different ones.
+    # Seeded on the date as a string rather than its ordinal: consecutive ints
+    # land on correlated draws from a pool this small, which is exactly the run
+    # of days a pool is here to break up.
+    day = getattr(reference_date, 'date', lambda: reference_date)()
+    lines = [f'{emoji} **{random.Random(f"empty-board:{day}").choice(pool)}**']
+
+    if live and games:
+        # Ordered the way every other list of games in the app is ordered, so
+        # the names here are the ones the sticky is already showing. "Today's
+        # games" is only true of a rotation day, where the day really does have
+        # a set of its own; an unrestricted server gets the same few names under
+        # a label that doesn't overclaim what they are.
+        rot = set(rotation) if rotation is not None else None
+        playable = sorted((g for g in games if rot is None or g.key in rot),
+                          key=lambda g: game_sort_key(g, {}, streaks))
+        named = [f'{g.emoji} {g.title}' for g in playable[:EMPTY_GAMES_SHOWN]]
+        if named:
+            rest = len(playable) - len(named)
+            label = "Today's games" if rot is not None else 'Games to play'
+            lines.append(f"-# {label}: {', '.join(named)}"
+                         f"{f' and {rest} more' if rest else ''}")
+
+    streak = shown_streak((streaks or {}).get('server', 0))
+    if hint:
+        closing = hint
+    elif live and streak:
+        # The heading is already showing the number; what it doesn't say is
+        # what a day with nothing on it would cost.
+        closing = f'That {streak}-day streak needs one result today.'
+    else:
+        closing = EMPTY_LIVE_NUDGE if live else EMPTY_CLOSED_NUDGE
+    return lines, f'-# {closing}'
+
+
 def _render_scoreboard(results, reference_date, puzzle_numbers, title,
                        minimum_players, streaks, game_overrides, rotation,
                        rotation_off, names, style, scoring=SCORING_PLACEMENT,
-                       standings_only=False):
+                       standings_only=False, live=False, empty_hint=None):
     """One pass of the board at a given style. See format_scoreboard_components."""
     games = build_games(puzzle_numbers, game_overrides)
     rot = set(rotation) if rotation is not None else None
@@ -2124,9 +2216,13 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
         # Break callouts still render: a no-results day is exactly when every
         # alive streak snaps. There is no scores section to sit at the foot of,
         # so they go at the foot of the only container there is.
-        return [{"type": 17, "accent_color": HEADER_COLOR, "components": header_children + [
-            {"type": 10, "content": "No results found!"},
-        ] + break_child}]
+        empty, closing = empty_board_lines(reference_date, games, rotation,
+                                           streaks, live, empty_hint)
+        return [{"type": 17, "accent_color": OTHER_GAMES_COLOR,
+                 "components": header_children
+                 + [{"type": 10, "content": "\n".join(empty)}]
+                 + break_child
+                 + [{"type": 10, "content": closing}]}]
 
     # --- Points container (gold accent) ---
     # The same fold the archive freezes (points_per_game, via total_points):
