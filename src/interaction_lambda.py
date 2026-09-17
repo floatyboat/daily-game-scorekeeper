@@ -12,7 +12,7 @@ from game_parser import (
     build_games, compute_puzzle_numbers, format_scoreboard_components,
     make_timestamp_checker, game_sort_key, match_suggestion, GAME_SPECS,
     spec_enabled, game_link_button, sticky_row_games,
-    SCORING_PER_GAME, SCORING_OFF, TIER_EMOJI, PLACE_EMOJI, BELOW_PODIUM,
+    SCORING_PER_GAME, SCORING_OFF, tier_examples, ACED, PLACE_EMOJI, BELOW_PODIUM,
 )
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
@@ -317,11 +317,13 @@ def build_help_text(cfg):
     if cfg['reactions_enabled'] and sticky:
         which = (" in today's games" if cfg['reactions_rotation_only']
                  and cfg['rotation_enabled'] else '')
-        tiers = ', '.join(f'{emoji} {tier}' for tier, emoji in TIER_EMOJI.items())
+        tiers = dict(tier_examples())
+        listed = ', '.join(f'{emoji} {tier}' for tier, emoji in tiers.items())
         lines.append(f"{BELOW_PODIUM} **Reactions**: each result{which} gets where it "
                      f"placed when it was posted ({' '.join(PLACE_EMOJI)}, {BELOW_PODIUM} "
-                     f"otherwise), and a good one gets how it went too ({tiers}), plus a "
-                     "flourish or two on the best of them.")
+                     f"otherwise), and how it went on top of that ({listed}), plus a "
+                     f"flourish or two on the best of them. Every face but the "
+                     f"{tiers[ACED]} is picked at random, so no two days read the same.")
     lines.append("-# `/play` today's games · `/stats` your streaks · `/suggest` propose a "
                  "game · `/help` this again")
     return '\n'.join(lines)
@@ -1152,11 +1154,12 @@ def handle_setup(body, guild_id):
         note = '' if merged['sticky_enabled'] else ('\n-# The sticky is off, so nothing '
                                                     'reacts to results.')
         return _ephemeral(
-            f"{BELOW_PODIUM} Reactions on for {which} — every new result gets one: "
+            f"{BELOW_PODIUM} Reactions on for {which}: every new result gets one, "
             f"where it placed ({' '.join(PLACE_EMOJI)}, {BELOW_PODIUM} otherwise), and how "
-            f"it went on top of that when it went well "
-            f"({' '.join(TIER_EMOJI.values())}), with a random flourish or two piled on a "
-            "good one or an ace.\n-# Needs Add Reactions in the input "
+            f"it went on top of that, from an ace down to a rough one "
+            f"({' '.join(e for _, e in tier_examples())} and friends: every face but the "
+            f"{dict(tier_examples())[ACED]} is picked at random), with a flourish or two "
+            "piled on a good one or an ace.\n-# Needs Add Reactions in the input "
             "channel. Most servers give it "
             f"to everyone; where yours doesn't, grant it to the bot's role.{note}")
 

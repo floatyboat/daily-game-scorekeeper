@@ -1254,12 +1254,11 @@ def is_poop(metric, score, total):
 # --- How a single result went ---------------------------------------------------
 # The sticky pass reacts to every fresh result with one to four emoji
 # (sticky_lambda.react_to_results): the place it took the moment it was posted,
-# then its tier, then a flourish or two if it earned one. Aced and poop read the same in every game; good, medium and
-# bad come from the game's own breakpoints (GameSpec.breakpoints). The two
-# unhappy tiers are deliberately silent: bad and poop are still computed (poop
-# is what withholds a place), but neither carries an emoji, so a rough result
-# is never publicly labelled as one. Never silent, though -- a result those
-# rules would leave bare takes the thumbs up on its own.
+# then its tier, then a flourish or two if it earned one. Aced and poop read
+# the same in every game; good, medium and bad come from the game's own
+# breakpoints (GameSpec.breakpoints). Every tier speaks, the rough ones
+# included: a bad day gets a wince and a failed one gets a poop, which is the
+# bot noticing rather than scolding -- the pools are wry, never cutting.
 
 ACED, GOOD, MEDIUM, BAD, POOP = 'aced', 'good', 'medium', 'bad', 'poop'
 
@@ -1276,10 +1275,25 @@ MEDALS = ('\U0001F451', '\U0001F948', '\U0001F949')
 # the same characters either way, and only first place differs.
 PLACE_EMOJI = ('\U0001F947', '\U0001F948', '\U0001F949')
 
-# Only the tiers worth saying out loud. A tier missing here reacts with
-# nothing, which is what keeps bad and poop silent; it is also what /help and
-# /setup read to say which reactions a result can get, so they stay in step.
-TIER_EMOJI = {ACED: '\U0001F4AF', GOOD: '\U0001F60E', MEDIUM: '\U0001F642'}
+# What each tier reacts with: a pool drawn from at random (result_reactions),
+# so two good days in a row don't read the same. The ace is the one fixed
+# point -- 100 is the only thing a perfect result should ever say -- so its
+# pool holds that alone. The first entry of each is its representative, which
+# is what /help and /setup show (tier_examples), and the order here is the
+# order they list, best first. Same rules as FLOURISH below: every entry is a
+# single code point needing no variation selector, and nothing here is a
+# game's emoji, a place or one of the app's own signs.
+TIER_EMOJI = {
+    ACED: ('\U0001F4AF',),
+    GOOD: ('\U0001F60E', '\U0001F60F', '\U0001FAE1', '\U0001F44C',
+           '\U0001F90C', '\U0001F920', '\U0001F60C', '\U0001F63C'),
+    MEDIUM: ('\U0001F642', '\U0001F60A', '\U0001F605', '\U0001F937',
+             '\U0001F643', '\U0001F197', '\U0001F600'),
+    BAD: ('\U0001F62C', '\U0001F616', '\U0001FAE0', '\U0001F635',
+          '\U0001F915', '\U0001FAE3', '\U0001F974', '\U0001F648'),
+    POOP: ('\U0001F4A9', '\U0001F480', '\U0001FAA6', '\U0001F198',
+           '\U0001FAAB', '\U0001F972', '\U0001FAE5'),
+}
 BELOW_PODIUM = '\U0001F44D'
 
 # Where a fermi result stops being merely good and becomes its ace: a finish in
@@ -1295,7 +1309,7 @@ FERMI_ACE = 1
 # Every entry is a single code point that needs no variation selector, so what
 # Discord stores is exactly what we sent and the pass's own dedup sees it.
 FLOURISH = ('\U0001F389', '\U0001F973', '\U0001F38A', '\U0001F64C', '\U0001F44F',
-            '\u2B50', '\u2728', '\u26A1', '\U0001F680', '\U0001F4AA',
+            '\u2B50', '\u2728', '\U0001F31F', '\U0001F680', '\U0001F4AA',
             '\U0001F929', '\U0001F92F', '\U0001F4A5', '\U0001F9E0')
 # How many a tier is worth. Only the top two earn one: a flourish everywhere is
 # just noise with extra steps.
@@ -1367,32 +1381,47 @@ def place_at_post(metric, score, earlier):
     return 1 + sum(1 for s in earlier if score_sort_key(metric, s) < key)
 
 
+def tier_examples():
+    """(tier, emoji) for every tier that reacts, best first: the first entry of
+    each TIER_EMOJI pool, which is the one /help and /setup show. They can only
+    show a sample, since the rest of the pool is drawn from at random, so this
+    is here to keep those blurbs in step with the pools rather than having them
+    reach into the shape of TIER_EMOJI themselves."""
+    return [(tier, pool[0]) for tier, pool in TIER_EMOJI.items()]
+
+
 def result_reactions(tier, place, seed=''):
     """The emoji a result is reacted with, in order: its place -- a medal on the
     podium, a thumbs up below it -- then its tier, then a flourish or two if it
     was good enough to earn one. A poop gets no place, as it gets no medal on
-    the board, and neither does a result with no place. Tiers outside TIER_EMOJI
-    (bad and poop) say nothing, so a bad result is left with just the place it
-    took.
+    the board, and neither does a result with no place.
 
-    Never nothing, though: a result those rules would leave bare -- a poop, or
-    a bad or untiered result that is first in its game -- comes away with the
-    thumbs up alone. It says "counted" rather than "well played", which is the
-    one thing every result has earned, and it keeps no reaction meaning what it
-    should: the bot didn't read the message.
+    Every tier speaks, drawn at random from its own TIER_EMOJI pool, except the
+    ace: 100 is the only thing a perfect result says, so its pool is that one
+    emoji. A tier of None -- a game with nothing to measure -- still says
+    nothing.
 
-    The flourishes (FLOURISH_COUNT: two for an ace, one for a good result) are
-    drawn from FLOURISH on `seed` -- anything stable per result; the sticky
-    passes the message id. Stable is the whole point: the pass is stateless and
+    Never nothing, though: a result those rules would leave bare -- an untiered
+    one that is first in its game, the only way left to come away empty --
+    takes the thumbs up alone. It says "counted" rather than "well played",
+    which is the one thing every result has earned, and it keeps no reaction
+    meaning what it should: the bot didn't read the message.
+
+    Both draws ride on `seed` -- anything stable per result; the sticky passes
+    the message id. Stable is the whole point: the pass is stateless and
     re-runs over the same result for as long as REACTION_WINDOW holds it open,
     skipping the emoji it already added, so a fresh draw each time would pile a
-    new flourish on every minute instead of leaving the first two alone.
+    new emoji on every minute instead of leaving the first ones alone. The tier
+    draw takes `seed + tier` rather than the flourish's bare `seed`, which
+    keeps the two independent: a result whose tier moves between passes (a
+    percentage game whose ceiling shifts) re-draws its tier without disturbing
+    the flourishes already on it.
     """
     emojis = []
     if place and tier != POOP:
         emojis.append(PLACE_EMOJI[place - 1] if place <= len(PLACE_EMOJI) else BELOW_PODIUM)
     if tier in TIER_EMOJI:
-        emojis.append(TIER_EMOJI[tier])
+        emojis.append(random.Random(seed + tier).choice(TIER_EMOJI[tier]))
     emojis = emojis or [BELOW_PODIUM]
     count = FLOURISH_COUNT.get(tier, 0)
     if count:

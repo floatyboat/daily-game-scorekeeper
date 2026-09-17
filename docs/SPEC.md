@@ -506,7 +506,8 @@ players are (the test channel on a test run).
 
 With `reactions_enabled` on (off by default), the sticky pass reacts to every fresh result
 with one to four emoji, in this order: where it placed in its game the moment it was
-posted, how it went, then a flourish or two if it was good enough to earn one.
+posted, how it went (drawn at random from that tier's pool), then a flourish or two if it
+was good enough to earn one.
 `sticky_lambda.react_to_results` does the Discord side; the rules are pure, in `game_parser`.
 
 - **Where it placed** (`place_at_post`): 1 plus every earlier first result in that game
@@ -521,24 +522,32 @@ posted, how it went, then a flourish or two if it was good enough to earn one.
   cryptic with no hints, a `score` or `maptap` result at its ceiling (`total`), a Fermi in
   the world's top 1% (`FERMI_ACE`). Anything else is good, medium or bad against the
   game's `breakpoints` (see Games and per-server enabling). A Travle that missed the target is
-  bad; a Gerrymandle won with the timer hidden has no time to measure, so no tier. Only
-  the happy tiers carry an emoji (`TIER_EMOJI`): 💯 aced, 😎 good, 🙂 medium. Bad and poop
-  are still computed -- poop is what withholds a place -- but react with nothing, so a
-  rough result is never publicly labelled as one: a bad result keeps just its place, and a
-  poop falls through to the thumbs up below.
-- **Never nothing** (`result_reactions`). A result the two rules above would leave bare --
-  a poop, or a bad or untiered result that is first in its game -- gets 👍 on its own. It
-  says "counted", not "well played", and it keeps no reaction meaning the one thing it
-  should: the bot didn't read the message.
+  bad; a Gerrymandle won with the timer hidden has no time to measure, so no tier. Every
+  tier carries an emoji, **drawn at random from its own pool** (`TIER_EMOJI`), seeded off
+  the message id like the flourish below, so two good days in a row don't read the same: 💯 aced, then
+  😎 good, 🙂 medium, 😬 bad and 💩 poop and their pool-mates. The ace is the one
+  fixed point, a pool of one, because 100 is the only thing a perfect result should say.
+  The rough tiers speak too: the bot noticing a bad day, not scolding it, so the bad and
+  poop pools are wry rather than cutting. The first entry of each pool is its
+  representative, which is what `/help` and `/setup` print (`tier_examples`), so those
+  blurbs stay in step with the pools without reaching into their shape.
+- **Never nothing** (`result_reactions`). With every tier speaking, the only result left
+  bare is an untiered one that is first in its game (no place, no tier); it gets 👍 on
+  its own. It says "counted", not "well played", and it keeps no reaction meaning the one
+  thing it should: the bot didn't read the message.
 - **A flourish on top** (`FLOURISH`, `FLOURISH_COUNT`): two more emoji on an ace, one on a
   good result, nothing below that, drawn at random from a bank of fourteen so two aces in a
   row don't read the same. The bank holds no game's emoji, no place, no tier and none of
   the app's own signs (🔥 streaks, 🏆 points, 💔 a broken streak), so a flourish can
-  only mean "nice one"; every entry is a single code point needing no variation selector,
-  so what Discord stores back is exactly what was sent. **The draw is seeded on the message
-  id**, which is what makes it safe: the pass is stateless and re-runs over the same result
-  for as long as `REACTION_WINDOW` holds it open, skipping what it already added, so an
-  unseeded draw would pile a fresh flourish on every minute.
+  only mean "nice one"; the same rules govern every `TIER_EMOJI` pool, and every entry of
+  both is a single code point needing no variation selector, so what Discord stores back is
+  exactly what was sent. **Both draws are seeded on the message id**, which is what makes
+  them safe: the pass is stateless and re-runs over the same result for as long as
+  `REACTION_WINDOW` holds it open, skipping what it already added, so an unseeded draw
+  would pile a fresh emoji on every minute. The tier draw takes `seed + tier` and the
+  flourish the bare `seed`, keeping the two independent: a result whose tier moves between
+  passes (a percentage game whose ceiling shifts) re-draws its tier without disturbing the
+  flourishes already on it.
 - **Which results.** Matches are walked oldest first. A player's first result in a game is
   the one that counts, as on the board, and a repost gets nothing. The Wordle app's own
   messages count toward places but get no reaction: several players share one, and the app
