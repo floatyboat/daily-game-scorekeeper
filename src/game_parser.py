@@ -502,12 +502,13 @@ class GameSpec:
                 stops being medium, for the reaction the sticky pass puts on
                 it (performance_tier). In the metric's own number, lower is
                 better -- guesses, connections mistakes, cryptic weighted
-                hints, time and timed_win seconds, travle +N, reverse_score
-                the score -- except score and maptap, which compare the
-                result's percentage of `total`, higher is better. That is why
-                every score game carries its real ceiling in `total`: no
-                score game's board line prints it. None: no good, medium or
-                bad, though an aced or pooped result still reads as one.
+                hints, time and timed_win seconds, travle +N, fermi the
+                percentile its share reports -- except score and maptap, which
+                compare the result's percentage of `total`, higher is better.
+                That is why every score game carries its real ceiling in
+                `total`: no score game's board line prints it. None: no good,
+                medium or bad, though an aced or pooped result still reads as
+                one.
     """
     key: str
     emoji: str
@@ -715,6 +716,21 @@ def _parse_travle(m, content):
         return (0, int(plus_str) + penalty, hints, -checkmarks), {}
     tier = 1 if (checkmarks or '\U0001F7E9' in squares) else 2
     return (tier, int(away_str) + penalty, hints, -checkmarks), {}
+
+
+def _parse_fermi(m, content):
+    """(multiple, percentile) -- how far off the day's estimates were, and the
+    share of the field that did better.
+
+    The multiple ranks (it is the finer number, and the one the share leads
+    with); the percentile is what the reaction reads, because the multiple's
+    scale belongs to the day's puzzle rather than to the player -- a nasty
+    prompt leaves the whole world in the tens, and 37x can be a good day. It is
+    optional: a share without one still scores, it just has no tier.
+    """
+    pct = m.group(2)
+    return (float(m.group(1).replace(',', '')),
+            float(pct) if pct is not None else None), {}
 
 
 # --- The single source of truth ------------------------------------------------
@@ -935,26 +951,34 @@ GAME_SPECS = [
         parse=lambda m, c: (int(m.group(1)), {}),
     ),
     GameSpec(
-        key='fermi', emoji='⚛️', title='Fermi', metric='reverse_score',
+        key='fermi', emoji='⚛️', title='Fermi', metric='fermi',
         total=0, url='https://fermi.gg', disabled=True,
-        breakpoints=(1.5, 3),
+        breakpoints=(25, 50),
         puzzle=lambda ref: (ref - datetime(2026, 7, 27)).days + 1,
         # Three estimation rounds, each scored by how far off the guess was as a
-        # multiple of the true answer, so 1.00× is exact and lower is better --
-        # a reverse score. No metric of its own: every metric but score,
-        # connections and maptap already ranks ascending, and the plain-number
-        # display prints it as is. No poop either; there is no fail state.
+        # multiple of the true answer, so 1.00× is exact and lower is better.
+        # The summary line carries both halves of the score -- '37.4× score ·
+        # top 66%' -- and both are kept: the multiple ranks the board, the
+        # percentile tiers the reaction (_parse_fermi says why), which is the
+        # metric of its own this needs. Its breakpoints are therefore a place in
+        # the field, not a multiple: the top quarter is good, the top half
+        # medium, and a top 1% finish is the ace -- the nearest thing a game
+        # scored against the whole world has to a perfect round. No poop; there
+        # is no fail state.
         #
         # The share text opens 'Fermi · No. 49' while the site's own header
         # writes '#049', so the separator class and the optional 'No.' take
         # either and 0* eats the padding. The anchor doing the real work is the
         # second half: '× score' appears once, on the summary line, and never on
         # the per-round lines above it ('01  9.29×'), so the lazy span between
-        # the two cannot pick up a round by mistake.
+        # the two cannot pick up a round by mistake. The multiple takes commas
+        # ('1,600× score'), which a bare \d+ would have read as 600, and the
+        # percentile is optional so an odd share still scores.
         pattern=lambda ref, n: re.compile(
-            rf'Fermi[\s·#–—-]*(?:No\.?\s*)?0*{n}\b.*?(\d+(?:\.\d+)?)×\s*score',
+            rf'Fermi[\s·#–—-]*(?:No\.?\s*)?0*{n}\b.*?'
+            rf'(\d[\d,]*(?:\.\d+)?)×\s*score(?:[\s·]*top\s*<?\s*(\d+(?:\.\d+)?)%)?',
             re.IGNORECASE | re.DOTALL),
-        parse=lambda m, c: (float(m.group(1)), {}),
+        parse=_parse_fermi,
     ),
     GameSpec(
         key='sizeitup', emoji='📏', title='Size It Up', metric='score',
@@ -1180,6 +1204,12 @@ def score_sort_key(metric, score):
         return -score
     if metric == 'maptap':
         return (-score[0], -score[1])
+    if metric == 'fermi':
+        # The multiple alone: the percentile beside it is the same number at a
+        # coarser resolution (both come off one day's puzzle), so it can only
+        # merge players the multiple separates, and a share that carried none
+        # would have nothing to compare.
+        return score[0]
     return score
 
 
@@ -1252,6 +1282,11 @@ PLACE_EMOJI = ('\U0001F947', '\U0001F948', '\U0001F949')
 TIER_EMOJI = {ACED: '\U0001F4AF', GOOD: '\U0001F60E', MEDIUM: '\U0001F642'}
 BELOW_PODIUM = '\U0001F44D'
 
+# Where a fermi result stops being merely good and becomes its ace: a finish in
+# the world's top 1%, the closest a game scored against everyone who played it
+# comes to the perfect round the other games ace on.
+FERMI_ACE = 1
+
 # The flourish a standout result picks up on top of its tier and place, drawn
 # at random so two aces in a row don't read the same. Nothing here is a game's
 # emoji, a place, a tier or one of the app's own signs (\U0001F525 streaks,
@@ -1275,11 +1310,11 @@ def performance_tier(game, score):
     ACED is the perfect result of the games that have one: a guesses game in
     one, a connections grid without a mistake (a VERT ranks above that, so it
     counts too), a cryptic with no hints, a score or maptap result at its
-    ceiling (`total`). Anything else is measured against
-    game.breakpoints (good, medium): at least as good as `good` is GOOD, at
-    least as good as `medium` is MEDIUM, worse is BAD. A travle that missed the
-    target is BAD whatever its count, and a gerrymandle won with the timer
-    hidden has no time to measure, so no tier. No breakpoints -- or a
+    ceiling (`total`), a fermi in the world's top 1%. Anything else is measured
+    against game.breakpoints (good, medium): at least as good as `good` is
+    GOOD, at least as good as `medium` is MEDIUM, worse is BAD. A travle that
+    missed the target is BAD whatever its count, and a gerrymandle won with the
+    timer hidden has no time to measure, so no tier. No breakpoints -- or a
     percentage game with no ceiling to take a share of -- is no tier either.
     """
     metric, total = game.metric, game.total
@@ -1289,7 +1324,8 @@ def performance_tier(game, score):
             or (metric == 'connections' and score[0] <= 0)
             or (metric == 'cryptic' and score[1] == 0)
             or (metric in PERCENT_METRICS and total
-                and (score if metric == 'score' else score[0]) >= total)):
+                and (score if metric == 'score' else score[0]) >= total)
+            or (metric == 'fermi' and score[1] is not None and score[1] <= FERMI_ACE)):
         return ACED
     if not game.breakpoints:
         return None
@@ -1309,7 +1345,13 @@ def performance_tier(game, score):
         value = score[3]
     elif metric in ('connections', 'cryptic'):
         value = score[0]
-    else:  # guesses, time, reverse_score: the score is the number
+    elif metric == 'fermi':
+        # The percentile, not the multiple: see _parse_fermi. A share that
+        # reported none leaves the result untiered rather than guessed at.
+        if score[1] is None:
+            return None
+        value = score[1]
+    else:  # guesses, time: the score is the number
         value = score
     return GOOD if value <= good else MEDIUM if value <= medium else BAD
 
@@ -1730,7 +1772,13 @@ def _format_game_players(game_scores, metric, total, names=None,
             score_str = f"{hints}{out_of}"
             if letters:
                 score_str += f" ({letters} letter" + ("s)" if letters != 1 else ")")
-        else:  # guesses, reverse_score -- a plain number, lower wins
+        elif metric == 'fermi':
+            # The multiple the share leads with. The percentile rides along in
+            # the score for the reaction's sake, and stays off the line: it is
+            # the same result said twice, and the world's field is not what
+            # this board ranks.
+            score_str = f'{current_score[0]}'
+        else:  # guesses -- a plain number, lower wins
             if total and current_score > total:
                 current_score = 'X'
             score_str = f"{current_score}{out_of}"

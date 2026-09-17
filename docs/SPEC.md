@@ -189,10 +189,12 @@ afterwards; every reply from them says so.
 - `GameSpec.breakpoints` is `(good, medium)`: where a result stops being good and where it
   stops being medium, for its reaction (`game_parser.performance_tier`, see Reactions). In
   the metric's own number, lower is better: guesses, connections mistakes, cryptic weighted
-  hints, `time` and `timed_win` seconds, travle +N, `reverse_score` the score. `score` and
-  `maptap` compare the result's percentage of `total` instead, higher is better, so every
-  score game carries its real ceiling in `total` (Chronophoto 5000, Krillion 700, Size It
-  Up 500, MapTap 1000), and a result at that ceiling is aced. No score game's board line
+  hints, `time` and `timed_win` seconds, travle +N, Fermi the percentile its share reports
+  (`top 66%`) rather than the multiple it ranks on, whose scale belongs to the day's puzzle
+  and not to the player. `score` and `maptap` compare the result's percentage of `total`
+  instead, higher is better, so every score game carries its real ceiling in `total`
+  (Chronophoto 5000, Krillion 700, Size It Up 500, MapTap 1000), and a result at that
+  ceiling is aced. No score game's board line
   prints its total — the line is the
   bare number, while guesses, connections and cryptic lines keep their "/N" — so the
   ceiling never reads as a fraction. A spec without breakpoints gets no good, medium or bad.
@@ -516,9 +518,9 @@ posted, how it went, then a flourish or two if it was good enough to earn one.
 - **How it went** (`performance_tier`). A poop is `is_poop`, so the reaction and the
   board's medal agree. Aced is the perfect result of the games that have one: a `guesses`
   game in 1, a connections grid with no mistakes (a VERT, which ranks above that, too), a
-  cryptic with no hints, a `score` or `maptap` result at its ceiling (`total`). Anything
-  else is good, medium or bad against the game's
-  `breakpoints` (see Games and per-server enabling). A Travle that missed the target is
+  cryptic with no hints, a `score` or `maptap` result at its ceiling (`total`), a Fermi in
+  the world's top 1% (`FERMI_ACE`). Anything else is good, medium or bad against the
+  game's `breakpoints` (see Games and per-server enabling). A Travle that missed the target is
   bad; a Gerrymandle won with the timer hidden has no time to measure, so no tier. Only
   the happy tiers carry an emoji (`TIER_EMOJI`): 💯 aced, 😎 good, 🙂 medium. Bad and poop
   are still computed -- poop is what withholds a place -- but react with nothing, so a
