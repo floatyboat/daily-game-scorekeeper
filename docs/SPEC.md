@@ -451,8 +451,15 @@ players are (the test channel on a test run).
   Replays of real days showed the lead flipping on every result through the first two
   hours at 2 to 6 points, and shared leads flipping back within minutes; this rule kept
   the two or three changes a day that were news. *Clean sweep*: one player sole first in
-  every contested (≥ 2 players) scored game, at least two of them. How a single result
-  went is no line at all: it is that result's own reaction (see Reactions). *Tie*: a scored
+  most of the day's scored games — a strict majority of the slate (`tick.scored`, so the
+  rotation when there is one) and never fewer than `SWEEP_MIN_GAMES` (3). The bar is a
+  share of the day, not a count of results, because measuring it against what had been
+  played meant announcing whoever was in front of the first two results of the morning;
+  a five-game rotation now asks for three games, a three-game one for all three. Only
+  contested (≥ 2 players) games count toward it, and the line says “a clean sweep in the
+  making” only while that player holds every contested game — otherwise it just says how
+  much of the day they have. How a single result went is no line at all: it is that
+  result's own reaction (see Reactions). *Tie*: a scored
   `guesses`/`connections`/`cryptic` game whose best non-poop score is shared and beatable,
   with what first outright would pay. Every line has two or three phrasings, picked by a
   hash of the day and the event, so a retried pass repeats itself rather than rewording.

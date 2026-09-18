@@ -109,6 +109,13 @@ LAST_CALL_MAX_PLAYERS = 40
 # Lead change: a "lead" of one point is noise.
 LEAD_MIN_POINTS = 2
 
+# Clean sweep: how much of the day it takes. The bar is a share of the day's
+# scored games, not a count of results, so a five-game rotation asks for three
+# and a sixteen-game board asks for nine; SWEEP_MIN_GAMES is the floor under
+# that, so a three-game rotation still has to be swept outright rather than
+# announced off two results.
+SWEEP_MIN_GAMES = 3
+
 # The metrics a tie can be talked about in -- "games that take guesses", where
 # a better score is a smaller count and beating the tie is a clear ask.
 TIE_METRICS = ('guesses', 'connections', 'cryptic')
@@ -654,31 +661,67 @@ def sample_lead(tick):
              'now': {a: 9, b: 7}}]
 
 
-# --- Clean sweep: one player alone at the top of every contested game ------------
+# --- Clean sweep: one player alone at the top of most of the day's games ---------
 # How a single result went (an ace, a flawless grid, no hints) is the sticky's
 # reaction on that result (sticky_lambda.react_to_results), not a line here; a
 # sweep spans the day's games, so it stays commentary.
 
 def detect_sweep(tick):
+    """One player alone in 1st in most of the day's scored games.
+
+    "Most" is measured against the whole slate (tick.scored), not against the
+    games played so far: being in front of the only two results anyone has
+    posted at 9am is not a sweep, it is the first two results, and the old
+    two-contested-games floor announced exactly that. A strict majority of the
+    slate can only ever belong to one player, so this never has to break a tie
+    between two people holding the same number of games."""
     floor = max(2, tick.cfg['minimum_players'])
     contested = [g for g in tick.scored if len(tick.results.get(g.key) or {}) >= floor]
-    if len(contested) < 2:
+    firsts = [f for f in (sole_first(tick, g) for g in contested) if f]
+    if not firsts:
         return []
-    firsts = [sole_first(tick, g) for g in contested]
-    if not firsts[0] or any(f != firsts[0] for f in firsts):
+    wins = {uid: firsts.count(uid) for uid in set(firsts)}
+    uid = max(sorted(wins), key=wins.get)
+    if wins[uid] < SWEEP_MIN_GAMES or wins[uid] * 2 <= len(tick.scored):
         return []
-    return [{'id': f'sweep:{firsts[0]}', 'uid': firsts[0], 'n': len(contested)}]
+    return [{'id': f'sweep:{uid}', 'uid': uid, 'n': wins[uid], 'of': len(tick.scored),
+             'clean': wins[uid] == len(contested)}]
 
 
 def render_sweep(events, tick):
-    return Rendered(lines=[
-        f"\U0001F9F9 {mention(e['uid'])} is 1st in all {e['n']} contested games so far, "
-        'a clean sweep in the making' for e in events])
+    """Three lines for three days: every game there is, every game anyone has
+    finished yet, or simply most of them."""
+    lines = []
+    for e in events:
+        who, key = mention(e['uid']), f"sweep:{e['id']}"
+        if e['clean'] and e['n'] == e['of']:
+            line = pick(tick, key, [
+                f"\U0001F9F9 {who} is 1st in all {e['n']} of today's games, a clean sweep",
+                f"\U0001F9F9 Clean sweep: {who} is 1st in every game today, all {e['n']} of them",
+            ])
+        elif e['clean']:
+            line = pick(tick, key, [
+                f"\U0001F9F9 {who} is 1st in every game played so far "
+                f"({e['n']} of today's {e['of']}), a clean sweep in the making",
+                f"\U0001F9F9 A clean sweep in the making: {who} is 1st in every game "
+                f"anyone has finished, {e['n']} of {e['of']}",
+            ])
+        else:
+            line = pick(tick, key, [
+                f"\U0001F9F9 {who} is 1st in {e['n']} of today's {e['of']} games",
+                f"\U0001F9F9 {who} has most of the day: 1st in {e['n']} of {e['of']} games",
+            ])
+        lines.append(line)
+    return Rendered(lines=lines)
 
 
 def sample_sweep(tick):
     uid = sample_players(tick, 1)[0]
-    return [{'id': 'sweep:sample', 'uid': uid, 'n': 3}]
+    of = max(len(tick.scored), SWEEP_MIN_GAMES)
+    n = max(SWEEP_MIN_GAMES, of // 2 + 1)
+    # The emblematic one: in front of everything played so far, and that is
+    # already most of the day.
+    return [{'id': 'sweep:sample', 'uid': uid, 'n': n, 'of': of, 'clean': True}]
 
 
 # --- Tie for first, in a game where it can be broken ---------------------------------
@@ -757,7 +800,7 @@ TRIGGERS = [
             FLAVOR, STICKY, detect_first_play, render_first_play, sample_first_play),
     Trigger('lead', 'Lead changes', 'When the top of the standings changes hands',
             FLAVOR, STICKY, detect_lead, render_lead, sample_lead),
-    Trigger('sweep', 'Clean sweep', 'One player alone in 1st in every contested game so far',
+    Trigger('sweep', 'Clean sweep', "One player alone in 1st in most of the day's scored games",
             FLAVOR, STICKY, detect_sweep, render_sweep, sample_sweep),
     Trigger('tie', 'Beatable ties', 'A tie for first that one better result would break',
             FLAVOR, HOURLY, detect_tie, render_tie, sample_tie, notify=NOTIFY),
