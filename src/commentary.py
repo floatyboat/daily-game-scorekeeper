@@ -452,14 +452,24 @@ def sample_nudge(tick):
 
 def _at_risk(tick):
     """[{uid, server, games: [(key, streak)]}] for everyone with a streak that
-    dies at the close unless they play. Sorted by the longest streak at stake."""
-    played_any = {uid for uids in tick.scorers.values() for uid in uids}
+    dies at the close unless they play. Sorted by the longest streak at stake.
+
+    A streak is at risk only while the player can still do something about it,
+    which is why POSTING closes a game here and SCORING keeps a streak alive
+    everywhere else. A poop keeps nothing alive, but the puzzle is spent: that
+    per-game streak is already gone, not on the line, so pinging it would ask
+    for a result the player cannot produce. Their overall streak survives a
+    poop -- any other game can still carry it -- so it stays at risk until
+    every game they could post is posted.
+    """
+    scored_any = {uid for uids in tick.scorers.values() for uid in uids}
     enabled = {g.key for g in tick.games}
+    posted = {key: set(tick.results.get(key) or {}) for key in enabled}
     risks = []
     for uid in sorted(tick.known_players)[:LAST_CALL_MAX_PLAYERS]:
         aggs = tick.player_aggs(uid) or {}
         server = 0
-        if uid not in played_any:
+        if uid not in scored_any and any(uid not in uids for uids in posted.values()):
             server = shown_streak(
                 store.display_streak(aggs.get(store.SERVER_AGG_SK), tick.day, False))
         games = []
@@ -467,7 +477,7 @@ def _at_risk(tick):
             if not sk.startswith(store.GAME_AGG_PREFIX):
                 continue
             key = store.game_key_from_sk(sk)
-            if key not in enabled or uid in tick.scorers.get(key, ()):
+            if key not in enabled or uid in posted[key]:
                 continue
             n = shown_streak(store.display_streak(item, tick.day, False))
             if n:

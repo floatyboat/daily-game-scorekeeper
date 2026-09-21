@@ -433,10 +433,15 @@ players are (the test channel on a test run).
   with the games still open and what first place there pays right now (`placement`: the
   day's pool, `per_game`: one more than the players already in it, `off`: no number), plus
   one row of link buttons for the union; pings. *Last call*: players whose server streak
-  (alive through yesterday, nothing scored today) or per-game streak (same, that game
-  unplayed today, off-rotation included — streaks survive off-rotation) dies at the close,
-  filtered through the same `shown_streak()` floor (`MINIMUM_STREAK`) every other surface
-  spends, so the ping never names a streak the board wouldn't print;
+  (alive through yesterday, nothing scored today, a game still left to post) or per-game
+  streak (same, that game not yet posted today, off-rotation included — streaks survive
+  off-rotation) dies at the close, filtered through the same `shown_streak()` floor
+  (`MINIMUM_STREAK`) every other surface spends, so the ping never names a streak the
+  board wouldn't print. POSTING closes a game here, where SCORING is what keeps a streak
+  alive everywhere else: a poop keeps nothing alive, but it spends the puzzle, so that
+  per-game streak is already gone rather than on the line, and naming it would ask for a
+  result the player can no longer produce (the overall streak survives a poop — another
+  game can still carry it — so it stays at risk until every game is posted);
   longest first, at most 10 names; pings; notes the server's own streak when nobody has
   scored yet. *Midday*: **the standings so far and nothing else**
   (`format_scoreboard_components` with `MIDDAY_TITLE` and `standings_only`), so the post is
