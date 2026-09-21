@@ -510,8 +510,11 @@ def lambda_handler(event, context):
         result = run_guild(cfg, force=True)
         return {'statusCode': 200, 'body': json.dumps(f'Sticky (test): {result}')}
 
+    # missing_since: the bot is not in that guild any more (the daily lambda's
+    # hourly reconcile decides this), so there is nothing here to post into.
     configs = [cfg for cfg in store.all_configs()
-               if cfg['sticky_enabled'] and cfg['input_channel_id']]
+               if cfg['sticky_enabled'] and cfg['input_channel_id']
+               and not cfg['missing_since']]
     # A different starting guild each minute: if a run ever runs out of time,
     # the deferral below lands on different guilds each tick instead of
     # deterministically starving the tail of the partition order.

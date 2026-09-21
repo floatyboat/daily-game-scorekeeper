@@ -11,9 +11,9 @@ from game_parser import (format_scoreboard_components, make_timestamp_checker,
                          next_rotation, game_sort_key, game_link_button,
                          scoring_players, GAME_SPECS, spec_enabled)
 from scoreboard import (
-    DISCORD_API_BASE, make_session, fetch_messages, reference_date,
-    parse_results, build_avatar_pool, build_name_map, is_scoreboard_message,
-    gather_streaks, guild_aggs, send_commentary,
+    DISCORD_API_BASE, make_session, fetch_messages, fetch_bot_guild_ids,
+    reference_date, parse_results, build_avatar_pool, build_name_map,
+    is_scoreboard_message, gather_streaks, guild_aggs, send_commentary,
     FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS, FLAG_IS_COMPONENTS_V2,
     MAX_BUTTONS_PER_ROW, MAX_ACTION_ROWS,
 )
@@ -301,6 +301,46 @@ def stored_rotation(cfg, today_day):
         return None
     enabled = {s.key for s in GAME_SPECS if spec_enabled(s, cfg['game_overrides'])}
     return [k for k in cfg['rotation_games'] if k in enabled] or None
+
+
+def reconcile_membership():
+    """Mark the guilds the bot has been removed from; unmark the ones it is
+    back in. Returns every absent guild id, marked here or already marked.
+
+    Discord announces a removal over the gateway (GUILD_DELETE), and there is
+    no gateway connection to hear it on, so membership is polled instead: one
+    call an hour, against the bot's own guild list rather than per-guild
+    errors, which cannot tell a kick from a deleted channel.
+
+    Nothing is deleted. A marked guild is simply skipped by both scheduled
+    lambdas, which is what stops a departed server costing a Discord call
+    every tick; its days, streaks and settings stay put, so a re-add resumes
+    instead of starting over, and clears the mark on the next hour.
+    """
+    present = fetch_bot_guild_ids(_session)
+    if not present:
+        # Nothing came back. That is a bad token or a bad response, not every
+        # server leaving at once -- and acting on it would disarm the bot
+        # everywhere at the first Discord wobble.
+        print('membership: guild list came back empty, leaving marks alone')
+        return set()
+
+    absent = set()
+    for cfg in store.all_configs():
+        gid = cfg['guild_id']
+        if not gid:
+            continue
+        if gid in present:
+            if cfg['missing_since']:
+                store.clear_missing(gid)
+                print(f'membership: guild {gid} has the bot again, mark cleared')
+        else:
+            absent.add(gid)
+            if not cfg['missing_since']:
+                store.mark_missing(gid)
+                print(f'membership: guild {gid} no longer has the bot, marked '
+                      f'(data kept; it will be skipped until the bot is re-added)')
+    return absent
 
 
 def process_guild(cfg, is_test, test_channel_id, days_back=1):
@@ -628,6 +668,23 @@ def lambda_handler(event, context):
     configs = store.all_configs()
     if event.get('guild_id'):
         configs = [c for c in configs if c['guild_id'] == str(event['guild_id'])]
+
+    # Guilds the bot is no longer in are dropped before any work is done. The
+    # reconcile gets its own guard, like the two stages below: a Discord
+    # hiccup here must not cost the hour its boards. When it cannot run -- a
+    # test run, or a failed call -- the stored marks stand in for it.
+    stored_marks = {c['guild_id'] for c in configs if c['missing_since']}
+    if is_test:
+        absent = stored_marks
+    else:
+        try:
+            absent = reconcile_membership()
+        except Exception as e:
+            traceback.print_exc()
+            print(f'membership reconcile FAILED {type(e).__name__}: {e}')
+            absent = stored_marks
+    configs = [c for c in configs if c['guild_id'] not in absent]
+
     commentary_mode = event.get('commentary') if is_test else None
 
     summary = {}

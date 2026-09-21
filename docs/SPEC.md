@@ -59,6 +59,8 @@ GUILDS                      GUILD#<guild_id>   per-server config: input_channel_
                                                rotation_off_mode,
                                                game_overrides (map key->bool),
                                                last_finalized_day, last_posted_day,
+                                               missing_since (set while the bot is
+                                               not in the guild),
                                                rotation_day + rotation_games (the
                                                drawn rotation and the day it governs)
                                                and rotation_prev_day +
@@ -162,6 +164,7 @@ registrar and the handler.
 | `game_overrides` | `games` | `{}` | Explicit per-guild flips of each game's default state |
 | `last_finalized_day` | — | — | Written at finalize; records how far aggregates are folded |
 | `last_posted_day` | — | — | Written after a real post; the post gate |
+| `missing_since` | — | — | Set by the hourly membership reconcile while the bot is not in the guild; both scheduled lambdas skip a marked guild — see Membership |
 | `rotation_day` | — | — | The day the stored rotation governs (set_rotation, real runs only) |
 | `rotation_games` | — | — | The rotation drawn for that day, as game keys |
 | `rotation_prev_day` | — | — | The day the displaced rotation governed — the board scores that day hours after the new draw lands |
@@ -841,6 +844,32 @@ retroactively.
   a preview, never persisted whether or not it is a test, because an open day must not be
   archived. Fixtures: `tests/events/daily/scoreboard_test.json` and `scoreboard_today.json`;
   either runs locally as `dotenv run -- python3 src/lambda_function.py <path>`.
+
+## Membership
+
+A server can remove the bot at any time, and Discord has no way to say so here: the
+removal arrives as a `GUILD_DELETE` gateway event, and there is no gateway connection to
+receive it on. Left undetected, the guild's config keeps being loaded by every tick, and
+every tick spends a Discord call on a channel it can no longer read — hourly for a board,
+once a minute for a sticky — each one landing in the logs as a `FAILED HTTPError: 403`.
+
+- **Polled once an hour**, at the top of the daily lambda's run (`reconcile_membership`).
+  One `GET /users/@me/guilds` lists every guild the bot is in, dormant ones included,
+  which is the whole reason it beats reading per-guild errors: a `403 Missing Access` says
+  "kicked", "channel deleted" and "permissions changed" in exactly the same words, and
+  only the first of those should disarm a server.
+- **Absent guilds are marked**, not deleted: `missing_since` is stamped on the config
+  (first sighting only, so it stays a stable "gone since when?"), and both scheduled
+  lambdas skip a marked guild from then on. The guild's days, streaks and settings are
+  left untouched, so re-adding the bot resumes where it left off instead of starting over.
+- **Returning guilds are unmarked** on the next hour, and the run they are found in picks
+  them straight back up — the reconcile reports absent guilds to the caller, so a cleared
+  mark does not cost a guild one more hour of being skipped.
+- **Never acts on silence**: an empty guild list is a bad token or a bad response, not
+  every server leaving at once, and marking on it would disarm the bot everywhere at the
+  first Discord wobble. A raise is caught per-stage and leaves the stored marks standing.
+- **Nothing purges itself.** Deleting a departed guild's data is a deliberate, manual act:
+  its members' streaks are the kind of thing that should outlive an accidental kick.
 
 ## Capacity and cost
 

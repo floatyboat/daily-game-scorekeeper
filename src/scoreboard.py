@@ -335,6 +335,42 @@ def fetch_messages(session, channel_id, limit=100):
     return messages
 
 
+# Discord's page size for the bot's own guild list. A bot past one page is
+# years away, but paging wrong would report every guild after the 200th as
+# missing -- and the caller disarms what it cannot find.
+BOT_GUILD_PAGE = 200
+
+
+def fetch_bot_guild_ids(session):
+    """Every guild id the bot is currently a member of.
+
+    One call answers for guilds that never post and guilds that post hourly
+    alike, which is what makes it the right membership signal: a per-guild
+    error cannot tell "the bot was kicked" from "the channel was deleted" or
+    "someone changed the permissions", and only the first of those means the
+    server is really gone.
+
+    An empty set means Discord said so; a failed request raises, and neither
+    is the caller's cue to act on its own (see reconcile_membership).
+    """
+    ids = set()
+    after = None
+    while True:
+        url = f'{DISCORD_API_BASE}/users/@me/guilds?limit={BOT_GUILD_PAGE}'
+        if after:
+            url += f'&after={after}'
+        r = session.get(url)
+        r.raise_for_status()
+        page = r.json()
+        if not page:
+            break
+        ids.update(g['id'] for g in page if g.get('id'))
+        if len(page) < BOT_GUILD_PAGE:
+            break
+        after = page[-1]['id']
+    return ids
+
+
 def reference_date(now, tz, hours_after_midnight, days_back=0):
     """TZ-naive midnight-aligned scoreboard date.
 

@@ -317,6 +317,15 @@ CONFIG_FIELDS = [
     ConfigField('last_finalized_day'),
     ConfigField('last_posted_day'),
 
+    # Set when the hourly membership check finds the bot is no longer in the
+    # guild (lambda_function.reconcile_membership), cleared when it is back.
+    # Both scheduled lambdas skip a marked guild, so a server that kicked the
+    # bot stops costing a Discord call every tick. Nothing is deleted: the
+    # guild's days, streaks and settings stay exactly as they were, so a re-add
+    # resumes rather than starts over. An ISO timestamp, not a day like the
+    # markers above -- it records an observation about the bot, not a game day.
+    ConfigField('missing_since'),
+
     # Rotation state, written only by the daily lambda (set_rotation), like
     # the run markers: rotation_games is the key list scored on rotation_day.
     # Two slots, because the draw for a new day lands at that day's START while
@@ -937,6 +946,40 @@ def set_last_posted(guild_id, day):
     """Advance the post marker (last day whose scoreboard went out for real).
     The hourly daily lambda gates on this, so test posts never touch it."""
     _advance_marker(guild_id, 'last_posted_day', day)
+
+
+def mark_missing(guild_id):
+    """Record the first moment the bot was found to be out of this guild.
+
+    Keeps the earliest sighting, so the mark is a stable answer to "gone since
+    when?" rather than a timestamp pushed forward every hour. Never creates an
+    item: a guild whose config has already been cleaned up must not come back
+    as a config that is nothing but a tombstone.
+    """
+    try:
+        table().update_item(
+            Key={'PK': GUILDS_PK, 'SK': config_sk(guild_id)},
+            UpdateExpression='SET missing_since = if_not_exists(missing_since, :t)',
+            ConditionExpression='attribute_exists(SK)',
+            ExpressionAttributeValues={':t': _now_iso()},
+        )
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
+            raise
+
+
+def clear_missing(guild_id):
+    """Drop the mark: the bot is in the guild again. Conditioned on the mark
+    being there so re-adding a guild costs one write, not one per tick."""
+    try:
+        table().update_item(
+            Key={'PK': GUILDS_PK, 'SK': config_sk(guild_id)},
+            UpdateExpression='REMOVE missing_since',
+            ConditionExpression='attribute_exists(missing_since)',
+        )
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
+            raise
 
 
 def set_rotation(guild_id, day, game_keys, prev_day=None, prev_games=()):
