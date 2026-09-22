@@ -500,15 +500,17 @@ class GameSpec:
       breakpoints
                 (good, medium): where a result stops being good, and where it
                 stops being medium, for the reaction the sticky pass puts on
-                it (performance_tier). In the metric's own number, lower is
-                better -- guesses, connections mistakes, cryptic weighted
-                hints, time and timed_win seconds, travle +N, fermi the
-                percentile its share reports -- except score and maptap, which
-                compare the result's percentage of `total`, higher is better.
-                That is why every score game carries its real ceiling in
-                `total`: no score game's board line prints it. None: no good,
-                medium or bad, though an aced or pooped result still reads as
-                one.
+                it (performance_tier). Both are in the metric's own number --
+                guesses, connections mistakes, time and timed_win seconds,
+                travle +N, fermi the percentile its share reports, score and
+                maptap the points themselves -- so a breakpoint reads in the
+                same units as the board line beside it. Lower is better, except
+                for the metrics that count upward (HIGHER_IS_BETTER). A score
+                game still carries its real ceiling in `total`, which is what a
+                result has to reach to be aced. None: no good, medium or bad,
+                though an aced or pooped result still reads as one -- Minute
+                Cryptic is the one game tiered on something else, the day's
+                community par.
     """
     key: str
     emoji: str
@@ -565,10 +567,20 @@ _MINUTECRYPTIC_NUDGE = '\u26aa'         # a prose nudge
 # solver count sits past the hint number, outside the capture.
 _MINUTECRYPTIC_ENUM = re.compile(r'\((\d[\d\s,\u2010-\u2015-]*)\)')
 
+# What the share says about the community par, which is the whole tier for this
+# game (performance_tier). The hint line always puts it one of three ways --
+# 'N under the community par', 'matched the community par', 'N over the
+# community par' -- and this is matched from the end of the hint count, where
+# the spec's pattern stops, and held to that one line so nothing further down
+# the share can stand in for it.
+_MINUTECRYPTIC_PAR = re.compile(
+    r'[^\n]*?(?:(\d+)\s+(over|under)|matched)\s+the\s+community\s+par',
+    re.IGNORECASE)
+
 
 def _parse_minutecryptic(m, content):
-    """(weighted, hints, letters, letters available) -- golf on hints, where a
-    revealed letter costs more than a nudge.
+    """(weighted, hints, letters, letters available, par delta) -- golf on
+    hints, where a revealed letter costs more than a nudge.
 
     Minute Cryptic gives two kinds of help and its share text counts them as
     one: a nudge, a line of prose about the wordplay, and a revealed letter,
@@ -588,6 +600,12 @@ def _parse_minutecryptic(m, content):
     weighted. Any tray whose colors don't add up to the stated hint count takes
     that same fallback, so an unfamiliar palette costs the weighting rather
     than the result.
+
+    `par delta` is how the day went against everyone else: negative under the
+    community par, 0 level with it, positive over it -- None when the share
+    didn't say, which leaves the result untiered rather than guessed at. It is
+    carried for the reaction alone and never ranks (score_sort_key), because
+    par is the same number for every player on a given day.
     """
     hints = int(m.group(2))
     span = m.group(1)
@@ -605,7 +623,14 @@ def _parse_minutecryptic(m, content):
     enum = _MINUTECRYPTIC_ENUM.findall(span)
     n_letters = sum(int(d) for d in re.findall(r'\d+', enum[-1])) if enum else 0
     letters_available = n_letters if letters <= n_letters < available else 0
-    return ((weighted, hints, letters, letters_available),
+    par = _MINUTECRYPTIC_PAR.match(content[m.end():])
+    if par is None:
+        par_delta = None
+    elif par.group(2):
+        par_delta = int(par.group(1)) * (-1 if par.group(2).lower() == 'under' else 1)
+    else:
+        par_delta = 0
+    return ((weighted, hints, letters, letters_available, par_delta),
             {'minutecryptic_total': available} if available else {})
 
 
@@ -615,7 +640,7 @@ def _minutecryptic_poop(score, total):
     share with no tray to bound it, more hints than the fallback total, the
     same guard 'guesses' keeps. One definition, spent by the points fold and by
     the board line, so the zero and the medal can never disagree."""
-    _, hints, letters, letters_available = score
+    _, hints, letters, letters_available = score[:4]
     return bool((letters_available and letters >= letters_available)
                 or (total and hints > total))
 
@@ -696,24 +721,47 @@ def _parse_wordle(m, content):
     return score, {}
 
 
+# A country guessed in order, on the path: the only square a perfect run has.
+_TRAVLE_CHECK = '\u2705'
+
+
+def _travle_perfect(squares):
+    """Every square a check: the run travle's own share labels '(Perfect)'.
+
+    Read off the squares rather than that label, so a change of wording costs
+    nothing and any colour travle invents disqualifies a run by simply not
+    being a check. It is a stricter thing than +0, which only says no guess was
+    wasted: a player can reach the target in the minimum number of guesses with
+    a country that wasn't on the path (travle greens it), and that is a solve,
+    not a perfect one.
+    """
+    marks = squares.replace('\uFE0F', '').strip()
+    return bool(marks) and set(marks) == {_TRAVLE_CHECK}
+
+
 def _parse_travle(m, content):
     plus_str = m.group(1)
     away_str = m.group(2)
     hints = int(m.group(3)) if m.group(3) else 0
     squares = m.group(4) or ''
-    checkmarks = squares.count('✅')  # path countries guessed in-order (check mark)
+    checkmarks = squares.count(_TRAVLE_CHECK)  # path countries guessed in-order
     # Escalating hint penalty (+1/+2/+3 per successive hint, since hint 2 reveals
     # all outlines and hint 3 adds initials) folded into the +N/away count, so
     # hint-assisted results rank below clean ones on the same currency as wrong
     # guesses. Triangular: 0/1/3/6 for 0-3 hints.
     penalty = hints * (hints + 1) // 2
-    # Encode as (tier, effective_n, hints, -checkmarks): 0=solved(+N), 1=failed
-    # but got at least one correct country (check or green), 2=complete wiff (no
-    # greens). hints is a tiebreak (fewer ranks higher at equal effective_n);
-    # raw +N = effective_n - penalty. Negate checkmarks so ascending tuple order
-    # ranks more checks higher (in-order tiebreaker).
+    # Encode as (tier, effective_n, hints, -checkmarks): -1=perfect, 0=solved
+    # (+N), 1=failed but got at least one correct country (check or green),
+    # 2=complete wiff (no greens). Perfect sits below a plain solve the way
+    # connections' VERT sits below a clean grid -- best on the same currency
+    # everything else ranks on, which is what lets performance_tier ace it
+    # without a second number to carry. hints is a tiebreak (fewer ranks higher
+    # at equal effective_n); raw +N = effective_n - penalty. Negate checkmarks
+    # so ascending tuple order ranks more checks higher (in-order tiebreaker).
     if plus_str is not None:
-        return (0, int(plus_str) + penalty, hints, -checkmarks), {}
+        effective_n = int(plus_str) + penalty
+        tier = -1 if effective_n == 0 and _travle_perfect(squares) else 0
+        return (tier, effective_n, hints, -checkmarks), {}
     tier = 1 if (checkmarks or '\U0001F7E9' in squares) else 2
     return (tier, int(away_str) + penalty, hints, -checkmarks), {}
 
@@ -752,7 +800,7 @@ GAME_SPECS = [
     GameSpec(
         key='connections', emoji='🔗', title='Connections', metric='connections',
         total=4, url='https://www.nytimes.com/games/connections',
-        breakpoints=(1, 3),
+        breakpoints=(0, 3),        # mistakes; the VERT is the ace
         puzzle=lambda ref: (ref - datetime(2023, 6, 12)).days + 1,
         pattern=lambda ref, n: re.compile(rf'Connections.*?Puzzle #{n}', re.IGNORECASE | re.DOTALL),
         parse=lambda m, c: (get_connections_results(c), {}),
@@ -768,7 +816,7 @@ GAME_SPECS = [
     GameSpec(
         key='sports', emoji='🏈', title='Sports Connections', metric='connections',
         total=4, url='https://www.nytimes.com/athletic/connections-sports-edition',
-        breakpoints=(1, 3),
+        breakpoints=(0, 3),        # mistakes; the VERT is the ace
         puzzle=lambda ref: (ref - datetime(2024, 9, 24)).days + 1,
         pattern=lambda ref, n: re.compile(rf'Connections: Sports Edition.*? #{n}', re.IGNORECASE | re.DOTALL),
         parse=lambda m, c: (get_connections_results(c), {}),
@@ -776,7 +824,7 @@ GAME_SPECS = [
     GameSpec(
         key='pips', emoji='🎲', title='Pips', metric='time',
         total=0, url='https://www.nytimes.com/games/pips',
-        breakpoints=(210, 540),     # 3:30 and 9:00
+        breakpoints=(210, 540),     # 3:30 and 9:00; TIME_ACE_SECONDS aces
         puzzle=lambda ref: (ref - datetime(2025, 8, 18)).days + 1,
         pattern=lambda ref, n: re.compile(rf'Pips #{n} Hard', re.IGNORECASE),
         parse=_parse_pips,
@@ -791,19 +839,19 @@ GAME_SPECS = [
     GameSpec(
         key='maptap', emoji='🎯', title='MapTap', metric='maptap',
         # Final Score is out of 1000. The maptap line never prints a total, so
-        # the ceiling is carried for the breakpoints alone.
+        # the ceiling is carried for the ace alone.
         total=1000, url='https://maptap.gg',
-        breakpoints=(96, 89),
+        breakpoints=(900, 800),
         puzzle=lambda ref: (ref - datetime(2024, 6, 22)).days + 1,
         pattern=lambda ref, n: re.compile(rf'(.*)MapTap(.*){ref.strftime("%B")} {ref.day}', re.IGNORECASE),
         parse=_parse_maptap,
     ),
     GameSpec(
         key='chronophoto', emoji='📷', title='Chronophoto', metric='score',
-        # The daily five photos make a ceiling of 5000, carried for the
-        # breakpoints; no score game's line prints its total.
+        # The daily five photos make a ceiling of 5000, carried for the ace;
+        # no score game's line prints its total.
         total=5000, url='https://www.chronophoto.app/daily.html',
-        breakpoints=(70, 45),
+        breakpoints=(4000, 2500),
         puzzle=lambda ref: f'{ref.month}/{ref.day}/{ref.year}',
         pattern=lambda ref, n: re.compile(rf"I got a score of (\d+) on today's Chronophoto: {re.escape(n)}", re.IGNORECASE),
         search=lambda ref, n: re.compile(re.escape(n), re.IGNORECASE),
@@ -836,7 +884,7 @@ GAME_SPECS = [
     GameSpec(
         key='quizl', emoji='⁉️', title='Quizl', metric='score',
         total=5, url='https://quizl.io',
-        breakpoints=(80, 40),
+        breakpoints=(3, 2),         # greens, of five
         puzzle=lambda ref: (ref - datetime(2022, 3, 16)).days + 1,
         pattern=lambda ref, n: re.compile(rf'Quizl#{n}', re.IGNORECASE),
         parse=_parse_quizl,
@@ -852,7 +900,7 @@ GAME_SPECS = [
     GameSpec(
         key='travle', emoji='✈️', title='Travle', metric='travle',
         total=0, url='https://travle.earth',
-        breakpoints=(0, 2),
+        breakpoints=(0, 2),         # +N; a Perfect run is the ace
         puzzle=lambda ref: (ref - datetime(2022, 12, 15)).days + 1,
         pattern=lambda ref, n: re.compile(rf'#travle\s+#{n}\s+(?:\+(\d+)|\((\d+)\s+away\))(?:[^\n]*?\((\d+)\s+hints?\))?[^\n]*(?:\n([^\n]*))?', re.IGNORECASE),
         parse=_parse_travle,
@@ -860,7 +908,7 @@ GAME_SPECS = [
     GameSpec(
         key='dialed_color', emoji='🎨', title='Color', metric='score',
         total=50, url='https://dialed.gg/color?d=1', needs_timestamp=True,
-        breakpoints=(90, 82),
+        breakpoints=(45, 35),
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         pattern=lambda ref, n: re.compile(r'dialed\.gg/(?:color)?\?\S*&s=(\d+(?:\.\d+)?)',
                                           re.IGNORECASE),
@@ -869,7 +917,7 @@ GAME_SPECS = [
     GameSpec(
         key='dialed_sound', emoji='🔊', title='Sound', metric='score',
         total=50, url='https://dialed.gg/sound?d=1', needs_timestamp=True,
-        breakpoints=(92, 70),
+        breakpoints=(45, 35),
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         pattern=lambda ref, n: re.compile(r'dialed\.gg/sound\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
         parse=lambda m, c: (float(m.group(1)), {}),
@@ -877,7 +925,7 @@ GAME_SPECS = [
     GameSpec(
         key='dialed_color2', emoji='🎭', title='Color-Toon', metric='score',
         total=50, url='https://dialed.gg/color2?d=1', needs_timestamp=True,
-        breakpoints=(85, 75),
+        breakpoints=(45, 35),
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         pattern=lambda ref, n: re.compile(r'dialed\.gg/color2\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
         parse=lambda m, c: (float(m.group(1)), {}),
@@ -893,7 +941,6 @@ GAME_SPECS = [
     GameSpec(
         key='minutecryptic', emoji='🧩', title='Minute Cryptic', metric='cryptic',
         total=8, total_key='minutecryptic_total', url='https://www.minutecryptic.com',
-        breakpoints=(1, 3),
         puzzle=lambda ref: (ref - datetime(2024, 6, 26)).days + 1,
         # Scored like golf on hints used, so fewer is better and 0 is a clean
         # solve -- but a revealed letter costs more than a nudge, so what ranks
@@ -902,8 +949,10 @@ GAME_SPECS = [
         # bandle the total comes off the message -- group 1 is everything
         # between the date and the count, which is where the hint tray sits,
         # and the clue's enumeration with it.
-        # The leading emoji on the hint line varies with par (🏆 at or under, 🏋
-        # over), so match the count and not the emoji.
+        # The leading emoji on the hint line varies with par (🏆 under, 🤝 at,
+        # 🏋 over), so match the count and not the emoji -- the same line says
+        # it again in words, which is what _parse_minutecryptic reads and what
+        # tiers the result, no breakpoints needed (performance_tier).
         # The share text heads on the date, not the puzzle number, so the
         # pattern derives its own '7 August, 2026' from ref and ignores n --
         # n is the real puzzle number, used only for the '#773' display label.
@@ -917,7 +966,7 @@ GAME_SPECS = [
     GameSpec(
         key='gerrymandle', emoji='🗳️', title='Gerrymandle', metric='timed_win',
         total=0, url='https://gerrymandle.com',
-        breakpoints=(100, 240),     # 1:40 and 4:00, on a win
+        breakpoints=(120, 240),     # 2:00 and 4:00, on a win
         puzzle=lambda ref: (ref - datetime(2026, 5, 11)).days + 1,
         # The headline line is all the pattern claims; _parse_gerrymandle digs
         # the clock out of it, because everything after the verb is optional and
@@ -932,7 +981,7 @@ GAME_SPECS = [
     GameSpec(
         key='krillion', emoji='🦐', title='Krillion', metric='score',
         total=700, url='https://krillion.io',
-        breakpoints=(47, 33),
+        breakpoints=(400, 200),
         puzzle=lambda ref: (ref - datetime(2026, 7, 16)).days + 1,
         # Seven rounds, each scored by how obscure the answer was (10 for one
         # the whole school reaches for, up to 100 for the day's gem), so higher
@@ -983,7 +1032,7 @@ GAME_SPECS = [
     GameSpec(
         key='sizeitup', emoji='📏', title='Size It Up', metric='score',
         total=500, url='https://magnitudle.com/size-it-up', needs_timestamp=True, disabled=True,
-        breakpoints=(65, 50),
+        breakpoints=(325, 250),
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         # Five rounds of resizing a silhouette against a known reference, each
         # worth up to 100 for how close it came, so higher is better, with a
@@ -1210,6 +1259,13 @@ def score_sort_key(metric, score):
         # merge players the multiple separates, and a share that carried none
         # would have nothing to compare.
         return score[0]
+    if metric == 'cryptic':
+        # The four numbers the board ranks on. The par difference beside them
+        # is the day's, not the player's -- every share that day reports the
+        # same par -- so it is the reaction's business (performance_tier) and
+        # ranking never reaches for it, which is also what keeps a share that
+        # carried none out of a comparison.
+        return score[:4]
     return score
 
 
@@ -1254,19 +1310,22 @@ def is_poop(metric, score, total):
 # --- How a single result went ---------------------------------------------------
 # The sticky pass reacts to every fresh result with one to four emoji
 # (sticky_lambda.react_to_results): the place it took the moment it was posted,
-# then its tier, then a flourish or two if it earned one. Aced and poop read
-# the same in every game; good, medium and bad come from the game's own
-# breakpoints (GameSpec.breakpoints). Every tier speaks, the rough ones
-# included: a bad day gets a wince and a failed one gets a poop, which is the
-# bot noticing rather than scolding -- the pools are wry, never cutting.
+# then its tier, then a flourish or two if it earned one. A poop reads the same
+# in every game (is_poop); an ace is whatever a perfect round means there, and
+# good, medium and bad come from the game's own breakpoints
+# (GameSpec.breakpoints) -- or, for Minute Cryptic, from the day's community
+# par, the one scale a puzzle that sets its own hint count has. Every tier
+# speaks, the rough ones included: a bad day gets a wince and a failed one gets
+# a poop, which is the bot noticing rather than scolding -- the pools are wry,
+# never cutting.
 
 ACED, GOOD, MEDIUM, BAD, POOP = 'aced', 'good', 'medium', 'bad', 'poop'
 
-# Metrics whose breakpoints are a percentage of the game's ceiling (`total`),
-# because their raw numbers mean nothing from one game to the next: 45 is a
-# great Color and a hopeless Krillion. Every other metric compares its own
-# lower-is-better number.
-PERCENT_METRICS = ('score', 'maptap')
+# The metrics that count upward, whose breakpoints are therefore read the other
+# way round. They are in the game's own points either way, like every other
+# metric's: what a number means is a question about one game -- 45 is a great
+# Color and a hopeless Krillion -- and breakpoints have always been per game.
+HIGHER_IS_BETTER = ('score', 'maptap')
 
 # The board's podium: the day's winner and each game's top three.
 MEDALS = ('\U0001F451', '\U0001F948', '\U0001F949')
@@ -1301,6 +1360,13 @@ BELOW_PODIUM = '\U0001F44D'
 # comes to the perfect round the other games ace on.
 FERMI_ACE = 1
 
+# Where a clock stops being merely quick and becomes an ace. A timed game has
+# no perfect round to reach for, so its ace is a time: Pips inside two minutes,
+# a Gerrymandle won inside one. Per metric rather than per spec, since each is
+# the only game measured that way.
+TIME_ACE_SECONDS = 120
+TIMED_WIN_ACE_SECONDS = 60
+
 # The flourish a standout result picks up on top of its tier and place, drawn
 # at random so two aces in a row don't read the same. Nothing here is a game's
 # emoji, a place, a tier or one of the app's own signs (\U0001F525 streaks,
@@ -1321,43 +1387,59 @@ def performance_tier(game, score):
     the game has nothing to say about it.
 
     POOP is is_poop, so the reaction and the board's medal can't disagree.
-    ACED is the perfect result of the games that have one: a guesses game in
-    one, a connections grid without a mistake (a VERT ranks above that, so it
-    counts too), a cryptic with no hints, a score or maptap result at its
-    ceiling (`total`), a fermi in the world's top 1%. Anything else is measured
-    against game.breakpoints (good, medium): at least as good as `good` is
-    GOOD, at least as good as `medium` is MEDIUM, worse is BAD. A travle that
-    missed the target is BAD whatever its count, and a gerrymandle won with the
-    timer hidden has no time to measure, so no tier. No breakpoints -- or a
-    percentage game with no ceiling to take a share of -- is no tier either.
+    ACED is the best a game has to offer, which is a different thing in each:
+    a guesses game in one, a connections grid solved vertically, a travle
+    Perfect, a cryptic with no hints at all, a score or maptap result at its
+    ceiling (`total`), a fermi in the world's top 1% (FERMI_ACE), a clock under
+    TIME_ACE_SECONDS or, on a win, TIMED_WIN_ACE_SECONDS.
+
+    Minute Cryptic is then tiered on the day's community par -- under it GOOD,
+    level MEDIUM, over it BAD -- since a puzzle that sets its own hint count
+    has no fixed scale of its own. Every other game is measured against
+    game.breakpoints (good, medium): at least as good as `good` is GOOD, at
+    least as good as `medium` is MEDIUM, worse is BAD. A travle that missed the
+    target is BAD whatever its count, and a gerrymandle won with the timer
+    hidden has no time to measure, so no tier. No breakpoints -- or a share
+    that named neither a par nor a percentile -- is no tier either.
     """
     metric, total = game.metric, game.total
     if is_poop(metric, score, total):
         return POOP
     if ((metric == 'guesses' and score == 1)
-            or (metric == 'connections' and score[0] <= 0)
+            or (metric in ('connections', 'travle') and score[0] < 0)
             or (metric == 'cryptic' and score[1] == 0)
-            or (metric in PERCENT_METRICS and total
+            or (metric in HIGHER_IS_BETTER and total
                 and (score if metric == 'score' else score[0]) >= total)
-            or (metric == 'fermi' and score[1] is not None and score[1] <= FERMI_ACE)):
+            or (metric == 'fermi' and score[1] is not None and score[1] <= FERMI_ACE)
+            or (metric == 'time' and score <= TIME_ACE_SECONDS)
+            or (metric == 'timed_win' and not score[2]
+                and score[3] <= TIMED_WIN_ACE_SECONDS)):
         return ACED
+    if metric == 'cryptic':
+        # Par, not the weighted hints the board ranks on: how many the rest of
+        # the world needed is the only number that means the same thing two
+        # days running, when the puzzle itself decides how much help is on
+        # offer. _parse_minutecryptic carries the difference; a share that
+        # didn't report one goes untiered.
+        delta = score[4]
+        if delta is None:
+            return None
+        return GOOD if delta < 0 else MEDIUM if delta == 0 else BAD
     if not game.breakpoints:
         return None
     good, medium = game.breakpoints
-    if metric in PERCENT_METRICS:
-        if not total:
-            return None
-        share = (score if metric == 'score' else score[0]) * 100 / total
-        return GOOD if share >= good else MEDIUM if share >= medium else BAD
+    if metric in HIGHER_IS_BETTER:
+        value = score if metric == 'score' else score[0]
+        return GOOD if value >= good else MEDIUM if value >= medium else BAD
     if metric == 'travle':
-        if score[0]:
+        if score[0] > 0:
             return BAD
         value = score[1]
     elif metric == 'timed_win':
         if score[2]:
             return None
         value = score[3]
-    elif metric in ('connections', 'cryptic'):
+    elif metric == 'connections':
         value = score[0]
     elif metric == 'fermi':
         # The percentile, not the multiple: see _parse_fermi. A share that
@@ -1780,12 +1862,12 @@ def _format_game_players(game_scores, metric, total, names=None,
             k = -neg_cm
             raw_n = eff_n - hints * (hints + 1) // 2  # undo hint penalty for display
             parts = []
-            if tier == 0 or k:
+            if tier <= 0 or k:
                 parts.append(f"{k}✓")
             if hints:
                 parts.append(f"{hints} hint" + ("s" if hints != 1 else ""))
             extra = f" ({', '.join(parts)})" if parts else ""
-            if tier == 0:
+            if tier <= 0:   # a perfect run is a solve, and reads as one here
                 score_str = f"+{raw_n}{extra}"
             elif tier == 1:
                 score_str = f"{raw_n} away{extra}"

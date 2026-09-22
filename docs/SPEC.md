@@ -190,17 +190,18 @@ afterwards; every reply from them says so.
   game reaches every guild with its coded default rather than a frozen snapshot of an old
   menu submission.
 - `GameSpec.breakpoints` is `(good, medium)`: where a result stops being good and where it
-  stops being medium, for its reaction (`game_parser.performance_tier`, see Reactions). In
-  the metric's own number, lower is better: guesses, connections mistakes, cryptic weighted
-  hints, `time` and `timed_win` seconds, travle +N, Fermi the percentile its share reports
-  (`top 66%`) rather than the multiple it ranks on, whose scale belongs to the day's puzzle
-  and not to the player. `score` and `maptap` compare the result's percentage of `total`
-  instead, higher is better, so every score game carries its real ceiling in `total`
-  (Chronophoto 5000, Krillion 700, Size It Up 500, MapTap 1000), and a result at that
-  ceiling is aced. No score game's board line
-  prints its total — the line is the
-  bare number, while guesses, connections and cryptic lines keep their "/N" — so the
-  ceiling never reads as a fraction. A spec without breakpoints gets no good, medium or bad.
+  stops being medium, for its reaction (`game_parser.performance_tier`, see Reactions).
+  Both are in the metric's own number, the one the board line prints: guesses, connections
+  mistakes, `time` and `timed_win` seconds, travle +N, `score` and `maptap` the points
+  themselves, Fermi the percentile its share reports (`top 66%`) rather than the multiple
+  it ranks on, whose scale belongs to the day's puzzle and not to the player. Lower is
+  better, except for the metrics that count upward (`HIGHER_IS_BETTER`: `score`, `maptap`),
+  which read the same way round as they rank. A score game still carries its real ceiling
+  in `total` (Chronophoto 5000, Krillion 700, Size It Up 500, MapTap 1000), because that is
+  what a result has to reach to be aced — no score game's board line prints it, so the
+  ceiling never reads as a fraction, while guesses, connections and cryptic lines keep
+  their "/N". A spec without breakpoints gets no good, medium or bad: Minute Cryptic is the
+  one game that carries none on purpose, being tiered on the day's community par instead.
 - The effective list is resolved by `spec_enabled(spec, overrides)` / `build_games(pn,
   overrides)` and used by **all** paths: daily parse, aggregate updates, sticky counts, Play
   list, Scores, scoreboard render.
@@ -532,11 +533,19 @@ was good enough to earn one.
   as the medals it sits beside while the board keeps its 👑 for the day's winner and each
   game's first place; only first place differs between the two.
 - **How it went** (`performance_tier`). A poop is `is_poop`, so the reaction and the
-  board's medal agree. Aced is the perfect result of the games that have one: a `guesses`
-  game in 1, a connections grid with no mistakes (a VERT, which ranks above that, too), a
-  cryptic with no hints, a `score` or `maptap` result at its ceiling (`total`), a Fermi in
-  the world's top 1% (`FERMI_ACE`). Anything else is good, medium or bad against the
-  game's `breakpoints` (see Games and per-server enabling). A Travle that missed the target is
+  board's medal agree. Aced is the best a game has to offer, which is a different thing in
+  each: a `guesses` game in 1, a connections grid solved vertically (the VERT, which ranks
+  above a clean grid), a Travle Perfect (`+0` with every square a check — a solve that
+  wasted no guess **and** strayed off the path for none of them), a cryptic with no hints at
+  all, a `score` or `maptap` result at its ceiling (`total`), a Fermi in the world's top 1%
+  (`FERMI_ACE`), a clock inside `TIME_ACE_SECONDS` (Pips, two minutes) or, on a win,
+  `TIMED_WIN_ACE_SECONDS` (Gerrymandle, one). Minute Cryptic is then tiered on the day's
+  **community par**, which its share states in words on the hint line: under it good, level
+  medium, over it bad. A puzzle that sets its own hint count has no fixed scale of its own,
+  and par is the same number for every player that day, so it rides in the score for the
+  reaction's sake and never ranks (`score_sort_key`), exactly as Fermi's percentile does; a
+  share that reported none goes untiered. Every other game is good, medium or bad against
+  its `breakpoints` (see Games and per-server enabling). A Travle that missed the target is
   bad; a Gerrymandle won with the timer hidden has no time to measure, so no tier. Every
   tier carries an emoji, **drawn at random from its own pool** (`TIER_EMOJI`), seeded off
   the message id like the flourish below, so two good days in a row don't read the same: 💯 aced, then

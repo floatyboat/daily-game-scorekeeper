@@ -66,7 +66,7 @@ def fake_score(metric, i):
     return {'connections': (i % 4, 4), 'maptap': (100 - i, 90 - i),
             'travle': (0, 3, 0, -2), 'time': 90 + i,
             'timed_win': (0, 1, 0, 90 + i),
-            'cryptic': (10, 4, 3, 6),
+            'cryptic': (10, 4, 3, 6, 1),
             'fermi': (round(9.63 + i, 2), min(99, i + 1)),
             'score': 50 + i}.get(metric, 3)
 

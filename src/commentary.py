@@ -778,7 +778,7 @@ def sample_tie(tick):
     if not games:
         return []
     g = games[0]
-    score = {'guesses': 4, 'connections': (1, 4), 'cryptic': (2, 2, 0, 0)}[g.metric]
+    score = {'guesses': 4, 'connections': (1, 4), 'cryptic': (2, 2, 0, 0, 0)}[g.metric]
     return [{'id': 'tie:sample', 'game': g.key, 'players': [a, b], 'score': score,
              'payout': on_offer(tick, g)}]
 
