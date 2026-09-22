@@ -22,7 +22,7 @@ there is the whole onboarding — no redeploy, no config file.
 | **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and the server's streaks — off-rotation plays listed below the scored games for zero points. |
 | **Today's games** | Posted at the server's day start while rotation is on (the default): the rotating subset of games that scores today, as play links. Lands right under the board when the board posts at that same hour. Servers that would rather not have a second daily message can switch just this post off. |
 | **Now Playing sticky** | One message kept at the bottom of the input channel: how much the server has played today, today's games as play buttons, the server streak in its heading, and **Play**, **Scores** and **Yesterday** underneath. |
-| **Reactions** | Opt-in per server: within a minute of a result being posted, the bot reacts to it with how it went (💯 aced, 😎 good, 🙂 medium, 😬 bad, 💩 failed) and where it placed in that game at that moment (👑 🥈 🥉, 👍 below third, nothing for the first to post). Good, medium and bad are set per game. |
+| **Reactions** | Opt-in per server: within a minute of a result being posted, the bot reacts to it with how it went (💯 aced, 😎 great, 🙂 good, 😬 rough, 💩 poop) and where it placed in that game at that moment (👑 🥈 🥉, 👍 below third, nothing for the first to post). Great, good and rough are set per game. |
 | **`/play`** | A private list of games as buttons, linking straight to each puzzle, ordered by what the server is actually playing. It lists everything *except* the games already on the sticky, so the two don't repeat; **`/play all:true`** puts the whole roster in one list. |
 | **`/stats`** | A private view of your own streaks — overall, then game by game. Every streak on the board belongs to the server; this is where yours are. |
 | **`/suggest`** | Anyone can propose a game the bot doesn't track yet. |
@@ -176,7 +176,7 @@ Defaults in parentheses.
   **Manage Messages** and does nothing at all while the sticky is off. Turning it off
   doesn't restore previews already stripped.
 - **`/setup reactions enabled:true rotation_only:<bool>`** (`false` / `false`) — react
-  to each result as it's counted: how it went, against per-game good/medium/bad lines,
+  to each result as it's counted: how it went, against per-game great/good/rough lines,
   and where it placed in that game when it was posted. `rotation_only:true` limits it to
   today's rotation games while the rotation is on. Needs **Add Reactions** and, like
   link stripping, does nothing while the sticky is off.

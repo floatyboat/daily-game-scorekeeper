@@ -189,8 +189,8 @@ afterwards; every reply from them says so.
   per guild. `config.game_overrides` stores just the explicit deviations, so a newly added
   game reaches every guild with its coded default rather than a frozen snapshot of an old
   menu submission.
-- `GameSpec.breakpoints` is `(good, medium)`: where a result stops being good and where it
-  stops being medium, for its reaction (`game_parser.performance_tier`, see Reactions).
+- `GameSpec.breakpoints` is `(great, good)`: where a result stops being great and where it
+  stops being good, for its reaction (`game_parser.performance_tier`, see Reactions).
   Both are in the metric's own number, the one the board line prints: guesses, connections
   mistakes, `time` and `timed_win` seconds, travle +N, `score` and `maptap` the points
   themselves, Fermi the percentile its share reports (`top 66%`) rather than the multiple
@@ -200,7 +200,7 @@ afterwards; every reply from them says so.
   in `total` (Chronophoto 5000, Krillion 700, Size It Up 500, MapTap 1000), because that is
   what a result has to reach to be aced — no score game's board line prints it, so the
   ceiling never reads as a fraction, while guesses, connections and cryptic lines keep
-  their "/N". A spec without breakpoints gets no good, medium or bad: Minute Cryptic is the
+  their "/N". A spec without breakpoints gets no great, good or rough: Minute Cryptic is the
   one game that carries none on purpose, being tiered on the day's community par instead.
 - The effective list is resolved by `spec_enabled(spec, overrides)` / `build_games(pn,
   overrides)` and used by **all** paths: daily parse, aggregate updates, sticky counts, Play
@@ -523,7 +523,7 @@ players are (the test channel on a test run).
 With `reactions_enabled` on (off by default), the sticky pass reacts to every fresh result
 with one to four emoji, in this order: where it placed in its game the moment it was
 posted, how it went (drawn at random from that tier's pool), then a flourish or two if it
-was good enough to earn one.
+was great enough to earn one.
 `sticky_lambda.react_to_results` does the Discord side; the rules are pure, in `game_parser`.
 
 - **Where it placed** (`place_at_post`): 1 plus every earlier first result in that game
@@ -540,18 +540,21 @@ was good enough to earn one.
   all, a `score` or `maptap` result at its ceiling (`total`), a Fermi in the world's top 1%
   (`FERMI_ACE`), a clock inside `TIME_ACE_SECONDS` (Pips, two minutes) or, on a win,
   `TIMED_WIN_ACE_SECONDS` (Gerrymandle, one). Minute Cryptic is then tiered on the day's
-  **community par**, which its share states in words on the hint line: under it good, level
-  medium, over it bad. A puzzle that sets its own hint count has no fixed scale of its own,
+  **community par**, which its share states in words on the hint line: under it great, level
+  good, over it rough. A puzzle that sets its own hint count has no fixed scale of its own,
   and par is the same number for every player that day, so it rides in the score for the
   reaction's sake and never ranks (`score_sort_key`), exactly as Fermi's percentile does; a
-  share that reported none goes untiered. Every other game is good, medium or bad against
+  share that reported none goes untiered. Every other game is great, good or rough against
   its `breakpoints` (see Games and per-server enabling). A Travle that missed the target is
-  bad; a Gerrymandle won with the timer hidden has no time to measure, so no tier. Every
+  rough; a Gerrymandle won with the timer hidden has no time to measure, so no tier. Every
   tier carries an emoji, **drawn at random from its own pool** (`TIER_EMOJI`), seeded off
-  the message id like the flourish below, so two good days in a row don't read the same: 💯 aced, then
-  😎 good, 🙂 medium, 😬 bad and 💩 poop and their pool-mates. The ace is the one
-  fixed point, a pool of one, because 100 is the only thing a perfect result should say.
-  The rough tiers speak too: the bot noticing a bad day, not scolding it, so the bad and
+  the message id like the flourish below, so two great days in a row don't read the same:
+  💯 aced, then 😎 great, 🙂 good, 😬 rough and 💩 poop and their pool-mates. The ace is the
+  one fixed point, a pool of one, because 100 is the only thing a perfect result should say.
+  The tiers read as four registers — swagger, warmth, wince, grim — so the middle two can
+  never be mistaken for each other: **great** is a standout day, **good** is a day nothing
+  went wrong on, and nothing that shrugs, sweats or settles belongs in it. The rough ones
+  speak too: the bot noticing a rough day, not scolding it, so the rough and
   poop pools are wry rather than cutting. The first entry of each pool is its
   representative, which is what `/help` and `/setup` print (`tier_examples`), so those
   blurbs stay in step with the pools without reaching into their shape.
@@ -560,7 +563,7 @@ was good enough to earn one.
   its own. It says "counted", not "well played", and it keeps no reaction meaning the one
   thing it should: the bot didn't read the message.
 - **A flourish on top** (`FLOURISH`, `FLOURISH_COUNT`): two more emoji on an ace, one on a
-  good result, nothing below that, drawn at random from a bank of fourteen so two aces in a
+  great result, nothing below that, drawn at random from a bank of fourteen so two aces in a
   row don't read the same. The bank holds no game's emoji, no place, no tier and none of
   the app's own signs (🔥 streaks, 🏆 points, 💔 a broken streak), so a flourish can
   only mean "nice one"; the same rules govern every `TIER_EMOJI` pool, and every entry of

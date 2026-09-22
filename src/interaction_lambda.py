@@ -1175,7 +1175,7 @@ def handle_setup(body, guild_id):
             f"it went on top of that, from an ace down to a rough one "
             f"({' '.join(e for _, e in tier_examples())} and friends: every face but the "
             f"{dict(tier_examples())[ACED]} is picked at random), with a flourish or two "
-            "piled on a good one or an ace.\n-# Needs Add Reactions in the input "
+            "piled on a great one or an ace.\n-# Needs Add Reactions in the input "
             "channel. Most servers give it "
             f"to everyone; where yours doesn't, grant it to the bot's role.{note}")
 

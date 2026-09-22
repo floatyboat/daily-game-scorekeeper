@@ -39,7 +39,7 @@ class Game:
     needs_timestamp: bool = False
     search_pattern: re.Pattern = None   # optional cheap pre-check before the full pattern
     parse: object = None                # callable(match, content) -> (score, metadata)
-    breakpoints: tuple = None           # (good, medium); see GameSpec
+    breakpoints: tuple = None           # (great, good); see GameSpec
 
 
 def compute_puzzle_numbers(reference_date):
@@ -498,8 +498,8 @@ class GameSpec:
                 (game_overrides in the guild config); this flag only decides
                 what a guild gets before anyone touches the menu.
       breakpoints
-                (good, medium): where a result stops being good, and where it
-                stops being medium, for the reaction the sticky pass puts on
+                (great, good): where a result stops being great, and where it
+                stops being good, for the reaction the sticky pass puts on
                 it (performance_tier). Both are in the metric's own number --
                 guesses, connections mistakes, time and timed_win seconds,
                 travle +N, fermi the percentile its share reports, score and
@@ -507,7 +507,7 @@ class GameSpec:
                 same units as the board line beside it. Lower is better, except
                 for the metrics that count upward (HIGHER_IS_BETTER). A score
                 game still carries its real ceiling in `total`, which is what a
-                result has to reach to be aced. None: no good, medium or bad,
+                result has to reach to be aced. None: no great, good or rough,
                 though an aced or pooped result still reads as one -- Minute
                 Cryptic is the one game tiered on something else, the day's
                 community par.
@@ -525,7 +525,7 @@ class GameSpec:
     search: object = None       # callable(reference_date, puzzle) -> re.Pattern
     total_key: str = None       # puzzle_numbers key that overrides `total`
     disabled: bool = False
-    breakpoints: tuple = None   # (good, medium), see performance_tier
+    breakpoints: tuple = None   # (great, good), see performance_tier
 
 
 # --- Per-game score extractors -------------------------------------------------
@@ -1010,8 +1010,8 @@ GAME_SPECS = [
         # top 66%' -- and both are kept: the multiple ranks the board, the
         # percentile tiers the reaction (_parse_fermi says why), which is the
         # metric of its own this needs. Its breakpoints are therefore a place in
-        # the field, not a multiple: the top quarter is good, the top half
-        # medium, and a top 1% finish is the ace -- the nearest thing a game
+        # the field, not a multiple: the top quarter is great, the top half
+        # good, and a top 1% finish is the ace -- the nearest thing a game
         # scored against the whole world has to a perfect round. No poop; there
         # is no fail state.
         #
@@ -1312,14 +1312,14 @@ def is_poop(metric, score, total):
 # (sticky_lambda.react_to_results): the place it took the moment it was posted,
 # then its tier, then a flourish or two if it earned one. A poop reads the same
 # in every game (is_poop); an ace is whatever a perfect round means there, and
-# good, medium and bad come from the game's own breakpoints
+# great, good and rough come from the game's own breakpoints
 # (GameSpec.breakpoints) -- or, for Minute Cryptic, from the day's community
 # par, the one scale a puzzle that sets its own hint count has. Every tier
-# speaks, the rough ones included: a bad day gets a wince and a failed one gets
-# a poop, which is the bot noticing rather than scolding -- the pools are wry,
-# never cutting.
+# speaks, the rough ones included: a rough day gets a wince and a failed one
+# gets a poop, which is the bot noticing rather than scolding -- the pools are
+# wry, never cutting.
 
-ACED, GOOD, MEDIUM, BAD, POOP = 'aced', 'good', 'medium', 'bad', 'poop'
+ACED, GREAT, GOOD, ROUGH, POOP = 'aced', 'great', 'good', 'rough', 'poop'
 
 # The metrics that count upward, whose breakpoints are therefore read the other
 # way round. They are in the game's own points either way, like every other
@@ -1335,27 +1335,35 @@ MEDALS = ('\U0001F451', '\U0001F948', '\U0001F949')
 PLACE_EMOJI = ('\U0001F947', '\U0001F948', '\U0001F949')
 
 # What each tier reacts with: a pool drawn from at random (result_reactions),
-# so two good days in a row don't read the same. The ace is the one fixed
+# so two great days in a row don't read the same. The ace is the one fixed
 # point -- 100 is the only thing a perfect result should ever say -- so its
 # pool holds that alone. The first entry of each is its representative, which
 # is what /help and /setup show (tier_examples), and the order here is the
 # order they list, best first. Same rules as FLOURISH below: every entry is a
 # single code point needing no variation selector, and nothing here is a
 # game's emoji, a place or one of the app's own signs.
+#
+# The registers run swagger, warmth, wince, grim, which is what keeps the
+# middle two apart at a glance: GREAT is a standout day and swaggers about it,
+# GOOD is a day nothing went wrong on and simply reads pleased. Nothing that
+# shrugs, sweats or settles belongs in GOOD -- a player reading that face
+# should never wonder whether they did badly.
 TIER_EMOJI = {
     ACED: ('\U0001F4AF',),
-    GOOD: ('\U0001F60E', '\U0001F60F', '\U0001FAE1', '\U0001F44C',
-           '\U0001F90C', '\U0001F920', '\U0001F60C', '\U0001F63C'),
-    MEDIUM: ('\U0001F642', '\U0001F60A', '\U0001F605', '\U0001F937',
-             '\U0001F643', '\U0001F197', '\U0001F600'),
-    BAD: ('\U0001F62C', '\U0001F616', '\U0001FAE0', '\U0001F635',
-          '\U0001F915', '\U0001FAE3', '\U0001F974', '\U0001F648'),
+    GREAT: ('\U0001F60E', '\U0001F60F', '\U0001FAE1', '\U0001F44C',
+            '\U0001F601', '\U0001F919', '\U0001F9BE', '\U0001F485',
+            '\U0001F624', '\U0001F3C4'),
+    GOOD: ('\U0001F642', '\U0001F60A', '\U0001F604', '\U0001F60C',
+           '\U0001F917', '\U0001F31E'),
+    ROUGH: ('\U0001F62C', '\U0001F616', '\U0001FAE0', '\U0001F635',
+            '\U0001F915', '\U0001FAE3', '\U0001F974', '\U0001F648',
+            '\U0001F937', '\U0001F605'),
     POOP: ('\U0001F4A9', '\U0001F480', '\U0001FAA6', '\U0001F198',
            '\U0001FAAB', '\U0001F972', '\U0001FAE5'),
 }
 BELOW_PODIUM = '\U0001F44D'
 
-# Where a fermi result stops being merely good and becomes its ace: a finish in
+# Where a fermi result stops being merely great and becomes its ace: a finish in
 # the world's top 1%, the closest a game scored against everyone who played it
 # comes to the perfect round the other games ace on.
 FERMI_ACE = 1
@@ -1379,11 +1387,11 @@ FLOURISH = ('\U0001F389', '\U0001F973', '\U0001F38A', '\U0001F64C', '\U0001F44F'
             '\U0001F929', '\U0001F92F', '\U0001F4A5', '\U0001F9E0')
 # How many a tier is worth. Only the top two earn one: a flourish everywhere is
 # just noise with extra steps.
-FLOURISH_COUNT = {ACED: 2, GOOD: 1}
+FLOURISH_COUNT = {ACED: 2, GREAT: 1}
 
 
 def performance_tier(game, score):
-    """ACED, GOOD, MEDIUM, BAD or POOP for one result of `game`, or None when
+    """ACED, GREAT, GOOD, ROUGH or POOP for one result of `game`, or None when
     the game has nothing to say about it.
 
     POOP is is_poop, so the reaction and the board's medal can't disagree.
@@ -1393,12 +1401,12 @@ def performance_tier(game, score):
     ceiling (`total`), a fermi in the world's top 1% (FERMI_ACE), a clock under
     TIME_ACE_SECONDS or, on a win, TIMED_WIN_ACE_SECONDS.
 
-    Minute Cryptic is then tiered on the day's community par -- under it GOOD,
-    level MEDIUM, over it BAD -- since a puzzle that sets its own hint count
+    Minute Cryptic is then tiered on the day's community par -- under it GREAT,
+    level GOOD, over it ROUGH -- since a puzzle that sets its own hint count
     has no fixed scale of its own. Every other game is measured against
-    game.breakpoints (good, medium): at least as good as `good` is GOOD, at
-    least as good as `medium` is MEDIUM, worse is BAD. A travle that missed the
-    target is BAD whatever its count, and a gerrymandle won with the timer
+    game.breakpoints (great, good): at least as good as `great` is GREAT, at
+    least as good as `good` is GOOD, worse is ROUGH. A travle that missed the
+    target is ROUGH whatever its count, and a gerrymandle won with the timer
     hidden has no time to measure, so no tier. No breakpoints -- or a share
     that named neither a par nor a percentile -- is no tier either.
     """
@@ -1424,16 +1432,16 @@ def performance_tier(game, score):
         delta = score[4]
         if delta is None:
             return None
-        return GOOD if delta < 0 else MEDIUM if delta == 0 else BAD
+        return GREAT if delta < 0 else GOOD if delta == 0 else ROUGH
     if not game.breakpoints:
         return None
-    good, medium = game.breakpoints
+    great, good = game.breakpoints
     if metric in HIGHER_IS_BETTER:
         value = score if metric == 'score' else score[0]
-        return GOOD if value >= good else MEDIUM if value >= medium else BAD
+        return GREAT if value >= great else GOOD if value >= good else ROUGH
     if metric == 'travle':
         if score[0] > 0:
-            return BAD
+            return ROUGH
         value = score[1]
     elif metric == 'timed_win':
         if score[2]:
@@ -1449,7 +1457,7 @@ def performance_tier(game, score):
         value = score[1]
     else:  # guesses, time: the score is the number
         value = score
-    return GOOD if value <= good else MEDIUM if value <= medium else BAD
+    return GREAT if value <= great else GOOD if value <= good else ROUGH
 
 
 def place_at_post(metric, score, earlier):
@@ -1475,7 +1483,7 @@ def tier_examples():
 def result_reactions(tier, place, seed=''):
     """The emoji a result is reacted with, in order: its place -- a medal on the
     podium, a thumbs up below it -- then its tier, then a flourish or two if it
-    was good enough to earn one. A poop gets no place, as it gets no medal on
+    was great enough to earn one. A poop gets no place, as it gets no medal on
     the board, and neither does a result with no place.
 
     Every tier speaks, drawn at random from its own TIER_EMOJI pool, except the
