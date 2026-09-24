@@ -1329,6 +1329,12 @@ HIGHER_IS_BETTER = ('score', 'maptap')
 
 # The board's podium: the day's winner and each game's top three.
 MEDALS = ('\U0001F451', '\U0001F948', '\U0001F949')
+# What a line takes instead of a medal when it earned no place: a failed
+# result (is_poop), and -- on the placement scale, where the day's turnout is
+# what first place is worth -- a player the scale already ranked last for not
+# turning up at all. NO_SHOW_SCORE is that line's score, since there isn't one.
+POOP_MEDAL = '\U0001F4A9'
+NO_SHOW_SCORE = 'DNF'
 # The podium a reaction marks. A set of its own, so the board keeps its crown
 # while a reaction reads as the medals it sits beside: silver and bronze are
 # the same characters either way, and only first place differs.
@@ -1590,13 +1596,12 @@ def compute_points(results, games, minimum_players=1, first_place_points=None):
     return dict(points)
 
 
-def rotation_points_base(results, games, minimum_players=1):
-    """What first place is worth on a rotation day: how many players it drew.
+def rotation_players(results, games, minimum_players=1):
+    """Everyone who turned out across `games` -- the day's player pool.
 
-    Counts the distinct players across `games` -- pass the rotation's games --
-    so a win rides on everyone who showed up anywhere in the rotation rather
-    than on the turnout of the one game being scored. A 4-player day pays 4 for
-    first in its 2-player game just as it does in its 4-player one.
+    Pass the rotation's games: the pool is what the placement scale is built
+    on, so a win rides on everyone who showed up anywhere in the rotation
+    rather than on the turnout of the one game being scored.
 
     Games below minimum_players score nobody, so their players are not in the
     pool either -- the same games the board leaves off. That also keeps the
@@ -1605,13 +1610,25 @@ def rotation_points_base(results, games, minimum_players=1):
 
     Poops count. A failed result is participation, the same way it already
     counts in the per-game field it pads out (and in swap-mode earn-in).
+
+    The set, not just its size, because the board spends both: the count is
+    what first place is worth (rotation_points_base), and the members are who
+    a game's no-show lines name (_format_game_players). One definition, so the
+    players the scale counts are exactly the players it draws.
     """
     players = set()
     for game in games:
         scores = results.get(game.key) or {}
         if len(scores) >= minimum_players:
             players.update(scores)
-    return len(players)
+    return players
+
+
+def rotation_points_base(results, games, minimum_players=1):
+    """What first place is worth on a rotation day: how many players it drew.
+    A 4-player day pays 4 for first in its 2-player game just as it does in
+    its 4-player one. See rotation_players for who is counted."""
+    return len(rotation_players(results, games, minimum_players))
 
 
 def points_per_game(results, games, minimum_players=1, rotation=None,
@@ -1754,10 +1771,21 @@ def _mmss(seconds):
 
 
 def _format_game_players(game_scores, metric, total, names=None,
-                         mention_limit=None, show_totals=True):
+                         mention_limit=None, show_totals=True, absent=()):
     """Format ranked player lines for a single game.
 
     Returns a markdown string with medal emojis, player mentions, and scores.
+
+    absent is the day's other players (rotation_players minus this game's),
+    drawn in below the ranked lines as one poop line. They belong to the
+    placement scale alone, where first place is worth the day's whole turnout:
+    a player who skipped this game has already been ranked under everyone in
+    it, and until they are on the board a 2-player game paying 5 for first
+    reads as arbitrary. They hold the place after the last real result, which
+    is what the mention ladder reduces them by; they earn nothing, extend
+    nothing, and move nobody's points, since the places above them are
+    unchanged by who sits below. Empty on every other scale, and on a live
+    board, where a player hasn't played YET.
 
     show_totals=False is the scoreboard's first text-budget reduction (see
     _REDUCTIONS): scores drop the "/N" they are out of. Only the scale goes --
@@ -1777,6 +1805,16 @@ def _format_game_players(game_scores, metric, total, names=None,
         if mention_limit is not None and rank > mention_limit and name:
             return _plain_name(name)
         return f'<@{uid}>'
+
+    def no_show_line():
+        """The `absent` players as one line, or '' when there are none. Their
+        place is the one after the field they sat out, so a game with a full
+        turnout renders exactly as it always has."""
+        if not absent:
+            return ''
+        rank = len(game_scores) + 1
+        players_str = ' '.join(mention(uid, rank) for uid in absent)
+        return f'{POOP_MEDAL} {players_str}: {NO_SHOW_SCORE}\n'
 
     # The "/N" every score with a maximum carries, and the one place the
     # show_totals rung is spent. Games with total=0 -- an open scale -- never
@@ -1808,7 +1846,7 @@ def _format_game_players(game_scores, metric, total, names=None,
                 j += 1
             medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
             if is_poop(metric, score_tuple, total):
-                medal = '💩 '
+                medal = f'{POOP_MEDAL} '
             players_str = " ".join(reversed(tied))
             if weighted_counts[weighted] > 1:
                 lines += f'{medal}{players_str}: {weighted} ({unweighted} unweighted)\n'
@@ -1816,7 +1854,7 @@ def _format_game_players(game_scores, metric, total, names=None,
                 lines += f'{medal}{players_str}: {weighted}\n'
             prev_val = score_tuple
             i = j
-        return lines
+        return lines + no_show_line()
 
     players = sorted(game_scores.items(), key=lambda x: score_sort_key(metric, x[1]))
 
@@ -1838,7 +1876,7 @@ def _format_game_players(game_scores, metric, total, names=None,
 
         medal = f"{medals[rank - 1]} " if rank <= len(medals) else ""
         if is_poop(metric, current_score, total):
-            medal = '💩 '
+            medal = f'{POOP_MEDAL} '
 
         if metric == 'time':
             score_str = _mmss(current_score)
@@ -1909,7 +1947,7 @@ def _format_game_players(game_scores, metric, total, names=None,
         prev_score = current_score
         i = j
 
-    return lines
+    return lines + no_show_line()
 
 
 def _puzzle_label(puzzle, reference_date):
@@ -2085,10 +2123,11 @@ def over_budget(components):
 
 # How a board is rendered. The full style is what every board has always used;
 # the ladder below relaxes one field at a time when a cap is exceeded.
-_Style = namedtuple('_Style', 'separators merge_games totals mention_limit '
-                              'urls game_streaks')
-_FULL_STYLE = _Style(separators=True, merge_games=False, totals=True,
-                     mention_limit=None, urls=True, game_streaks=True)
+_Style = namedtuple('_Style', 'separators merge_games no_shows totals '
+                              'mention_limit urls game_streaks')
+_FULL_STYLE = _Style(separators=True, merge_games=False, no_shows=True,
+                     totals=True, mention_limit=None, urls=True,
+                     game_streaks=True)
 
 # (field, relaxed value, the cap it relieves), least-lossy first.
 #
@@ -2098,13 +2137,17 @@ _FULL_STYLE = _Style(separators=True, merge_games=False, totals=True,
 # untouched. So each reduction is applied only when its own cap is the one over
 # budget -- a text-heavy board keeps its separators, and a game-heavy one keeps
 # every mention. Ordered so the board gives up decoration before it gives up
-# information: dividers, then per-game structure, then the scale each score is
-# out of, then pings below the podium, then links, then the last pings, and only
-# at the end the streaks -- the server line, the per-game fire suffixes and the
-# "streak ended" callouts, which are the one thing on the board a player cannot
-# read off their own line. No rung drops a game or a player, so the board stays
-# complete however far down the ladder it goes -- a board that silently omits a
-# game is indistinguishable from one an admin turned off.
+# information: dividers, then per-game structure, then the no-show lines, then
+# the scale each score is out of, then pings below the podium, then links, then
+# the last pings, and only at the end the streaks -- the server line, the
+# per-game fire suffixes and the "streak ended" callouts, which are the one
+# thing on the board a player cannot read off their own line. No rung drops a
+# game or a RESULT, so the board stays complete however far down the ladder it
+# goes -- a board that silently omits a game is indistinguishable from one an
+# admin turned off. The no-show lines are the one exception, and go first among
+# the text rungs precisely because they are the exception: they restate a
+# ranking the points summary already reflects, so a board under pressure loses
+# nothing that was actually played by dropping them.
 #
 # Past the last rung the text is irreducible: a line is down to a name, a score
 # and a newline, and 4000 characters holds around 200-230 of those however the
@@ -2115,6 +2158,7 @@ _FULL_STYLE = _Style(separators=True, merge_games=False, totals=True,
 _REDUCTIONS = (
     ('separators', False, 'components'),
     ('merge_games', True, 'components'),
+    ('no_shows', False, 'text'),
     ('totals', False, 'text'),
     ('mention_limit', PODIUM, 'text'),
     ('urls', False, 'text'),
@@ -2123,7 +2167,7 @@ _REDUCTIONS = (
 )
 
 
-def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None, rotation=None, rotation_off='shown', names=None, scoring=SCORING_PLACEMENT, standings_only=False, live=False, empty_hint=None):
+def format_scoreboard_components(results, reference_date, puzzle_numbers, title="Daily Game Scoreboard", minimum_players=1, streaks=None, game_overrides=None, rotation=None, rotation_off='shown', names=None, scoring=SCORING_PLACEMENT, standings_only=False, live=False, empty_hint=None, no_shows=True):
     """Format the scoreboard as Discord Components V2, within Discord's caps.
 
     Renders the full board, measures it, and if it breaks either cap re-renders
@@ -2154,8 +2198,17 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     board is the only surface the setting touches. Both headings appear only on
     a rotation board: without one there is no split to label.
 
-    scoring is the server's points scale (SCORING_*, see points_per_game); it
-    shapes the points summary alone, and `off` drops that summary entirely.
+    scoring is the server's points scale (SCORING_*, see points_per_game). It
+    shapes the points summary, which `off` drops entirely, and on `placement`
+    it also fills each scored game out to the day's full field: the players who
+    sat that game out are drawn in below it as poops, because that is where the
+    scale already ranked them (see _format_game_players). Only on a closed
+    board -- see `live`.
+
+    no_shows is the server's switch over that last part (/setup daily shame, the
+    guild's `daily_shame`), on by default. False renders the scored games at the
+    turnout they actually drew. It is presentation only: the same scale pays
+    the same points either way, since who sits below a place cannot change it.
 
     standings_only keeps the header container -- heading, server streak, points
     summary -- and drops every games section below it, which is the midday
@@ -2165,10 +2218,12 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
 
     live marks a board whose day is still open (the Scores button, the midday
     standings, a days_back=0 preview) rather than the closed day the posted
-    board scores. It changes nothing about a day that was played: the whole of
-    its effect is the empty board (empty_board_lines), which has to say "nobody
-    has played yet" on one and "nobody played" on the other. empty_hint
-    replaces that board's closing line with the caller's own.
+    board scores. It decides two things, both of them about what the board is
+    entitled to claim. The empty board (empty_board_lines) says "nobody has
+    played yet" on one and "nobody played" on the other; and only a closed
+    board draws the placement scale's no-shows, since a player missing from a
+    game at noon may simply not have got to it. empty_hint replaces the empty
+    board's closing line with the caller's own.
 
     Returns a list[dict] suitable for the 'components' field in a Discord message.
     """
@@ -2177,7 +2232,7 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
         components = _render_scoreboard(
             results, reference_date, puzzle_numbers, title, minimum_players,
             streaks, game_overrides, rotation, rotation_off, names, style,
-            scoring, standings_only, live, empty_hint)
+            scoring, standings_only, live, empty_hint, no_shows)
         over = over_budget(components)
         if not over:
             return components
@@ -2286,7 +2341,8 @@ def empty_board_lines(reference_date, games, rotation, streaks, live, hint=None)
 def _render_scoreboard(results, reference_date, puzzle_numbers, title,
                        minimum_players, streaks, game_overrides, rotation,
                        rotation_off, names, style, scoring=SCORING_PLACEMENT,
-                       standings_only=False, live=False, empty_hint=None):
+                       standings_only=False, live=False, empty_hint=None,
+                       no_shows=True):
     """One pass of the board at a given style. See format_scoreboard_components."""
     games = build_games(puzzle_numbers, game_overrides)
     rot = set(rotation) if rotation is not None else None
@@ -2345,6 +2401,27 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
 
     game_streaks = streaks['games'] if streaks and style.game_streaks else {}
 
+    # Who the placement scale ranked without a result to show. The pool is the
+    # one the scale is built on -- rotation_players over the games it scores --
+    # so first place being worth five is explained by the five names the board
+    # now carries, rather than left to be inferred from a two-player game.
+    #
+    # Closed boards only. On a live one a missing player hasn't played YET, and
+    # a poop that disappears when they do is a scolding the day hadn't earned.
+    # The other two scales never rank an absent player at all: per_game pays
+    # for who you beat in the game itself, and off pays nothing. Past all that
+    # a server can simply not want them (`no_shows`, /setup daily shame), and
+    # style.no_shows is the text-budget ladder's own rung.
+    scored = games if rot is None else [g for g in games if g.key in rot]
+    pool = (rotation_players(results, scored, minimum_players)
+            if no_shows and style.no_shows and scoring == SCORING_PLACEMENT
+            and not live else set())
+    # Off-rotation games keep the per-game scale for their frozen points
+    # (points_per_game), so the day's pool is not the field they belong to.
+    absent_by_game = {g.key: sorted(pool - set(results[g.key]),
+                                    key=lambda uid: (names or {}).get(uid) or uid)
+                      for g in qualified} if pool else {}
+
     def game_text(game):
         puzzle_label = _puzzle_label(game.puzzle, reference_date)
         titled = f"[{game.title}]({game.url})" if style.urls else game.title
@@ -2354,7 +2431,8 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
             score_text += f" \U0001F525{streak}"
         return score_text + "\n" + _format_game_players(
             results[game.key], game.metric, game.total, names,
-            style.mention_limit, show_totals=style.totals).rstrip('\n')
+            style.mention_limit, show_totals=style.totals,
+            absent=absent_by_game.get(game.key, ())).rstrip('\n')
 
     def game_sections(game_list):
         # Merging folds every game into one Text Display: the games read the

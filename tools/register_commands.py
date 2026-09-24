@@ -144,7 +144,7 @@ COMMANDS = [
                          'description': 'Choose which games are tracked in this server'},
             field_sub('limits', 'Display minimum and message volume'),
             toggle_sub('daily', 'Turn the daily scoreboard post on or off',
-                       'Post the daily scoreboard?'),
+                       'Post the daily scoreboard?', group='daily'),
             toggle_sub('sticky', 'Turn the Now Playing sticky on or off',
                        'Keep a sticky pinned to the bottom of the input channel?',
                        group='sticky'),

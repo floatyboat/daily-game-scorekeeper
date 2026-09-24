@@ -470,7 +470,8 @@ def process_guild(cfg, is_test, test_channel_id, days_back=1):
                                                   rotation_off=cfg['rotation_off_mode'],
                                                   names=build_name_map(messages),
                                                   scoring=cfg['scoring'],
-                                                  live=(days_back == 0))
+                                                  live=(days_back == 0),
+                                                  no_shows=cfg['daily_shame'])
         board_channel = test_channel_id if is_test else cfg['output_channel_id']
         response = send_message(board_channel, components=components)
         note('posted scoreboard')

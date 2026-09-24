@@ -19,7 +19,7 @@ there is the whole onboarding — no redeploy, no config file.
 
 | Surface | What it is |
 |---|---|
-| **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and the server's streaks — off-rotation plays listed below the scored games for zero points. |
+| **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and the server's streaks — off-rotation plays listed below the scored games for zero points. On the default points scale, where first place is worth the day's whole turnout, each scored game is filled out to that turnout: whoever skipped it is slotted in below everyone who played as a 💩 DNF, which is where the scale already ranked them (`/setup daily shame:false` to leave them off). |
 | **Today's games** | Posted at the server's day start while rotation is on (the default): the rotating subset of games that scores today, as play links. Lands right under the board when the board posts at that same hour. Servers that would rather not have a second daily message can switch just this post off. |
 | **Now Playing sticky** | One message kept at the bottom of the input channel: how much the server has played today, today's games as play buttons, the server streak in its heading, and **Play**, **Scores** and **Yesterday** underneath. |
 | **Reactions** | Opt-in per server: within a minute of a result being posted, the bot reacts to it with how it went (💯 aced, 😎 great, 🙂 good, 😬 rough, 💩 poop) and where it placed in that game at that moment (👑 🥈 🥉, 👍 below third, nothing for the first to post). Great, good and rough are set per game. |
@@ -159,10 +159,16 @@ Defaults in parentheses.
   that post without touching the rotation itself — the day's set is still drawn, still
   scores the board, and still shapes the sticky and `/play`; the server just gets one
   message a day instead of two.
-- **`/setup daily enabled:false`** — pause the daily post. The sticky drops its
-  Yesterday link while paused, since whatever board is still in the channel is stale.
-  Today's games keep being drawn and announced — pausing the board doesn't pause the
-  rotation.
+- **`/setup daily enabled:<bool> shame:<bool>`** (`true` / `true`) — `enabled:false`
+  pauses the daily post. The sticky drops its Yesterday link while paused, since
+  whatever board is still in the channel is stale. Today's games keep being drawn and
+  announced — pausing the board doesn't pause the rotation.
+  `shame` fills each scored game out to the day's full turnout: whoever skipped it is
+  listed below everyone who played as a 💩 DNF, which is where the default points
+  scale already ranked them. Presentation only — the same scale pays the same points
+  either way — and it does nothing under `per_game` or `off` scoring, which never rank
+  a player who didn't turn up. The posted board only: mid-day the Scores button never
+  calls anyone a no-show, because they may simply not have got to it yet.
 - **`/setup sticky enabled:false`** — remove the sticky. While it's on, `games:1-5` puts
   that many of today's games on it as play buttons (off by default) — one row's worth is
   the cap, and whatever lands there is what `/play` leaves out.

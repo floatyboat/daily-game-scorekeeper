@@ -12,7 +12,8 @@ from game_parser import (
     build_games, compute_puzzle_numbers, format_scoreboard_components,
     make_timestamp_checker, game_sort_key, match_suggestion, GAME_SPECS,
     spec_enabled, game_link_button, sticky_row_games,
-    SCORING_PER_GAME, SCORING_OFF, tier_examples, ACED, PLACE_EMOJI, BELOW_PODIUM,
+    SCORING_PLACEMENT, SCORING_PER_GAME, SCORING_OFF, tier_examples, ACED,
+    PLACE_EMOJI, BELOW_PODIUM, POOP_MEDAL, NO_SHOW_SCORE,
 )
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
@@ -269,7 +270,7 @@ def build_stats_response(channel_id, user_id=None, guild_id=None, cfg=None):
 HELP_HEADING = "### ❓ How the scoreboard works"
 
 
-def _scoring_blurb(mode, board, rotation):
+def _scoring_blurb(mode, board, rotation, shame=True):
     crown = 'takes the \U0001F451 on the morning board' if board else 'takes the \U0001F451'
     if mode == SCORING_PER_GAME:
         return ("each game pays **1 point plus one for every player you beat**; the "
@@ -281,9 +282,14 @@ def _scoring_blurb(mode, board, rotation):
     # server running without one says plain "any game"; the scale is the same
     # either way (first place is worth the day's turnout).
     where = "any of today's games" if rotation else 'any game'
+    # The other half of a scale built on the day's turnout: skipping a game
+    # puts you under everyone who played it. The board draws that as a poop, so
+    # it is explained here -- but only where there is a board to see it on.
+    skipped = (f" Sit one out and you place last in it ({POOP_MEDAL} "
+               f"{NO_SHOW_SCORE})." if board and shame else '')
     return (f"first place in {where} is worth **the number of players "
             "who showed up today**, one fewer for each place below; the most points "
-            f"across the day {crown}.")
+            f"across the day {crown}.{skipped}")
 
 
 def _listing(places):
@@ -324,7 +330,7 @@ def build_help_text(cfg):
         f"\U0001F3AE **Play**: pick a game from {'the sticky or ' if sticky else ''}`/play`, "
         f"then paste the share text it gives you into {channel}. That's it: the bot "
         "reads it from there.",
-        f"\U0001F3C6 **Points**: {_scoring_blurb(cfg['scoring'], board, cfg['rotation_enabled'])}",
+        f"\U0001F3C6 **Points**: {_scoring_blurb(cfg['scoring'], board, cfg['rotation_enabled'], cfg['daily_shame'])}",
         f"\U0001F504 **Today's games**: {rotation}",
         day,
         streaks,
@@ -988,6 +994,19 @@ def delete_stickies(channel_id):
     return removed
 
 
+def _shame_phrase(cfg):
+    """The board's no-show lines in a few words, for the summary and the
+    /setup daily reply. Named for the setting (`shame`), phrased for the board,
+    where the line itself reads DNF. Says plainly when the setting is moot: the
+    lines only exist on the placement scale, which is the only one that ranks a
+    player who never turned up."""
+    if not cfg['daily_shame']:
+        return 'no DNF lines'
+    if cfg['scoring'] != SCORING_PLACEMENT:
+        return f"DNF lines on (unused while scoring is {cfg['scoring']})"
+    return f'skipped games shown as {POOP_MEDAL} {NO_SHOW_SCORE}'
+
+
 def sticky_row_phrase(count):
     """The sticky's game row in prose, for the summary and the toggle reply."""
     if not count:
@@ -1007,7 +1026,8 @@ def config_summary(cfg):
     lines += [f'{c.label.capitalize()} ({c.blurb}): {ch(cfg[c.fields[0]])}'
               for c in store.CHANNEL_SUBS if not c.combined]
     lines += [
-        f"Daily scoreboard: **{onoff(cfg['daily_enabled'])}** · "
+        f"Daily scoreboard: **{onoff(cfg['daily_enabled'])}** "
+        f"({_shame_phrase(cfg)}) · "
         f"Sticky: **{onoff(cfg['sticky_enabled'])}** "
         f"({sticky_row_phrase(cfg['sticky_games'])}) · "
         f"Link previews: **{'stripped' if cfg['suppress_embeds'] else 'kept'}** · "
@@ -1081,12 +1101,17 @@ def handle_setup(body, guild_id):
         return _ephemeral(err or text)
 
     if sub == 'daily':
+        # `dnf` rides along on this subcommand (store.CONFIG_FIELDS declares it
+        # group='daily'), the same way the sticky's own fields do. Options left
+        # out keep their stored values.
         enabled = bool(args.get('enabled'))
-        store.update_config(guild_id, {'daily_enabled': enabled})
-        if enabled:
-            return _ephemeral('▶️ Daily scoreboard resumed — posts at its scheduled hour.')
-        return _ephemeral('⏸️ Daily scoreboard paused — no daily posts, '
-                          'and the sticky drops its Yesterday link.')
+        updates = {'daily_enabled': enabled, **collect_updates('daily', args)}
+        store.update_config(guild_id, updates)
+        if not enabled:
+            return _ephemeral('⏸️ Daily scoreboard paused — no daily posts, '
+                              'and the sticky drops its Yesterday link.')
+        return _ephemeral('▶️ Daily scoreboard resumed — posts at its scheduled '
+                          f'hour, {_shame_phrase({**cfg, **updates})}.')
 
     if sub == 'sticky':
         # `games` and `delete_wordle_recap` ride along on this subcommand

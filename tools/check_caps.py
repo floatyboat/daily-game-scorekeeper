@@ -71,11 +71,35 @@ def fake_score(metric, i):
             'score': 50 + i}.get(metric, 3)
 
 
+def turnout(uids, game_index, skipped):
+    """The players who showed up for one game: everybody, or everybody but
+    `skipped` of them, rotated by the game so no player sits out the whole day
+    and the day's pool stays the full field.
+
+    A sparse day is what the placement scale's no-show lines are for, and they
+    fill each game back out to that field -- so a skipped board renders the
+    same score_lines as a dense one, with some of them reading DNF.
+    """
+    if not skipped:
+        return list(uids)
+    n = len(uids)
+    return [u for i, u in enumerate(uids) if (i - game_index) % n >= skipped]
+
+
+def board_text(board):
+    """Every Text Display's content, joined -- for asserting what a board says
+    rather than only how big it is."""
+    return '\n'.join(
+        (c.get('content') or '') if c.get('type') == 10 else board_text(c.get('components') or [])
+        for c in board)
+
+
 def score_lines(n_games, n_players):
     return n_games * n_players
 
 
-def build(n_games, n_players, *, broken=False, off_rotation=0, with_names=True):
+def build(n_games, n_players, *, broken=False, off_rotation=0, with_names=True,
+          skipped=0):
     """One board, plus the reduction rungs its render needed."""
     original = gp.GAME_SPECS
     gp.GAME_SPECS = spec_pool(n_games)
@@ -84,8 +108,9 @@ def build(n_games, n_players, *, broken=False, off_rotation=0, with_names=True):
         overrides = {s.key: True for s in gp.GAME_SPECS}
         games = gp.build_games(pn, overrides)
         uids = [str(100000000000000000 + i) for i in range(n_players)]
-        results = {g.key: {u: fake_score(g.metric, i) for i, u in enumerate(uids)}
-                   for g in games}
+        results = {g.key: {u: fake_score(g.metric, i)
+                           for i, u in enumerate(turnout(uids, gi, skipped))}
+                   for gi, g in enumerate(games)}
         keys = [g.key for g in games]
         streaks = None
         if broken:
@@ -154,6 +179,10 @@ def main():
         ('streak breaks', dict(broken=True)),
         ('rotation split', dict(off_rotation=3)),
         ('rotation split + breaks', dict(broken=True, off_rotation=3)),
+        # A sparse day, where the placement scale draws its no-shows: the same
+        # grid of lines as a dense one, so it is measured the same way.
+        ('no-shows', dict(skipped=2)),
+        ('no-shows + rotation split', dict(skipped=2, off_rotation=3)),
     ]
     # The dense case fills today's spec count right up to the envelope; a fixed
     # player count walks past it as specs are added, into shapes no formatting
@@ -195,6 +224,21 @@ def main():
         elif args.report:
             print(f'  all {n_specs} games x 3 players costs separators only')
 
+    # The placement scale ranks a player who skipped a game below everyone in
+    # it, and on a closed board says so. Asserted here because it is the one
+    # thing the ladder is allowed to drop, and a rung that silently never fires
+    # would look exactly like a feature that silently never rendered.
+    # A fixed shape well inside the envelope, so the ladder never reaches the
+    # rung that would drop the very lines this asserts.
+    board, rungs, _ = build(10, 6, skipped=2)
+    if rungs:
+        failures.append(f'the no-show shape left the envelope: {rungs}')
+    elif gp.NO_SHOW_SCORE not in board_text(board):
+        failures.append('a sparse closed board drew no no-show lines')
+    elif args.report:
+        print('  sparse board (10 games x 6, 2 sitting out each) draws its '
+              'no-shows, unreduced')
+
     # The empty board still renders (and still carries its break callouts).
     empty = gp.format_scoreboard_components({}, REF, gp.compute_puzzle_numbers(REF))
     if not empty or gp.count_components(empty) > gp.MAX_TOTAL_COMPONENTS:
@@ -226,6 +270,9 @@ def main():
             failures.append(f'{n_games}x{n_players}: gave up with rungs left: {missing}')
         elif not (len(board) >= 2 and gp.displayable_text(board) > 0):
             failures.append(f'{n_games}x{n_players}: board came back empty')
+        elif gp.NO_SHOW_SCORE in board_text(build(n_games, n_players, skipped=2)[0]):
+            failures.append(f'{n_games}x{n_players}: kept its no-show lines '
+                            f'after spending every text rung')
         elif args.report:
             print(f'  {n_games} games x {n_players} players: '
                   f'{gp.count_components(board)} comp (under cap), every text rung '

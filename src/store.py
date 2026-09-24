@@ -226,6 +226,16 @@ CONFIG_FIELDS = [
     # ride along on the sticky toggle as optional options, since they only
     # mean anything while the sticky is on.
     ConfigField('daily_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
+    # Rides along on /setup daily, since the posted board is the only surface
+    # it touches. On the placement scale first place is worth the day's whole
+    # turnout, so a player who skipped a scored game has already been ranked
+    # under everyone in it; on by default, the board says so. A server that
+    # reads that as a callout rather than an explanation turns it off, and the
+    # scale is unchanged either way -- this moves nobody's points.
+    ConfigField('daily_shame', default=True, coerce=bool, group='daily',
+                option='shame', opt_type=OPT_BOOLEAN,
+                describe='List who skipped each scored game as \U0001F4A9 DNF '
+                         '(placement scoring only; default on)'),
     ConfigField('sticky_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     # Capped at the width of one action row: a sixth button wraps to a second
     # row, which is the screenful the sticky is trying not to be.
