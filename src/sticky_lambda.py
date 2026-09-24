@@ -305,17 +305,16 @@ def run_commentary(cfg, now_local, day, messages, results, puzzle_numbers, times
     tick = commentary.make_tick(cfg, now_local, messages, results, puzzle_numbers, times,
                                 streaks, guild_aggs(gid), None, state, DISCORD_BOT_ID)
     post = commentary.evaluate(tick, commentary.STICKY)
+    if not post:
+        return f"commentary: {commentary.blocked(tick) or 'quiet'}"
     # Record BEFORE posting: two passes share this state, and a post whose
     # record failed would be re-detected and said again the next time a human
     # posts, whereas a recorded post that failed to send is merely lost. A
     # record that raises here therefore also stops the post.
     if not force:
-        ids, snapshot = commentary.to_record(tick, post, sent=post is not None)
-        store.record_commentary(gid, day, ids, snapshot)
-    if post:
-        messages.insert(0, send_commentary(_session, cfg['input_channel_id'], post))
-        return f'commentary: posted {post.kind}'
-    return f"commentary: {commentary.blocked(tick) or 'quiet'}"
+        store.record_commentary(gid, day, post.event_ids)
+    messages.insert(0, send_commentary(_session, cfg['input_channel_id'], post))
+    return f'commentary: posted {post.kind}'
 
 
 # One entry per guild whose last pass ended settled; run_guild's probe uses it
@@ -324,6 +323,7 @@ def run_commentary(cfg, now_local, day, messages, results, puzzle_numbers, times
 # from one tick to the next and the common case collapses to one tiny fetch.
 _probe_state = {}   # guild_id -> {'fingerprint', 'newest_id', 'expires'}
 PROBE_MAX_AGE = 600
+PROBE_UNCHANGED = 'unchanged (probe)'
 
 # Don't start another guild with less than this left on the clock; a typical
 # pass is well under it, so the margin only ever trims the pathological runs.
@@ -363,7 +363,7 @@ def run_guild(cfg, force=False):
             and state['expires'] > time.monotonic():
         probe = fetch_messages(_session, channel_id, limit=1)
         if probe and probe[0]['id'] == state['newest_id']:
-            return 'unchanged (probe)'
+            return PROBE_UNCHANGED
     _probe_state.pop(gid, None)
 
     rotation = store.current_rotation(cfg, today_day)
@@ -533,11 +533,19 @@ def lambda_handler(event, context):
             for later in configs[i:]:
                 summary[later['guild_id']] = 'deferred: out of time'
             break
+        started = time.monotonic()
         try:
             summary[gid] = run_guild(cfg)
         except Exception as e:
             traceback.print_exc()
             summary[gid] = f'FAILED {type(e).__name__}: {e}'
+        # One log line per pass that did work, with what it cost: a scheduled
+        # invocation's return value is never logged, so without this the
+        # channel is the only record of what a tick did. The probe
+        # short-circuit is the steady state and is left out, or it would be
+        # nearly every line; a guild missing from a tick's log held settled.
+        if summary[gid] != PROBE_UNCHANGED:
+            print(f'guild {gid}: {summary[gid]} ({time.monotonic() - started:.1f}s)')
 
     if not summary:
         summary = 'no guilds with a sticky to run'

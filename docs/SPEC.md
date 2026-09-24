@@ -73,10 +73,9 @@ GUILD#<guild_id>            DAY#<YYYY-MM-DD>   full parsed results for the day:
                                                frozen on. The durable archive + rebuild
                                                source.
 GUILD#<guild_id>            COMMENTARY#<day>   the commentary's state for the day:
-                                               `announced` (string set of event ids that
-                                               have gone out, ADDed to) and `standings`
-                                               (JSON snapshot of the last pass, SET);
-                                               shared by the daily and sticky lambdas
+                                               `announced`, a string set of the event ids
+                                               that have gone out (ADDed to); shared by
+                                               the daily and sticky lambdas
 GUILD#<guild_id>            AGG#SERVER         overall server streak (points scored in ANY
                                                game that day): current_streak, best_streak,
                                                last_played_day
@@ -454,12 +453,17 @@ players are (the test channel on a test run).
   button, so the line is dropped rather than pointed at nothing. *First
   result*: a player in today's results who is in no game's all-time `players` set —
   checked only once yesterday is finalized, since the sets fold at post hour. *Lead
-  change*: a new **sole** leader who is clear of one win's worth of points (`one_win`: the
-  pool under `placement`, the biggest game's field under `per_game`), at most once per
-  clock hour — the event id is the hour, so a second change in the same hour dedups away.
-  Replays of real days showed the lead flipping on every result through the first two
-  hours at 2 to 6 points, and shared leads flipping back within minutes; this rule kept
-  the two or three changes a day that were news. *Clean sweep*: one player sole first in
+  change*: someone takes **sole** control of the lead — one player alone on top, clear of
+  one win's worth of points (`one_win`: the pool under `placement`, the biggest game's
+  field under `per_game`), who is not the leader the day's latest lead line already named.
+  The comparison is with the last announcement, not the previous pass's standings:
+  measured pass to pass, a tie at the top resolving in one player's favour read as no
+  change (they were already among the leaders), and since a shared lead is never
+  announced, taking the lead out of a tie went unsaid. The event id (`lead:<n>:<uid>`)
+  names the leader, which is how the trigger knows who it last announced without a second
+  state attribute; a leader briefly caught who pulls clear again is not announced twice.
+  No rate limit: replays showed the early flip-flops happen at 2 to 6 points, under the
+  one-win floor. *Clean sweep*: one player sole first in
   most of the day's scored games — a strict majority of the slate (`tick.scored`, so the
   rotation when there is one) and never fewer than `SWEEP_MIN_GAMES` (3). The bar is a
   share of the day, not a count of results, because measuring it against what had been
@@ -485,12 +489,12 @@ players are (the test channel on a test run).
   A composed post takes the loudest level of the parts that are actually IN it
   (`commentary.loudest`) — a losing body waits for a later pass and must not raise the
   level of a message it contributed nothing to.
-- **State** (`COMMENTARY#<day>`, two attributes): `announced`, a string set of every event
+- **State** (`COMMENTARY#<day>`, one attribute): `announced`, a string set of every event
   id that has gone out — nothing is said twice, and a body that lost a pass to a
-  higher-priority one is simply re-detected next time — and `standings`, the last pass's
-  snapshot the lead-change trigger compares against. Two writers share it, so
-  `store.record_commentary` **updates** rather than overwrites: `ADD` on the set, `SET` on
-  the snapshot, and only when a pass has something to fold (`to_record`) — **before** the
+  higher-priority one is simply re-detected next time. A kind that has to remember more
+  keeps it in its ids (a lead change's id names the leader). Two writers share it, so
+  `store.record_commentary` **updates** rather than overwrites: `ADD` on the set, only
+  when a pass has a post to record — **before** the
   post goes out, so a record that fails stops the post rather than letting an unrecorded
   one be said again the next time a human posts. `once` kinds
   (last call, midday) have their key as their one id and are not even asked again after

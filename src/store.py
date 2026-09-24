@@ -1112,8 +1112,7 @@ def rebuild_aggregates(guild_id, through_day):
 # One item per guild per day for the commentary (commentary.py), written by BOTH
 # passes that post it -- the daily lambda's hour and the sticky's minute -- so it
 # is updated, never overwritten: the announced ids are a string set the writers
-# ADD to (a union, so whoever writes second loses nothing), and the standings
-# snapshot is a plain SET of the latest view.
+# ADD to (a union, so whoever writes second loses nothing).
 
 COMMENTARY_PREFIX = 'COMMENTARY#'
 
@@ -1123,29 +1122,21 @@ def commentary_sk(day):
 
 
 def get_commentary(guild_id, day):
-    """{'announced': [ids], 'standings': [[uid, pts], ...]} for the day, empty
-    before the first pass -- the shape commentary.Tick.state carries."""
+    """{'announced': [ids]} for the day, empty before the first pass -- the
+    shape commentary.Tick.state carries."""
     resp = table().get_item(Key={'PK': guild_pk(guild_id), 'SK': commentary_sk(day)})
     item = resp.get('Item') or {}
-    return {'announced': sorted(item.get('announced') or ()),
-            'standings': json.loads(item['standings']) if item.get('standings') else []}
+    return {'announced': sorted(item.get('announced') or ())}
 
 
-def record_commentary(guild_id, day, announced=(), standings=None):
-    """Fold one pass's outcome in: ADD the ids it announced, SET the standings
-    it saw. Either alone is fine; nothing to fold is a no-op."""
-    parts, values = [], {}
-    if standings is not None:
-        parts.append('SET standings = :s')
-        values[':s'] = json.dumps(standings, default=str)
-    if announced:
-        parts.append('ADD announced :ids')
-        values[':ids'] = {str(i) for i in announced}
-    if not parts:
+def record_commentary(guild_id, day, announced):
+    """Fold one pass's post in: ADD the ids it announced. Nothing to fold is
+    a no-op."""
+    if not announced:
         return
     table().update_item(Key={'PK': guild_pk(guild_id), 'SK': commentary_sk(day)},
-                        UpdateExpression=' '.join(parts),
-                        ExpressionAttributeValues=values)
+                        UpdateExpression='ADD announced :ids',
+                        ExpressionAttributeValues={':ids': {str(i) for i in announced}})
 
 
 # --- Player profiles --------------------------------------------------------------

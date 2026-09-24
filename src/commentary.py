@@ -54,16 +54,17 @@ call needs that twice over: its server-streak branch only fires on a day nobody
 has played, which is exactly the day no one clears the morning board out of
 `unanswered`, so ANY would hold it back on every day it has something to say.
 
-Events are plain dicts with an `id`. The state, shared by both passes, keeps
-the ids of everything announced (nothing is said twice) and the standings of
-the last pass (so lead changes can be seen). A trigger with `once=True` has a
-single event per day whose id is its key, and is not even asked again once
-that has gone out -- what keeps the last call from re-reading every player's
-streaks on the ticks after it fired.
+Events are plain dicts with an `id`. The state, shared by both passes, is the
+set of ids announced today: nothing is said twice, and a kind that has to
+remember more than that keeps it in its ids -- a lead change's id names who
+took the lead, which is how the trigger knows the last leader it announced.
+A trigger with `once=True` has a single event per day whose id is its key,
+and is not even asked again once that has gone out -- what keeps the last
+call from re-reading every player's streaks on the ticks after it fired.
 
 Pure: no Discord, no DynamoDB. The two passes gather the inputs, make_tick
 assembles them, evaluate() decides, scoreboard.send_commentary posts and
-store.record_commentary persists what to_record() hands back.
+store.record_commentary persists the post's event ids.
 """
 
 import hashlib
@@ -139,7 +140,7 @@ class Tick:
     known_players: set   # every uid with a finalized result in this guild, ever
     player_aggs: object  # callable(uid) -> {SK: item}, memoized by the caller
     names: dict          # {uid: display name}, the board's mention fallback
-    state: dict          # {'announced': [...], 'standings': [[uid, pts], ...]}
+    state: dict          # {'announced': [event ids that have gone out today]}
     board_posted: bool   # the board covering yesterday has gone out (or there is none)
     unanswered: list     # the bot's own messages since anyone else spoke, newest first
 
@@ -285,13 +286,6 @@ def mention(uid):
     return f'<@{uid}>'
 
 
-def join_names(uids):
-    names = [mention(u) for u in uids]
-    if len(names) <= 1:
-        return ''.join(names)
-    return ', '.join(names[:-1]) + ' and ' + names[-1]
-
-
 def pts(n):
     return f"{n} pt{'' if n == 1 else 's'}"
 
@@ -352,7 +346,7 @@ def beatable(game, score):
 
 
 def standings(tick):
-    """[[uid, points], ...] best first -- the snapshot the state carries."""
+    """[[uid, points], ...] best first."""
     return [[uid, p] for uid, p in sorted(tick.totals.items(), key=lambda kv: (-kv[1], kv[0]))]
 
 
@@ -625,50 +619,67 @@ def sample_first_play(tick):
 
 # --- Lead change ------------------------------------------------------------------
 
+def lead_id(n, uid):
+    """The id of the day's n-th lead announcement. It names who took the lead,
+    so the day's announced ids double as the record of the last leader
+    announced (announced_leads) and the trigger needs no state of its own."""
+    return f'lead:{n}:{uid}'
+
+
+def announced_leads(state):
+    """[(n, uid)] for every lead announced today, in the order they went out."""
+    leads = []
+    for event_id in state.get('announced') or ():
+        parts = event_id.split(':')
+        if len(parts) == 3 and parts[0] == 'lead' and parts[1].isdigit():
+            leads.append((int(parts[1]), parts[2]))
+    return sorted(leads)
+
+
 def detect_lead(tick):
-    """A new sole leader, once they are clear of a single win's worth of points
-    and at most once an hour. Replaying real days showed the lead flipping on
-    every result through the first two hours of play, at 2 to 6 points, and a
-    shared lead flipping back within minutes -- none of it news. So: no shared
-    leads, no lead a single first place could have bought, and the event id is
-    the clock hour, which dedups a second change in the same hour away."""
-    prev = tick.state.get('standings') or []
+    """Someone takes sole control of the lead: one player alone on top, on
+    more than a single first place pays, with somebody behind them, and not
+    already the leader the day's latest lead announcement named.
+
+    The yardstick is the last ANNOUNCEMENT, not the last pass. Compared with
+    the previous pass's standings, a tie at the top resolving in one player's
+    favour looked like no change at all -- that player was already among the
+    leaders -- and since a shared lead is never announced, taking the lead out
+    of a tie was the one lead change the bot could not see. Judged against the
+    last announcement, a leader who is briefly caught and pulls clear again is
+    not announced twice, and a change that could not post when it happened
+    (before the board, say) is said once it can rather than lost. No rate
+    limit: the one-win floor is what keeps the early flip-flops quiet."""
     now = standings(tick)
-    if not prev or not now:
+    if len(now) < 2:
         return []
     top = now[0][1]
     leaders = [uid for uid, p in now if p == top]
     if len(leaders) != 1 or top <= one_win(tick) or top < LEAD_MIN_POINTS:
         return []
-    prev_top = prev[0][1]
-    prev_leaders = [uid for uid, p in prev if p == prev_top]
-    if leaders[0] in prev_leaders:
+    leads = announced_leads(tick.state)
+    if leads and leads[-1][1] == leaders[0]:
         return []
-    return [{'id': f'lead:{tick.hour}', 'leaders': leaders, 'points': top,
-             'previous': [u for u in prev_leaders if u not in leaders], 'now': dict(now)}]
+    chasers = [[uid, p] for uid, p in now[1:] if p == now[1][1]]
+    return [{'id': lead_id(len(leads) + 1, leaders[0]), 'leader': leaders[0],
+             'points': top, 'chasers': chasers}]
 
 
 def render_lead(events, tick):
     lines = []
     for e in events:
-        if len(e['leaders']) == 1:
-            line = pick(tick, f"lead:{e['id']}", [
-                f"\U0001F451 {mention(e['leaders'][0])} takes the lead with {pts(e['points'])}",
-                f"\U0001F451 New leader: {mention(e['leaders'][0])} on {pts(e['points'])}",
-            ])
-        else:
-            line = f"\U0001F451 {join_names(e['leaders'])} now share the lead at {pts(e['points'])}"
-        chasers = [f"{mention(u)} {e['now'].get(u, 0)}" for u in e['previous']]
-        if chasers:
-            line += f" ({', '.join(chasers)})"
-        lines.append(line)
+        line = pick(tick, e['id'], [
+            f"\U0001F451 {mention(e['leader'])} takes the lead with {pts(e['points'])}",
+            f"\U0001F451 New leader: {mention(e['leader'])} on {pts(e['points'])}",
+        ])
+        chasers = ', '.join(f'{mention(uid)} {p}' for uid, p in e['chasers'])
+        lines.append(f'{line} ({chasers})' if chasers else line)
     return Rendered(lines=lines)
 
 
 def sample_lead(tick):
     a, b = sample_players(tick, 2)
-    return [{'id': 'lead:sample', 'leaders': [a], 'points': 9, 'previous': [b],
-             'now': {a: 9, b: 7}}]
+    return [{'id': lead_id(1, a), 'leader': a, 'points': 9, 'chasers': [[b, 7]]}]
 
 
 # --- Clean sweep: one player alone at the top of most of the day's games ---------
@@ -858,7 +869,7 @@ def button_rows(buttons):
 
 def evaluate(tick, cadence):
     """The one post this pass should make, or None. Pure: nothing is marked
-    announced until to_record() sees the post went out."""
+    announced until the caller records the post."""
     announced = set(tick.state.get('announced') or ())
     found = []
     for trigger in enabled_triggers(tick.cfg, cadence):
@@ -921,16 +932,6 @@ def compose(found, tick):
     return Post(kind=trigger.key, content=content, components=button_rows(rendered.buttons),
                 mentions=list(rendered.mentions) if trigger.notify == PING else [],
                 event_ids=body_ids + ids, notify=loudest([trigger] + flavors))
-
-
-def to_record(tick, post, sent):
-    """What a pass should persist: (announced ids, standings) -- the ids only
-    when the post actually went out, the standings only when they moved. Both
-    None/empty means nothing to write."""
-    ids = list(post.event_ids) if post and sent else []
-    now = standings(tick)
-    snapshot = now if now != (tick.state.get('standings') or []) else None
-    return ids, snapshot
 
 
 def samples(tick):

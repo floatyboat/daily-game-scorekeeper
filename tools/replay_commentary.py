@@ -173,7 +173,7 @@ def replay(session, cfg, day, archive, history, overrides, nudge_after, midday_h
               f"{len(players)} players")
     print()
 
-    state = {'announced': [], 'standings': []}
+    state = {'announced': []}
     visible, idx, board_posted = [], 0, False
     posts, held_seen = [], set()
     minute = start
@@ -220,9 +220,8 @@ def replay(session, cfg, day, archive, history, overrides, nudge_after, midday_h
             tick = commentary.make_tick(cfg_now, minute, visible, results, pn, times, streaks,
                                         aggs, lambda u: per_player.get(u, {}), state, BOT_ID)
             post = commentary.evaluate(tick, cadence)
-            ids, snapshot = commentary.to_record(tick, post, sent=post is not None)
-            state = {'announced': sorted(set(state['announced']) | set(ids)),
-                     'standings': snapshot if snapshot is not None else state['standings']}
+            if post:
+                state = {'announced': sorted(set(state['announced']) | set(post.event_ids))}
             reason = commentary.blocked(tick)
             if not post and reason and reason != 'outside the window':
                 would = commentary.evaluate(replace(tick, unanswered=[], board_posted=True),

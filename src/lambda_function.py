@@ -615,15 +615,14 @@ def commentary_tick(cfg, is_test, test_channel_id, samples=False):
             send_commentary(_session, channel, post)
         return f'commentary samples: {len(posts)} posted to {channel}'
     post = commentary.evaluate(tick, commentary.HOURLY)
+    if not post:
+        return f"commentary: {commentary.blocked(tick) or 'nothing to say'}"
     # Record before posting, for the reason sticky_lambda.run_commentary gives:
     # a lost post beats a repeated one.
     if not is_test:
-        ids, snapshot = commentary.to_record(tick, post, sent=post is not None)
-        store.record_commentary(cfg['guild_id'], tick.day, ids, snapshot)
-    if post:
-        send_commentary(_session, channel, post)
-        return f'commentary: posted {post.kind}'
-    return f"commentary: {commentary.blocked(tick) or 'nothing to say'}"
+        store.record_commentary(cfg['guild_id'], tick.day, post.event_ids)
+    send_commentary(_session, channel, post)
+    return f'commentary: posted {post.kind}'
 
 
 def lambda_handler(event, context):
