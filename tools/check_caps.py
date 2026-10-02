@@ -163,8 +163,9 @@ def main():
 
     # Shapes inside the envelope must fit, every one of them. The grid spans
     # today's spec count and well past it, at player counts from a quiet
-    # Tuesday to a server an order of magnitude busier than this one.
-    for n_games in (1, 5, 10, n_specs, n_specs + 1, 25, 30):
+    # Tuesday to a server an order of magnitude busier than this one. A set,
+    # because the spec count has grown into the fixed sizes beside it.
+    for n_games in sorted({1, 5, 10, n_specs, n_specs + 1, 25, 30}):
         for n_players in (1, 2, 3, 6, 10, 12):
             if score_lines(n_games, n_players) > SUPPORTED_LINES:
                 continue

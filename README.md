@@ -36,10 +36,12 @@ and the bot picks it up.
 | Game | Link | Tracked by default |
 |---|---|---|
 | Bandle | https://bandle.app/daily | yes |
+| Chainle | https://chainle.io | yes |
 | Chronophoto | https://www.chronophoto.app/daily.html | yes |
 | Color | https://dialed.gg/color?d=1 | yes |
 | Color-Toon | https://dialed.gg/color2?d=1 | yes |
 | Connections | https://www.nytimes.com/games/connections | yes |
+| Costcodle | https://costcodle.com | no |
 | Enclose | https://enclose.horse | yes |
 | Fermi | https://fermi.gg | no |
 | Flagle | https://flagle.org | no |
@@ -141,7 +143,7 @@ Defaults in parentheses.
 - **`/setup games`** — a multi-select of every supported game, pre-ticked to this
   server's current state. A server can track up to 20 at once — as many as the Play
   list has room for.
-- **`/setup rotation enabled:<bool> games:<1-22> mode:<swap|random> keep_players:<n> promote_players:<n> off_rotation:<shown|hidden> announce:<bool>`**
+- **`/setup rotation enabled:<bool> games:<1-24> mode:<swap|random> keep_players:<n> promote_players:<n> off_rotation:<shown|hidden> announce:<bool>`**
   (`true` / `3` / `swap` / `5` / `5` / `shown` / `true`) — score only a rotating subset of games
   each day. In `swap` mode a spot is earned by play, against two separate thresholds:
   a game in the set holds its seat by drawing `keep_players`, a game outside it earns

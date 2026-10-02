@@ -537,7 +537,7 @@ class GameSpec:
 def _parse_bandle(m, content):
     score_str = m.group(1)
     total = int(m.group(2))
-    score = total + 1 if score_str == 'x' else int(score_str)
+    score = total + 1 if score_str.lower() == 'x' else int(score_str)
     return score, {'bandle_total': total}
 
 
@@ -799,6 +799,17 @@ def _parse_fermi(m, content):
             float(pct) if pct is not None else None), {}
 
 
+# Costcodle's guess limit. Shared by the Costcodle game spec and its extractor,
+# which scores a price that was never landed as one guess past it.
+COSTCODLE_TOTAL = 6
+
+
+def _parse_costcodle(m, content):
+    score_str = m.group(1)
+    score = COSTCODLE_TOTAL + 1 if score_str.upper() == 'X' else int(score_str)
+    return score, {}
+
+
 # --- The single source of truth ------------------------------------------------
 # List order is PARSE PRIORITY and is load-bearing: maptap_challenge must precede
 # maptap, whose '(.*)MapTap(.*)' pattern would otherwise swallow challenge
@@ -809,7 +820,7 @@ def _parse_fermi(m, content):
 # surfaces have Discord payload caps this list now feeds (scoreboard.py holds
 # the constants): the /setup games menu is one option per spec and tops out
 # at 25, and /play is one button per ENABLED game, which is why a server may
-# switch on at most MAX_ENABLED_GAMES (20) of them. 22 specs today. Past 25 the
+# switch on at most MAX_ENABLED_GAMES (20) of them. 24 specs today. Past 25 the
 # menu needs splitting across two messages -- see the FUTURE note in
 # scoreboard.py. A default-on game lands in every server at once, including
 # one already at the cap; build_play_response is what copes with that.
@@ -1065,6 +1076,50 @@ GAME_SPECS = [
         # Up: Geography' put a colon where this pattern needs the score line.
         pattern=lambda ref, n: re.compile(r'Size It Up\s*Overall Score\s*(\d+)', re.IGNORECASE),
         parse=lambda m, c: (int(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='chainle', emoji='⛓️', title='Chainle', metric='score',
+        total=5000, url='https://chainle.io',
+        breakpoints=(3250, 2250),
+        puzzle=lambda ref: (ref - datetime(2026, 8, 20)).days + 1,
+        # Five rounds of finding the word that links the clues, each worth up
+        # to 1000 for how well it does, so higher is better, with a ceiling of
+        # 5000. As with krillion, the line prints no total: the share text
+        # prints a tally, not a fraction. The breakpoints are the site's own:
+        # its closing verdict says 'Strong links across the game' from 65% of
+        # that ceiling and 'The chain held, mostly' from 45%.
+        #
+        # The tally is always grouped the en-US way ('3,040'), whatever the
+        # device, so unlike Wordle's number its comma is only ever a comma.
+        # What has moved is the layout around it: 'Chainle #44 · 3,040 🔗'
+        # today, and as late as #41 a bare heading with '2,770/5,000' on the
+        # line under it. So the pattern asks only for the first number after
+        # the heading, across a dot or a line break, which both layouts
+        # satisfy -- the old one is still what a replay of channel history
+        # (tools/backfill.py) finds.
+        #
+        # A game replayed from the site's archive shares this same text under
+        # its own day's number, with nothing marking it as a replay, so the
+        # number alone is what keeps one off today's board.
+        pattern=lambda ref, n: re.compile(rf'Chainle #{n}\b\s*·?\s*(\d[\d,]*)', re.IGNORECASE),
+        parse=lambda m, c: (int(m.group(1).replace(',', '')), {}),
+    ),
+    GameSpec(
+        key='costcodle', emoji='🛒', title='Costcodle', metric='guesses',
+        total=COSTCODLE_TOTAL, url='https://costcodle.com', disabled=True,
+        breakpoints=(3, 5),
+        puzzle=lambda ref: (ref - datetime(2023, 9, 20)).days + 1,
+        # Six guesses at what a Costco product costs, each answered with which
+        # way to go and how far off it was; one within 5% of the price wins.
+        # The heading carries the whole result -- 'Costcodle #1109 5/6', or
+        # X/6 when no guess landed -- so the rows of arrows under it are never
+        # read.
+        #
+        # The site counts the days since 21 September 2023, rounds a part day
+        # up and adds one, which makes that date itself #2 -- hence a puzzle
+        # number that starts counting from the day before.
+        pattern=lambda ref, n: re.compile(rf'Costcodle #{n} ([1-6X])/6', re.IGNORECASE),
+        parse=_parse_costcodle,
     ),
 ]
 

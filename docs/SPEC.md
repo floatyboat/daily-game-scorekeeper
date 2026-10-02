@@ -148,7 +148,7 @@ registrar and the handler.
 | `reactions_enabled` | `reactions enabled` | `false` | Whether the sticky pass reacts to each fresh result with how it went and where it placed — see Reactions |
 | `reactions_rotation_only` | `reactions rotation_only` | `false` | While a rotation governs the day, react only to its games |
 | `rotation_enabled` | `rotation enabled` | `true` | Score only a rotating subset of the enabled games each day |
-| `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 22), so adding a game widens the option — re-run `register_commands.py` for the picker to follow |
+| `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 24), so adding a game widens the option — re-run `register_commands.py` for the picker to follow |
 | `rotation_mode` | `rotation mode` | `swap` | `swap` replaces under-played members, `random` re-draws daily |
 | `rotation_keep_players` | `rotation keep_players` | `5` | Swap threshold to hold a seat: a scored game under it rotates out |
 | `rotation_promote_players` | `rotation promote_players` | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
@@ -196,11 +196,11 @@ afterwards; every reply from them says so.
   it ranks on, whose scale belongs to the day's puzzle and not to the player. Lower is
   better, except for the metrics that count upward (`HIGHER_IS_BETTER`: `score`, `maptap`),
   which read the same way round as they rank. A score game still carries its real ceiling
-  in `total` (Chronophoto 5000, Krillion 700, Size It Up 500, MapTap 1000), because that is
-  what a result has to reach to be aced — no score game's board line prints it, so the
-  ceiling never reads as a fraction, while guesses, connections and cryptic lines keep
-  their "/N". A spec without breakpoints gets no great, good or rough: Minute Cryptic is the
-  one game that carries none on purpose, being tiered on the day's community par instead.
+  in `total` (Chronophoto and Chainle 5000, Krillion 700, Size It Up 500, MapTap 1000),
+  because that is what a result has to reach to be aced — no score game's board line prints
+  it, so the ceiling never reads as a fraction, while guesses, connections and cryptic lines
+  keep their "/N". A spec without breakpoints gets no great, good or rough: Minute Cryptic is
+  the one game that carries none on purpose, being tiered on the day's community par instead.
 - The effective list is resolved by `spec_enabled(spec, overrides)` / `build_games(pn,
   overrides)` and used by **all** paths: daily parse, aggregate updates, sticky counts, Play
   list, Scores, scoreboard render.
