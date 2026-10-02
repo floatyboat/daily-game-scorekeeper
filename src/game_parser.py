@@ -715,6 +715,24 @@ def _parse_quizl(m, content):
     return len(re.findall('\U0001F7E9', content)), {}   # count green squares
 
 
+# What a number format can put between thousands: a comma, a period, an
+# apostrophe of either kind or a space (\s takes the no-break ones too).
+# Optional, because some formats leave a four-digit number ungrouped.
+_THOUSANDS_SEPARATOR = r"[,.'’\s]?"
+
+
+def _wordle_number(n):
+    """Regex source for puzzle number n as a Wordle share writes it.
+
+    The other games' shares print bare digits. Wordle's groups the number the
+    way the device sharing it formats numbers, so one puzzle arrives as
+    '1,930', '1.930', '1 930' or a bare '1930' -- one player has posted two of
+    those from two devices. A pattern pinned to the comma drops every share
+    grouped any other way, and nothing says it did.
+    """
+    return f'{n:,}'.replace(',', _THOUSANDS_SEPARATOR)
+
+
 def _parse_wordle(m, content):
     score_str = m.group(1)
     score = DEFAULT_WORDLE_TOTAL + 1 if score_str.upper() == 'X' else int(score_str)
@@ -894,7 +912,7 @@ GAME_SPECS = [
         total=DEFAULT_WORDLE_TOTAL, url='https://www.nytimes.com/games/wordle',
         breakpoints=(3, 5),
         puzzle=lambda ref: (ref - datetime(2021, 6, 19)).days,
-        pattern=lambda ref, n: re.compile(rf'Wordle\s+{n:,}\s+([1-6X])/6', re.IGNORECASE),
+        pattern=lambda ref, n: re.compile(rf'Wordle\s+{_wordle_number(n)}\s+([1-6X])/6', re.IGNORECASE),
         parse=_parse_wordle,
     ),
     GameSpec(
@@ -1770,6 +1788,23 @@ def _mmss(seconds):
     return f'{seconds // 60}:{seconds % 60:02d}'
 
 
+def format_travle_score(score):
+    """A travle result as it reads wherever it is printed: '+N' on a solve (a
+    Perfect is a solve, and reads as one), 'N away' on a miss, then the
+    countries guessed in order and any hints. N is the number on the player's
+    own share: the hint penalty _parse_travle folds in for ranking is taken
+    back out. Shared by the board line and the commentary's tie line, so a
+    tie reads exactly like the lines it names."""
+    tier, effective_n, hints, neg_checks = score
+    checks = -neg_checks
+    raw_n = effective_n - hints * (hints + 1) // 2
+    parts = [f'{checks}✓'] if tier <= 0 or checks else []
+    if hints:
+        parts.append(f"{hints} hint{'' if hints == 1 else 's'}")
+    extra = f" ({', '.join(parts)})" if parts else ''
+    return f'+{raw_n}{extra}' if tier <= 0 else f'{raw_n} away{extra}'
+
+
 def _format_game_players(game_scores, metric, total, names=None,
                          mention_limit=None, show_totals=True, absent=()):
     """Format ranked player lines for a single game.
@@ -1904,21 +1939,7 @@ def _format_game_players(game_scores, metric, total, names=None,
         elif metric == 'score':
             score_str = f"{current_score}"
         elif metric == 'travle':
-            tier, eff_n, hints, neg_cm = current_score
-            k = -neg_cm
-            raw_n = eff_n - hints * (hints + 1) // 2  # undo hint penalty for display
-            parts = []
-            if tier <= 0 or k:
-                parts.append(f"{k}✓")
-            if hints:
-                parts.append(f"{hints} hint" + ("s" if hints != 1 else ""))
-            extra = f" ({', '.join(parts)})" if parts else ""
-            if tier <= 0:   # a perfect run is a solve, and reads as one here
-                score_str = f"+{raw_n}{extra}"
-            elif tier == 1:
-                score_str = f"{raw_n} away{extra}"
-            else:  # tier == 2: complete wiff
-                score_str = f"{raw_n} away{extra}"
+            score_str = format_travle_score(current_score)
         elif metric == 'cryptic':
             # (weighted, hints, letters, letters available). The raw hint count
             # leads, because that is the number on the player's own share; the

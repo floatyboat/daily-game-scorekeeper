@@ -76,9 +76,9 @@ from functools import cached_property
 from dateutil import parser as dateutil_parser
 
 from game_parser import (
-    build_games, format_scoreboard_components, game_link_button, game_sort_key,
-    is_poop, over_budget, rotation_points_base, score_sort_key, scoring_players,
-    shown_streak, total_points, SCORING_OFF, SCORING_PLACEMENT,
+    build_games, format_scoreboard_components, format_travle_score, game_link_button,
+    game_sort_key, is_poop, over_budget, rotation_points_base, score_sort_key,
+    scoring_players, shown_streak, total_points, SCORING_OFF, SCORING_PLACEMENT,
 )
 from scoreboard import (
     LOUDNESS, MAX_ACTION_ROWS, MAX_BUTTONS_PER_ROW, MIDDAY_TITLE, NOTIFY, PING,
@@ -117,9 +117,10 @@ LEAD_MIN_POINTS = 2
 # announced off two results.
 SWEEP_MIN_GAMES = 3
 
-# The metrics a tie can be talked about in -- "games that take guesses", where
-# a better score is a smaller count and beating the tie is a clear ask.
-TIE_METRICS = ('guesses', 'connections', 'cryptic')
+# The metrics a tie can be talked about in, where beating the tie is a clear
+# ask: fewer guesses, mistakes or hints, a travle closer to a Perfect, or a
+# higher score short of the game's ceiling (beatable says where each tops out).
+TIE_METRICS = ('guesses', 'connections', 'cryptic', 'travle', 'score')
 
 
 @dataclass
@@ -330,7 +331,11 @@ def short_score(game, score):
     if game.metric == 'cryptic':
         hints = score[1]
         return 'no hints' if hints == 0 else f"{hints} hint{'' if hints == 1 else 's'}"
-    return str(score)
+    if game.metric == 'travle':
+        # The in-order checks break ties at the same +N, so they are part of
+        # what is tied: the line reads like the board lines it names.
+        return format_travle_score(score)
+    return str(score)   # score: the bare number, as the board line prints it
 
 
 def beatable(game, score):
@@ -342,6 +347,12 @@ def beatable(game, score):
         return score[0] > 0
     if game.metric == 'cryptic':
         return score[1] > 0
+    if game.metric == 'travle':
+        return score[0] >= 0    # anything short of a Perfect, tier -1
+    if game.metric == 'score':
+        # The ceiling is the ace (performance_tier); a game without one has
+        # no top to reach, so any tie can be beaten.
+        return not game.total or score < game.total
     return False
 
 
@@ -789,7 +800,10 @@ def sample_tie(tick):
     if not games:
         return []
     g = games[0]
-    score = {'guesses': 4, 'connections': (1, 4), 'cryptic': (2, 2, 0, 0, 0)}[g.metric]
+    # A score game's scale is its own (5 greens, 100%, 5000 points), so its
+    # sample sits at four fifths of the ceiling rather than at a fixed number.
+    score = {'guesses': 4, 'connections': (1, 4), 'cryptic': (2, 2, 0, 0, 0),
+             'travle': (0, 1, 0, -3), 'score': g.total * 4 // 5}[g.metric]
     return [{'id': 'tie:sample', 'game': g.key, 'players': [a, b], 'score': score,
              'payout': on_offer(tick, g)}]
 

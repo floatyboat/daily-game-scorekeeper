@@ -473,9 +473,13 @@ players are (the test channel on a test run).
   making” only while that player holds every contested game — otherwise it just says how
   much of the day they have. How a single result went is no line at all: it is that
   result's own reaction (see Reactions). *Tie*: a scored
-  `guesses`/`connections`/`cryptic` game whose best non-poop score is shared and beatable,
-  with what first outright would pay. Every line has two or three phrasings, picked by a
-  hash of the day and the event, so a retried pass repeats itself rather than rewording.
+  `guesses`/`connections`/`cryptic`/`travle`/`score` game whose best non-poop score is
+  shared and beatable (anything short of one guess, no mistakes, no hints, a Travle
+  Perfect, or a score game's ceiling, its `total`: 5 greens in Quizl, 100% in Enclose),
+  with what first outright would pay. A Travle tie reads like its board lines, in-order
+  checks included (`+0 (3✓)`), since the checks are what break a tie at the same `+N`.
+  Every line has two or three phrasings, picked by a hash of the day and the event, so a
+  retried pass repeats itself rather than rewording.
   House style: no em dashes in any line except the per-player nudge lines.
 - **How loudly a post lands** (`Trigger.notify`, three levels defined in `scoreboard.py`
   beside the flag they map to, spent by `scoreboard.send_commentary`, shared by both
