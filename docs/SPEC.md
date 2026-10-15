@@ -144,7 +144,7 @@ few enough values is a menu, anything else a text box.
 | `commentary_enabled` | Basics | `true` | Whether the hourly commentary posts between boards — see Commentary |
 | `reactions_enabled` | Basics | `true` | Whether the sticky pass reacts to each fresh result with how it went and where it placed — see Reactions |
 | `scoring` | Basics | `placement` | The points scale: `placement` (1st is worth the day's turnout), `per_game` (1 + players beaten, game by game) or `off` (scores only, no points) — see Scoring modes |
-| `game_overrides` | Games | `{}` | Explicit per-guild flips of each game's default state |
+| `game_overrides` | Games | `{}` | Each game the guild has explicitly switched on or off; a game with no entry follows its default |
 | `hours_after_midnight` | Schedule | `0` | Hour the scoring day starts |
 | `post_hour` | Schedule | day start hour | Guild-local hour the board posts, repeating "Today's games" under it. The form shows the day start while it is unset, and a form saved without touching it leaves it unset |
 | `time_window_hours` | Schedule | `24` | Hours submissions stay open each day |
@@ -162,7 +162,7 @@ few enough values is a menu, anything else a text box.
 | `suppress_embeds` | Sticky | `true` | Whether link previews are stripped off counted results |
 | `delete_wordle_recap` | Sticky | `false` | Whether the sticky pass deletes the Wordle app's daily recap of yesterday's results |
 | `reactions_rotation_only` | Sticky | `false` | While a rotation governs the day, react only to its games |
-| `commentary_overrides` | Commentary | `{}` | Explicit per-guild flips of each message kind's default, keyed by `Trigger.key` |
+| `commentary_overrides` | Commentary | `{}` | Each message kind the guild has explicitly switched on or off, keyed by `Trigger.key`; a kind with no entry follows its default |
 | `commentary_midday_hour` | Commentary | `13` | Guild-local hour the midday standings board posts |
 | `commentary_last_call_hours` | Commentary | `3` | Hours before the window closes that the streak last call posts; `0` turns it off |
 | `commentary_nudge_after_hours` | Commentary | `2` | Hours since a player's last result before the nudge names them |
@@ -192,9 +192,10 @@ highlights the Basics button.
 - Each game is one `GameSpec` in `game_parser.GAME_SPECS`, carrying its key, title, emoji,
   metric, URL, puzzle-number function, match pattern, score parser, and `disabled` flag.
 - `GameSpec.disabled` is the game's **default only** — every game can be flipped either way
-  per guild. `config.game_overrides` stores just the explicit deviations, so a newly added
-  game reaches every guild with its coded default rather than a frozen snapshot of an old
-  menu submission.
+  per guild. `config.game_overrides` stores just the games a guild has explicitly chosen,
+  even a choice that matches today's default, so a newly added game, or one a guild never
+  touched, reaches it with its coded default rather than a frozen snapshot of an old menu
+  submission.
 - Flipping a *shipped* game's default moves every guild with no explicit choice for it,
   which includes guilds that customized the menu but never that game. Before such a flip,
   `tools/hold_game_default.py <key> --write` writes each such guild's current state in as
@@ -398,7 +399,7 @@ players are (the test channel on a test run).
   the one-post rule, the gates, the notification policy, the menu on `/setup`'s Commentary
   form (built from the registry, so a new kind needs no `register_commands` run) and
   persistence. The
-  per-kind switch is `commentary_overrides`, an explicit-deviations map resolved by
+  per-kind switch is `commentary_overrides`, a map of explicit choices resolved by
   `trigger_enabled()` exactly like `game_overrides` by `spec_enabled()`.
 - **Two cadences.** `HOURLY` kinds run on the daily lambda's tick
   (`lambda_function.commentary_tick`): the scheduled ones — last call, midday board,
