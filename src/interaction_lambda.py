@@ -297,7 +297,8 @@ def build_help_text(cfg):
                else 'the scoreboard channel')
     board, sticky = cfg['daily_enabled'], cfg['sticky_enabled']
     if cfg['rotation_enabled']:
-        n = cfg['rotation_count']
+        # More games always in the rotation than seats make it exactly them.
+        n = max(cfg['rotation_count'], len(store.fixed_games(cfg)))
         places = ['`/play`']
         if cfg['rotation_announce']:
             places.append("the daily Today's games post")

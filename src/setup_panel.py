@@ -63,8 +63,8 @@ def _sentence(text):
 @dataclass(frozen=True)
 class Catalog:
     """A setting that is a set of picks from a list declared in code -- the
-    games, the commentary kinds -- stored as overrides of each entry's coded
-    default.
+    games tracked, the games always in the rotation, the commentary kinds --
+    stored as overrides of each entry's coded default.
 
         entries  () -> the entries, in menu order; each has a `key`
         option   entry -> its menu option, minus the tick
@@ -89,14 +89,24 @@ class Catalog:
         return chosen
 
 
+def _games_by_title():
+    return sorted(GAME_SPECS, key=lambda s: s.title.lower())
+
+
+def _game_option(spec):
+    return {'label': spec.title, 'value': spec.key, 'emoji': {'name': spec.emoji}}
+
+
 CATALOGS = {
     # /play is one button per enabled game, five to a row under the Random
     # row, so the cap is what fits there (scoreboard.MAX_ENABLED_GAMES).
-    'game_overrides': Catalog(
-        entries=lambda: sorted(GAME_SPECS, key=lambda s: s.title.lower()),
-        option=lambda s: {'label': s.title, 'value': s.key, 'emoji': {'name': s.emoji}},
-        enabled=spec_enabled,
-        cap=MAX_ENABLED_GAMES),
+    'game_overrides': Catalog(entries=_games_by_title, option=_game_option,
+                              enabled=spec_enabled, cap=MAX_ENABLED_GAMES),
+    # The same list, ticked for the rotation rather than for tracking.
+    # Uncapped: more of them than seats makes the rotation exactly them, which
+    # the Rotation summary says.
+    'rotation_fixed': Catalog(entries=_games_by_title, option=_game_option,
+                              enabled=lambda s, fixed: fixed.get(s.key, False)),
     'commentary_overrides': Catalog(
         entries=lambda: commentary.TRIGGERS,
         option=lambda t: {'label': t.label, 'value': t.key, 'description': t.describe[:MAX_HINT]},
@@ -158,6 +168,17 @@ def _summarize_games(cfg):
     off = [s for s in GAME_SPECS if s not in enabled]
     lines = [f'Tracking {len(enabled)}: {_game_list(enabled)}' if enabled
              else '⚠️ Tracking no games, so the board stays empty until some are ticked.']
+    fixed = set(store.fixed_games(cfg))
+    if fixed:
+        idle = '' if cfg['rotation_enabled'] else ' (unused while the rotation is off)'
+        seated = [s for s in enabled if s.key in fixed]
+        lines.append(f'Always in the rotation: {_game_list(seated)}{idle}')
+    # Kept rather than refused at the save, so switching the game back on puts
+    # it straight back in the rotation -- but said, since it does nothing now.
+    untracked = [s for s in off if cfg['rotation_fixed'].get(s.key)]
+    if untracked:
+        lines.append('⚠️ Always in the rotation but not tracked, so never scored: '
+                     f'{_game_list(untracked)}')
     if off:
         lines.append(f'-# Off: {_game_list(off)}')
     return lines
@@ -192,17 +213,28 @@ def _summarize_board(cfg):
 def _summarize_rotation(cfg):
     if not cfg['rotation_enabled']:
         return [_off_in_basics('every tracked game scores, every day')]
-    shape = (f"{_amount(FIELDS['rotation_count'], cfg['rotation_count'])} a day, "
-             f"{_chosen('rotation_mode', cfg).lower()} draw")
-    # The thresholds are swap rules, so a random draw isn't told two numbers
-    # that are never consulted.
-    if cfg['rotation_mode'] == 'swap':
-        shape += (f" (a seat is kept at {cfg['rotation_keep_players']}+ players, "
-                  f"won at {cfg['rotation_promote_players']}+)")
+    by_key = {s.key: s for s in GAME_SPECS}
+    seats = cfg['rotation_count']
+    fixed = [by_key[k] for k in store.fixed_games(cfg)]
+    if len(fixed) >= seats:
+        # Every seat is taken before the draw, so the mode and the thresholds
+        # are never consulted, and the summary doesn't name them.
+        over = f' (more than the {seats} seats)' if len(fixed) > seats else ''
+        shape = (f"{_amount(FIELDS['rotation_count'], len(fixed))} a day, all of them "
+                 f"always in{over}, so nothing is drawn")
+    else:
+        shape = (f"{_amount(FIELDS['rotation_count'], seats)} a day, "
+                 f"{_chosen('rotation_mode', cfg).lower()} draw")
+        # The thresholds are swap rules, so a random draw isn't told two
+        # numbers that are never consulted.
+        if cfg['rotation_mode'] == 'swap':
+            shape += (f" (a seat is kept at {cfg['rotation_keep_players']}+ players, "
+                      f"won at {cfg['rotation_promote_players']}+)")
     lines = [shape + (' · announced' if cfg['rotation_announce'] else ' · drawn silently')]
+    if fixed:
+        lines.append(f'-# Always in (ticked under Games): {_game_list(fixed)}')
     tz = ZoneInfo(cfg['timezone'])
     today = store.day_str(reference_date(datetime.now(tz), tz, cfg['hours_after_midnight']))
-    by_key = {s.key: s for s in GAME_SPECS}
     todays = [by_key[k] for k in store.current_rotation(cfg, today) or () if k in by_key]
     if todays:
         lines.append(f"-# Today's games: {_game_list(todays)}")
@@ -573,6 +605,10 @@ def status_lines(cfg, updates, problems):
         notes.append('The first draw is announced with the next daily board.'
                      if after['rotation_announce'] else
                      "Today's games are drawn silently, with no announcement post.")
+    if 'rotation_fixed' in updates and after['rotation_enabled']:
+        notes.append('Games always in the rotation take or give up their seats at the next '
+                     f"draw, when the day starts at {after['hours_after_midnight']:02d}:00; "
+                     "today's games stand.")
     if updates.get('daily_enabled') is False:
         notes.append('No daily posts while the board is off, and the sticky drops its '
                      'Yesterday link.')

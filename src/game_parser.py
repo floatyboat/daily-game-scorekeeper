@@ -821,11 +821,14 @@ def _parse_costcodle(m, content):
 #
 # Adding a game is one entry here and nothing else. Two rendered surfaces have
 # Discord payload caps this list feeds (scoreboard.py holds the constants): the
-# Games form in /setup is one menu option per spec, 25 to a menu, and splits
-# into a second menu by itself past that; and /play is one button per ENABLED
-# game, which is why a server may switch on at most MAX_ENABLED_GAMES (20) of
-# them. A default-on game lands in every server at once, including one already
-# at the cap; build_play_response is what copes with that.
+# Games form in /setup is two menus of one option per spec -- the games tracked
+# and the games always in the rotation -- 25 to a menu, each splitting into a
+# second menu by itself past that, so the form stays inside Discord's five
+# components up to 50 games (setup_panel.check_limits refuses a deploy past
+# it); and /play is one button per ENABLED game, which is why a server may
+# switch on at most MAX_ENABLED_GAMES (20) of them. A default-on game lands in
+# every server at once, including one already at the cap; build_play_response
+# is what copes with that.
 
 GAME_SPECS = [
     GameSpec(
@@ -1165,9 +1168,9 @@ def spec_enabled(spec, game_overrides=None):
     return not spec.disabled
 
 
-def next_rotation(enabled_keys, count, mode, keep_players, promote_players,
-                  prev_rotation, results):
-    """Draw the rotation for a new day: the game keys that will score on it.
+def _draw_seats(enabled_keys, count, mode, keep_players, promote_players,
+                prev_rotation, results):
+    """The drawn seats of a new day's rotation: up to `count` of enabled_keys.
 
     prev_rotation is yesterday's list only when it actually governed the day
     just scored, else None -- None or mode='random' means a fresh sample of
@@ -1212,6 +1215,25 @@ def next_rotation(enabled_keys, count, mode, keep_players, promote_players,
     while len(rotation) < target and dropped:
         rotation.append(dropped.pop())
     return rotation
+
+
+def next_rotation(enabled_keys, count, mode, keep_players, promote_players,
+                  prev_rotation, results, fixed=()):
+    """Draw the rotation for a new day: the game keys that will score on it.
+
+    The `fixed` games (a server's rotation_fixed, see store.fixed_games) that
+    are enabled are seated first, whatever they drew, and count toward `count`:
+    as many as that or more, and they are the whole rotation. Only the seats
+    left are drawn (_draw_seats), from the other enabled games alone, and
+    yesterday's list is read against those same games, so a fixed game never
+    holds, wins or blocks a drawn seat. With nothing fixed, this is exactly
+    _draw_seats.
+    """
+    fixed = set(fixed)
+    seated = [k for k in enabled_keys if k in fixed]
+    rest = [k for k in enabled_keys if k not in fixed]
+    return seated + _draw_seats(rest, count - len(seated), mode, keep_players,
+                                promote_players, prev_rotation, results)
 
 
 def _alnum(text):

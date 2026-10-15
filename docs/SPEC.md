@@ -59,6 +59,7 @@ GUILDS                      GUILD#<guild_id>   per-server config: input_channel_
                                                rotation_promote_players,
                                                rotation_off_mode,
                                                game_overrides (map key->bool),
+                                               rotation_fixed (map key->bool),
                                                last_finalized_day, last_posted_day,
                                                missing_since (set while the bot is
                                                not in the guild),
@@ -145,6 +146,7 @@ few enough values is a menu, anything else a text box.
 | `reactions_enabled` | Basics | `true` | Whether the sticky pass reacts to each fresh result with how it went and where it placed — see Reactions |
 | `scoring` | Basics | `placement` | The points scale: `placement` (1st is worth the day's turnout), `per_game` (1 + players beaten, game by game) or `off` (scores only, no points) — see Scoring modes |
 | `game_overrides` | Games | `{}` | Each game the guild has explicitly switched on or off; a game with no entry follows its default |
+| `rotation_fixed` | Games | `{}` | Games kept in every day's rotation ("Always in the rotation"); only a `true` entry for a tracked game acts — see Daily rotation |
 | `hours_after_midnight` | Schedule | `0` | Hour the scoring day starts |
 | `post_hour` | Schedule | day start hour | Guild-local hour the board posts, repeating "Today's games" under it. The form shows the day start while it is unset, and a form saved without touching it leaves it unset |
 | `time_window_hours` | Schedule | `24` | Hours submissions stay open each day |
@@ -153,7 +155,7 @@ few enough values is a menu, anything else a text box.
 | `pin_keep_days` | Board | `30` | Days of boards kept pinned (1–`PIN_CAP`); older ones are unpinned |
 | `hundreds_of_messages` | Board | `1` | Input-channel volume (1–8), sets the fetch depth |
 | `daily_shame` | Board | `true` | Whether the posted board lists who skipped each scored game as a 💩 DNF, on the placement scale only |
-| `rotation_count` | Rotation | `5` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 25), so adding a game widens the form's menu with it, and past 25 games the form offers a text box instead |
+| `rotation_count` | Rotation | `5` | Games in the daily rotation, fixed games included; the upper bound is `len(GAME_SPECS)` (currently 25), so adding a game widens the form's menu with it, and past 25 games the form offers a text box instead |
 | `rotation_mode` | Rotation | `swap` | `swap` replaces under-played members, `random` re-draws daily |
 | `rotation_keep_players` | Rotation | `5` | Swap threshold to hold a seat: a scored game under it rotates out |
 | `rotation_promote_players` | Rotation | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
@@ -226,7 +228,11 @@ highlights the Basics button.
   to the guild's current effective state. A save records each game whose state it
   switched and leaves every other stored entry as it was (`setup_panel.Catalog`), so a
   choice a server made once — even one that matches today's default — survives later
-  saves, and a game it never touched keeps following its coded default.
+  saves, and a game it never touched keeps following its coded default. A second
+  multi-select on the same form, **Always in the rotation**, picks the games seated in
+  every day's rotation (`rotation_fixed`, the same `Catalog` machinery over the same list,
+  uncapped; see Daily rotation). It sits here rather than on the Rotation form because that
+  form is already at Discord's five fields.
 - Wordle results posted as **images** by the official Wordle Discord bot are parsed with no
   configuration at all. That bot is one application, so it carries the same ID in every
   server it joins: `game_parser.WORDLE_BOT_ID` is a **constant, not a setting** — there is
@@ -240,8 +246,10 @@ highlights the Basics button.
   the window actually holds a multi-player grid — before any member fetch or CDN round
   trip. A server without the Wordle bot does no image work whatsoever.
 - Two Discord payload caps bound the game surfaces (constants in `scoreboard.py`, noted at
-  the `GAME_SPECS` declaration). The Games form is one menu option per spec, 25 to a menu;
-  past 25 specs it splits into a second menu on the same form by itself. `/play` is one
+  the `GAME_SPECS` declaration). The Games form is two menus of one option per spec (the
+  games tracked, and the games always in the rotation), 25 to a menu; past 25 specs each
+  splits into a second menu on the same form by itself, which holds the form inside
+  Discord's five fields up to 50 specs (`check_limits` refuses a deploy past that). `/play` is one
   button per *enabled* game at 5 per row under the Random row, so a server may enable at
   most `MAX_ENABLED_GAMES` (20): while one menu holds every game its `max_values` enforces
   that in the picker, and `read_form` re-checks it on every submit (split menus can't see
@@ -252,8 +260,8 @@ highlights the Basics button.
 
 ## Daily rotation
 
-- On by default: each day only a drawn rotation of `rotation_count` games counts toward
-  the board — its points summary and scores section. A day is governed
+- On by default: each day only a rotation of `rotation_count` games, any fixed ones among
+  them, counts toward the board — its points summary and scores section. A day is governed
   only when `rotation_enabled` is on and one of the two stored slots names it exactly
   with a non-empty list; feature off, state absent, stale, or empty all mean
   **unrestricted** — every surface behaves as if the feature did not exist. The first
@@ -309,7 +317,7 @@ highlights the Basics button.
   same count the archive stores), against two independent thresholds: members that
   drew at least `rotation_keep_players` **stay**, off-rotation games that drew at
   least `rotation_promote_players` **join**.
-  `rotation_count` is a hard cap — more qualifiers than slots keeps the most played,
+  `rotation_count` is a hard cap on the drawn seats — more qualifiers than slots keeps the most played,
   with an exact tie favoring the sitting member (stable sort) — and the bot fills any
   remaining slots at random from the enabled remainder, never a key that just fell
   out, unless nothing else is left to keep the board from shrinking. (Earn-in is a
@@ -318,6 +326,19 @@ highlights the Basics button.
   Disabled games are never in the pool, and every consumer intersects the stored
   rotation with the built game list, so a game switched off mid-day in `/setup` drops
   out everywhere at once.
+- **Fixed games** (`rotation_fixed`, **Always in the rotation** on the Games form;
+  `store.fixed_games`). The tracked games a server ticks there are seated first in every
+  draw, whatever they drew, and take their seats out of `rotation_count`; only the seats
+  left are drawn, by the rules above, from the other enabled games, and yesterday's list
+  is read against those same games, so a fixed game never holds, wins or blocks a drawn
+  seat. As many fixed games as the count or more make the rotation exactly them, with
+  nothing drawn. It is the small server's answer to the swap thresholds: below them, the
+  one game its few players all play only reaches a seat when the random fill happens to
+  pick it, and never two days running. A fixed game that isn't tracked is inert (the
+  Games summary flags it) and is seated again once switched back on; an unfixed one goes
+  back to the normal rules, so it keeps its seat only by drawing `rotation_keep_players`.
+  Like every rotation setting it is read at the draw, so a change applies from the next
+  one — nothing redraws mid-day.
 - **Off-rotation results.** Every enabled game is parsed, archived, and finalized on
   every day, rotation or not — real points are frozen for off-rotation games, so
   per-game, per-player, and overall streaks stay alive off-rotation, and their play
@@ -782,7 +803,9 @@ retroactively.
     that moment. Discord caps a modal at five fields and won't open one from another,
     which is why the settings come in sections rather than as one form; on/off fields
     share one checkbox group per form, which is what keeps Basics, Board and Rotation
-    inside five. `check_limits()` holds every form and the panel inside Discord's caps,
+    inside five. Rotation being full is also why its one per-game setting, the games
+    always in the rotation, is a second menu on the Games form, which picks from the
+    same list. `check_limits()` holds every form and the panel inside Discord's caps,
     and `register_commands.py` refuses to register while one is over.
   - **First run.** A server with no scores channel gets the Basics form straight from
     `/setup` instead of the panel, so the step that makes the bot post can't be skipped;
