@@ -494,7 +494,7 @@ class GameSpec:
                 minute cryptic read their total off the message); parse must
                 emit it in its metadata
       disabled  the game's DEFAULT state: guilds start with it untracked. Admins
-                flip any game either way per guild via /setup games
+                flip any game either way per guild under Games in /setup
                 (game_overrides in the guild config); this flag only decides
                 what a guild gets before anyone touches the menu.
       breakpoints
@@ -816,14 +816,13 @@ def _parse_costcodle(m, content):
 # messages (match_message returns on the first hit). The scoreboard re-sorts by
 # player count then title at render time, so order does not affect display.
 #
-# Adding a game is one entry here and nothing else -- except that two rendered
-# surfaces have Discord payload caps this list now feeds (scoreboard.py holds
-# the constants): the /setup games menu is one option per spec and tops out
-# at 25, and /play is one button per ENABLED game, which is why a server may
-# switch on at most MAX_ENABLED_GAMES (20) of them. 25 specs today, which fills
-# the menu: the next game needs it split across two messages -- see the FUTURE
-# note in scoreboard.py. A default-on game lands in every server at once,
-# including one already at the cap; build_play_response is what copes with that.
+# Adding a game is one entry here and nothing else. Two rendered surfaces have
+# Discord payload caps this list feeds (scoreboard.py holds the constants): the
+# Games form in /setup is one menu option per spec, 25 to a menu, and splits
+# into a second menu by itself past that; and /play is one button per ENABLED
+# game, which is why a server may switch on at most MAX_ENABLED_GAMES (20) of
+# them. A default-on game lands in every server at once, including one already
+# at the cap; build_play_response is what copes with that.
 
 GAME_SPECS = [
     GameSpec(
@@ -1156,8 +1155,8 @@ GAME_SPECS = [
 
 
 def spec_enabled(spec, game_overrides=None):
-    """Whether a game is tracked for a guild: the guild's explicit /setup games
-    choice when present, the spec's coded default otherwise."""
+    """Whether a game is tracked for a guild: the guild's explicit choice in
+    /setup when present, the spec's coded default otherwise."""
     if game_overrides and spec.key in game_overrides:
         return bool(game_overrides[spec.key])
     return not spec.disabled
@@ -1332,8 +1331,8 @@ def match_message(msg, games, timestamp_checker, avatar_hashes=None):
     return []
 
 
-# The points scales a server can pick (config field `scoring`, /setup
-# scoring). Declared here rather than in store because the semantics live
+# The points scales a server can pick (config field `scoring`, under Basics in
+# /setup). Declared here rather than in store because the semantics live
 # here: points_per_game spends them, store only offers them as a menu.
 #   placement  first place is worth the day's turnout, one fewer per place
 #              (rotation_points_base); the default, and the rotation's scale
@@ -1448,7 +1447,7 @@ PLACE_EMOJI = ('\U0001F947', '\U0001F948', '\U0001F949')
 # so two great days in a row don't read the same. The ace is the one fixed
 # point -- 100 is the only thing a perfect result should ever say -- so its
 # pool holds that alone. The first entry of each is its representative, which
-# is what /help and /setup show (tier_examples), and the order here is the
+# is what /help shows (tier_examples), and the order here is the
 # order they list, best first. Same rules as FLOURISH below: every entry is a
 # single code point needing no variation selector, and nothing here is a
 # game's emoji, a place or one of the app's own signs.
@@ -1585,10 +1584,10 @@ def place_at_post(metric, score, earlier):
 
 def tier_examples():
     """(tier, emoji) for every tier that reacts, best first: the first entry of
-    each TIER_EMOJI pool, which is the one /help and /setup show. They can only
-    show a sample, since the rest of the pool is drawn from at random, so this
-    is here to keep those blurbs in step with the pools rather than having them
-    reach into the shape of TIER_EMOJI themselves."""
+    each TIER_EMOJI pool, which is the one /help shows. It can only show a
+    sample, since the rest of the pool is drawn from at random, so this is here
+    to keep that blurb in step with the pools rather than having it reach into
+    the shape of TIER_EMOJI itself."""
     return [(tier, pool[0]) for tier, pool in TIER_EMOJI.items()]
 
 
@@ -2314,8 +2313,8 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
     scale already ranked them (see _format_game_players). Only on a closed
     board -- see `live`.
 
-    no_shows is the server's switch over that last part (/setup daily shame, the
-    guild's `daily_shame`), on by default. False renders the scored games at the
+    no_shows is the server's switch over that last part (DNF lines in /setup,
+    the guild's `daily_shame`), on by default. False renders the scored games at the
     turnout they actually drew. It is presentation only: the same scale pays
     the same points either way, since who sits below a place cannot change it.
 
@@ -2519,7 +2518,7 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
     # a poop that disappears when they do is a scolding the day hadn't earned.
     # The other two scales never rank an absent player at all: per_game pays
     # for who you beat in the game itself, and off pays nothing. Past all that
-    # a server can simply not want them (`no_shows`, /setup daily shame), and
+    # a server can simply not want them (`no_shows`, DNF lines in /setup), and
     # style.no_shows is the text-budget ladder's own rung.
     scored = games if rot is None else [g for g in games if g.key in rot]
     pool = (rotation_players(results, scored, minimum_players)

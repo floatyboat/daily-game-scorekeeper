@@ -158,7 +158,8 @@ def main():
 
     cfg = pick_config(args.guild)
     if not cfg['input_channel_id']:
-        raise SystemExit(f"guild {cfg['guild_id']} has no input channel — run /setup input")
+        raise SystemExit(f"guild {cfg['guild_id']} has no input channel — run /setup there "
+                         'and pick a scores channel')
     tz = ZoneInfo(cfg['timezone'])
     session = make_session(DISCORD_BOT_TOKEN)
 

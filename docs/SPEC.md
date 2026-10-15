@@ -18,7 +18,8 @@ Shared modules: `game_parser.py` (game specs, parsing, scoring, render), `scoreb
 (Discord fetch/format helpers), `store.py` (all DynamoDB I/O and the config schema), and
 `commentary.py` (the registry of message kinds the commentary can post — pure; the daily
 and sticky lambdas run it, one cadence each, and the interaction lambda reads it for the
-`/setup commentary` menu).
+Commentary form in `/setup`). `setup_panel.py`, the `/setup` panel and its forms, ships
+with the interaction lambda alone.
 
 Deployment is zip upload from three GitHub Actions workflows into `us-east-1`; there is
 no IaC. Each workflow packs `src/` **flat** (`zip -j`) so the modules land at the archive
@@ -126,41 +127,45 @@ Global config is env vars per lambda: `TABLE_NAME`, `DISCORD_BOT_TOKEN`, `DISCOR
 
 **Per-server config lives only in the table; there is no env fallback.** Each setting is
 declared once as a `ConfigField` in `store.CONFIG_FIELDS`, from which the default, the
-stored-value coercion, the slash-command option `register_commands.py` registers, and the
-update `handle_setup` writes back all derive, so an option name cannot drift between the
-registrar and the handler.
+stored-value coercion, the `/setup` form field that edits it, and the reading of that form
+back all derive (`setup_panel`), so a field cannot exist on one side only. A field's
+`section` says which form it is on; its type, bounds and choices pick the input: on/off
+fields share one checkbox group per form, choices are a radio group, a whole number with
+few enough values is a menu, anything else a text box.
 
-| Field | `/setup` option | Default | Meaning |
+| Field | `/setup` section | Default | Meaning |
 |---|---|---|---|
-| `input_channel_id` | `channel`, `input` | unset | Channel scores are read from; the sticky lives here |
-| `output_channel_id` | `channel`, `output` | unset | Channel the daily scoreboard posts to |
-| `timezone` | `time timezone` | `UTC` | IANA name |
-| `hours_after_midnight` | `time day_start_hour` | `0` | Hour the scoring day starts |
-| `post_hour` | `time post_hour` | day start hour | Guild-local hour the board posts, repeating "Today's games" under it |
-| `time_window_hours` | `time window_hours` | `24` | Hours submissions stay open each day |
-| `minimum_players` | `limits minimum_players` | `1` | Games with fewer players are hidden and score nobody |
-| `hundreds_of_messages` | `limits message_volume` | `1` | Input-channel volume (1–8), sets the fetch depth |
-| `daily_enabled` | `daily enabled` | `true` | Whether the daily board posts |
-| `sticky_enabled` | `sticky enabled` | `true` | Whether the sticky is maintained |
-| `sticky_games` | `sticky games` | `0` | Today's games as play buttons on the sticky (0–`MAX_BUTTONS_PER_ROW`, one row's worth); 0 skips the ranking pass entirely and hands Play the whole roster |
-| `delete_wordle_recap` | `sticky delete_wordle_recap` | `false` | Whether the sticky pass deletes the Wordle app's daily recap of yesterday's results |
-| `suppress_embeds` | `embeds suppress` | `true` | Whether link previews are stripped off counted results |
-| `reactions_enabled` | `reactions enabled` | `false` | Whether the sticky pass reacts to each fresh result with how it went and where it placed — see Reactions |
-| `reactions_rotation_only` | `reactions rotation_only` | `false` | While a rotation governs the day, react only to its games |
-| `rotation_enabled` | `rotation enabled` | `true` | Score only a rotating subset of the enabled games each day |
-| `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 25), so adding a game widens the option — re-run `register_commands.py` for the picker to follow |
-| `rotation_mode` | `rotation mode` | `swap` | `swap` replaces under-played members, `random` re-draws daily |
-| `rotation_keep_players` | `rotation keep_players` | `5` | Swap threshold to hold a seat: a scored game under it rotates out |
-| `rotation_promote_players` | `rotation promote_players` | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
-| `rotation_off_mode` | `rotation off_rotation` | `shown` | Board display of off-rotation plays: `shown` below the scored games, or `hidden` |
-| `rotation_announce` | `rotation announce` | `true` | Whether "Today's games" is posted; `false` draws the rotation silently and changes nothing else |
-| `scoring` | `scoring mode` | `placement` | The points scale: `placement` (1st is worth the day's turnout), `per_game` (1 + players beaten, game by game) or `off` (scores only, no points) — see Scoring modes |
-| `commentary_enabled` | `commentary enabled` | `true` | Whether the hourly commentary posts between boards — see Commentary |
-| `commentary_overrides` | `commentary` (bare, a menu) | `{}` | Explicit per-guild flips of each message kind's default, keyed by `Trigger.key` |
-| `commentary_midday_hour` | `commentary midday_hour` | `13` | Guild-local hour the midday standings board posts |
-| `commentary_last_call_hours` | `commentary last_call_hours` | `3` | Hours before the window closes that the streak last call posts; `0` turns it off |
-| `commentary_nudge_after_hours` | `commentary nudge_after_hours` | `2` | Hours since a player's last result before the nudge names them |
-| `game_overrides` | `games` | `{}` | Explicit per-guild flips of each game's default state |
+| `input_channel_id` | Basics | unset | Channel scores are read from; the sticky lives here |
+| `output_channel_id` | Basics | unset | Channel the daily scoreboard posts to; left blank on the form, the scores channel |
+| `timezone` | Basics | `UTC` | IANA name |
+| `daily_enabled` | Basics | `true` | Whether the daily board posts |
+| `sticky_enabled` | Basics | `true` | Whether the sticky is maintained |
+| `rotation_enabled` | Basics | `true` | Score only a rotating subset of the enabled games each day |
+| `commentary_enabled` | Basics | `true` | Whether the hourly commentary posts between boards — see Commentary |
+| `reactions_enabled` | Basics | `false` | Whether the sticky pass reacts to each fresh result with how it went and where it placed — see Reactions |
+| `scoring` | Basics | `placement` | The points scale: `placement` (1st is worth the day's turnout), `per_game` (1 + players beaten, game by game) or `off` (scores only, no points) — see Scoring modes |
+| `game_overrides` | Games | `{}` | Explicit per-guild flips of each game's default state |
+| `hours_after_midnight` | Schedule | `0` | Hour the scoring day starts |
+| `post_hour` | Schedule | day start hour | Guild-local hour the board posts, repeating "Today's games" under it. The form shows the day start while it is unset, and a form saved without touching it leaves it unset |
+| `time_window_hours` | Schedule | `24` | Hours submissions stay open each day |
+| `minimum_players` | Board | `1` | Games with fewer players are hidden and score nobody |
+| `rotation_off_mode` | Board | `shown` | Board display of off-rotation plays: `shown` below the scored games, or `hidden` |
+| `pin_keep_days` | Board | `30` | Days of boards kept pinned (1–`PIN_CAP`); older ones are unpinned |
+| `hundreds_of_messages` | Board | `1` | Input-channel volume (1–8), sets the fetch depth |
+| `daily_shame` | Board | `true` | Whether the posted board lists who skipped each scored game as a 💩 DNF, on the placement scale only |
+| `rotation_count` | Rotation | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 25), so adding a game widens the form's menu with it, and past 25 games the form offers a text box instead |
+| `rotation_mode` | Rotation | `swap` | `swap` replaces under-played members, `random` re-draws daily |
+| `rotation_keep_players` | Rotation | `5` | Swap threshold to hold a seat: a scored game under it rotates out |
+| `rotation_promote_players` | Rotation | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
+| `rotation_announce` | Rotation | `true` | Whether "Today's games" is posted; `false` draws the rotation silently and changes nothing else |
+| `sticky_games` | Sticky | `0` | Today's games as play buttons on the sticky (0–`MAX_BUTTONS_PER_ROW`, one row's worth); 0 skips the ranking pass entirely and hands Play the whole roster |
+| `suppress_embeds` | Sticky | `true` | Whether link previews are stripped off counted results |
+| `delete_wordle_recap` | Sticky | `false` | Whether the sticky pass deletes the Wordle app's daily recap of yesterday's results |
+| `reactions_rotation_only` | Sticky | `false` | While a rotation governs the day, react only to its games |
+| `commentary_overrides` | Commentary | `{}` | Explicit per-guild flips of each message kind's default, keyed by `Trigger.key` |
+| `commentary_midday_hour` | Commentary | `13` | Guild-local hour the midday standings board posts |
+| `commentary_last_call_hours` | Commentary | `3` | Hours before the window closes that the streak last call posts; `0` turns it off |
+| `commentary_nudge_after_hours` | Commentary | `2` | Hours since a player's last result before the nudge names them |
 | `last_finalized_day` | — | — | Written at finalize; records how far aggregates are folded |
 | `last_posted_day` | — | — | Written after a real post; the post gate |
 | `missing_since` | — | — | Set by the hourly membership reconcile while the bot is not in the guild; both scheduled lambdas skip a marked guild — see Membership |
@@ -172,17 +177,15 @@ registrar and the handler.
 A guild with no stored item resolves to these defaults with both channels unset, which
 posts nothing anywhere.
 
-The channel subcommands are declared the same way, once each as a `ChannelSub` in
-`store.CHANNEL_SUBS` (name, the config fields it writes, its prose blurb, its Discord
-description), which `register_commands.py` registers from and `handle_setup` dispatches
-off. `/setup channel` writes **both** fields — one channel for everything is the path a
-fresh server is pointed at, and the only one `go_live_hint()` names while nothing is
-set. `/setup input` / `/setup output` write one field each, to override one side of it
-afterwards; every reply from them says so. Until both fields are set, the reply to
-every other `/setup` subcommand, and the confirmation of a saved games or commentary
-menu, ends with that same hint (`with_go_live_hint()`), so a server that starts
-anywhere but the channel is told what is still missing instead of "resumed" or
-"tracking".
+Both channels are on the Basics form. The scores channel is the one field there a server
+has to fill in, and a server without one is handed that form by `/setup` itself, since
+nothing else it could set would post anywhere. A board channel left blank is the scores
+channel, so one channel for everything stays the default path and a second channel the
+override. A channel a form changes is checked against what the bot can see before it is
+saved (`resolve_channel`): a channel the bot can't read can't be parsed or posted to, so
+it is refused with instructions rather than going dark later. Until both channels are
+set, the panel opens with what is still missing (`setup_panel.go_live_hint`) and
+highlights the Basics button.
 
 ## Games and per-server enabling
 
@@ -213,8 +216,11 @@ anywhere but the channel is told what is still missing instead of "resumed" or
   list, Scores, scoreboard render.
 - Historical day and aggregate data for a disabled game is retained, and neither displayed
   nor accrued while disabled.
-- `/setup games` manages the set: one admin-only multi-select of all games, pre-selected to
-  the guild's current effective state.
+- The Games form in `/setup` manages the set: one multi-select of all games, pre-selected
+  to the guild's current effective state. A save records each game whose state it
+  switched and leaves every other stored entry as it was (`setup_panel.Catalog`), so a
+  choice a server made once — even one that matches today's default — survives later
+  saves, and a game it never touched keeps following its coded default.
 - Wordle results posted as **images** by the official Wordle Discord bot are parsed with no
   configuration at all. That bot is one application, so it carries the same ID in every
   server it joins: `game_parser.WORDLE_BOT_ID` is a **constant, not a setting** — there is
@@ -228,12 +234,13 @@ anywhere but the channel is told what is still missing instead of "resumed" or
   the window actually holds a multi-player grid — before any member fetch or CDN round
   trip. A server without the Wordle bot does no image work whatsoever.
 - Two Discord payload caps bound the game surfaces (constants in `scoreboard.py`, noted at
-  the `GAME_SPECS` declaration). The `/setup games` menu is one option per spec, capped at
-  25 — past that it needs splitting across two messages. `/play` is one button per
-  *enabled* game at 5 per row under the Random row, so a server may enable at most
-  `MAX_ENABLED_GAMES` (20): the menu's `max_values` enforces it in the picker, and the select
-  handler re-checks it on submit, writing nothing and handing the menu back with the picks
-  still ticked. A default-on `GameSpec` shipping into a server already at 20 is the one way
+  the `GAME_SPECS` declaration). The Games form is one menu option per spec, 25 to a menu;
+  past 25 specs it splits into a second menu on the same form by itself. `/play` is one
+  button per *enabled* game at 5 per row under the Random row, so a server may enable at
+  most `MAX_ENABLED_GAMES` (20): while one menu holds every game its `max_values` enforces
+  that in the picker, and `read_form` re-checks it on every submit (split menus can't see
+  each other's ticks), refusing the games change and saying how many to untick. A
+  default-on `GameSpec` shipping into a server already at 20 is the one way
   past the cap; `build_play_response` drops the tail of that list and says how many it left
   off rather than sending a sixth row.
 
@@ -262,7 +269,7 @@ anywhere but the channel is told what is still missing instead of "resumed" or
   which keeps the pool ≥ any scoring game's field, so no place can drop below 1 point.
   Poops are *in* the pool — a failed result is participation, the same rule swap-mode
   earn-in uses.
-- **Scoring modes** (`scoring`, `/setup scoring mode`). The rotation picks *which* games
+- **Scoring modes** (`scoring`, under Basics in `/setup`). The rotation picks *which* games
   score each day; this setting picks *how*, and `game_parser.points_per_game` is the one
   place the scale is applied — the archive, the board, the Scores button and the live
   standings all fold through it. `placement` (the default) is the rotation scale above,
@@ -303,8 +310,8 @@ anywhere but the channel is told what is still missing instead of "resumed" or
   swap-mode rule.) `random` mode re-draws the whole set. Yesterday's list seeds the
   swap only when it actually governed the scored day.
   Disabled games are never in the pool, and every consumer intersects the stored
-  rotation with the built game list, so a mid-day `/setup games` disable drops a game
-  everywhere at once.
+  rotation with the built game list, so a game switched off mid-day in `/setup` drops
+  out everywhere at once.
 - **Off-rotation results.** Every enabled game is parsed, archived, and finalized on
   every day, rotation or not — real points are frozen for off-rotation games, so
   per-game, per-player, and overall streaks stay alive off-rotation, and their play
@@ -373,8 +380,8 @@ anywhere but the channel is told what is still missing instead of "resumed" or
 
 The posts between boards: a nudge to whoever left today's games half-played, a midday
 standings board, a last call for streaks about to break, and one-line callouts — lead
-changes, beatable ties, a clean sweep, a first-ever result. On by default;
-`/setup commentary enabled:False` stops it. The nudge is the one kind that ships **off**
+changes, beatable ties, a clean sweep, a first-ever result. On by default; unticking
+Commentary under Basics in `/setup` stops it. The nudge is the one kind that ships **off**
 (`Trigger.default`), until its own cadence is settled; every other kind is on.
 Posts go to the **input** channel, where the
 players are (the test channel on a test run).
@@ -383,8 +390,9 @@ players are (the test channel on a test run).
   priority order; each is one message kind with its own `detect(tick) -> events`,
   `render(events, tick)`, `sample(tick)` (for the preview), `cadence`, `notify` level,
   coded `default` and `once` flag. Adding a kind is one entry; the engine supplies dedup,
-  the one-post rule, the gates, the notification policy, the `/setup commentary` menu (built from
-  the registry, so a new kind needs no `register_commands` run) and persistence. The
+  the one-post rule, the gates, the notification policy, the menu on `/setup`'s Commentary
+  form (built from the registry, so a new kind needs no `register_commands` run) and
+  persistence. The
   per-kind switch is `commentary_overrides`, an explicit-deviations map resolved by
   `trigger_enabled()` exactly like `game_overrides` by `spec_enabled()`.
 - **Two cadences.** `HOURLY` kinds run on the daily lambda's tick
@@ -573,8 +581,8 @@ was great enough to earn one.
   went wrong on, and nothing that shrugs, sweats or settles belongs in it. The rough ones
   speak too: the bot noticing a rough day, not scolding it, so the rough and
   poop pools are wry rather than cutting. The first entry of each pool is its
-  representative, which is what `/help` and `/setup` print (`tier_examples`), so those
-  blurbs stay in step with the pools without reaching into their shape.
+  representative, which is what `/help` prints (`tier_examples`), so that blurb stays in
+  step with the pools without reaching into their shape.
 - **Never nothing** (`result_reactions`). With every tier speaking, the only result left
   bare is an untiered one that is first in its game (no place, no tier); it gets 👍 on
   its own. It says "counted", not "well played", and it keeps no reaction meaning the one
@@ -748,30 +756,33 @@ retroactively.
 ## Commands
 
 - **`/setup`** — admin-only via `default_member_permissions` = Manage Server; the handler
-  re-verifies `member.permissions`, since servers can re-map the default. Subcommands, in
-  the order `register_commands.py` lists them (which is the order Discord displays):
-  `show` · `channel` (both sides at once) · `time` · `limits` · `games` · `daily on|off` ·
-  `sticky on|off` (off also deletes the existing sticky; carries the optional `games`
-  row size and `delete_wordle_recap`, `ConfigField`s in the `sticky` group that
-  `toggle_sub` appends the same way `field_sub` builds a whole subcommand) ·
-  `rotation on|off` (carries the four
-  `rotation`-group fields the same way; the mode fields register fixed choice menus off
-  `ConfigField.choices`) · `scoring mode` (a `field_sub` like `time`, one choice option)
-  · `commentary [enabled] [midday_hour] [last_call_hours]` (the one toggle whose boolean is
-  optional: with no options at all it answers with the per-kind menu, one option per
-  `commentary.TRIGGERS` entry ticked to the effective state, written back as
-  `commentary_overrides` exactly the way `/setup games` writes `game_overrides`) ·
-  `embeds suppress:on|off` · `reactions on|off` (carries `rotation_only`, the one
-  `reactions`-group field) ·
-  `input`/`output` (override one side of `channel`, so they sit last). `limits` carries
-  the display minimum and the message volume only — the Wordle bot is a code constant, not
-  a per-server option. That array is
-  display order and nothing else — dispatch is by name, so it is free to churn;
-  `check_channel_coverage()` fails the registration if a declared `ChannelSub` was left
-  out of it. Each channel subcommand takes a channel-type option, a `channel_id` string
-  escape hatch for channels the picker can't show, or no arguments at all — the reply is
-  then an ephemeral channel-select menu. Every path validates that the bot can see the
-  channel and errors with instructions when it can't.
+  re-verifies `member.permissions` on the command, the Edit buttons and the form
+  submissions alike, since servers can re-map the default. One command, no options: every
+  setting lives on the panel it opens (`setup_panel`).
+  - **Panel.** An ephemeral Components V2 message: the whole configuration, one section
+    per `setup_panel.SECTIONS` entry (Basics, Games, Schedule, Board, Rotation, Sticky,
+    Commentary), each a summary beside an Edit button.
+  - **Forms.** Edit answers with that section's modal, filled in with what is stored at
+    that moment. Discord caps a modal at five fields and won't open one from another,
+    which is why the settings come in sections rather than as one form; on/off fields
+    share one checkbox group per form, which is what keeps Basics, Board and Rotation
+    inside five. `check_limits()` holds every form and the panel inside Discord's caps,
+    and `register_commands.py` refuses to register while one is over.
+  - **First run.** A server with no scores channel gets the Basics form straight from
+    `/setup` instead of the panel, so the step that makes the bot post can't be skipped;
+    submitting it answers with the panel as a new reply.
+  - **Saving.** A submitted form writes only the fields that differ from what it showed,
+    so a setting a server never chose keeps following its default (`post_hour` included:
+    the form shows the day start while it is unset). A value that can't be saved — an
+    unknown timezone, a non-number, a post hour before the day start, more games than
+    `MAX_ENABLED_GAMES`, a channel the bot can't see or one in another server — is named
+    at the top of the redrawn panel, and the rest of the form saves. Switching the sticky
+    off also deletes the existing one. The panel is redrawn in place (`UPDATE_MESSAGE`)
+    from the config the handler already holds plus the write, never re-read: `get_item`
+    is eventually consistent.
+  - **Stale controls.** Every custom_id `/setup` draws starts `setup_`, so a button or
+    menu from a panel an earlier deploy drew still reaches the handler, which says to run
+    `/setup` again.
 - **`/play`** — ephemeral list of today's games as link buttons, in `game_sort_key`
   order, with streak suffixes, plus a Random row. Under a rotation it lists the games
   that score today; the optional `all:true` lists every enabled game, scored games
@@ -809,13 +820,17 @@ retroactively.
   welcome later, never the reply.
 - **Usage log.** Every verified interaction except Discord's endpoint PING prints one
   JSON line before it is routed (`interaction_lambda.log_interaction`):
-  `{"event": "interaction", "kind": "command" | "component" | "modal", "name": "setup
-  rotation" | "sticky_play", "args": "enabled=True games=3", "guild", "channel", "user",
+  `{"event": "interaction", "kind": "command" | "component" | "modal", "name": "play" |
+  "sticky_play" | "setup_form:rotation", "args": "all=True", "guild", "channel", "user",
   "username"}`. It is the bot's only usage telemetry — nothing else records a click. One
   line per click, written by the invocation that ACKs it: the self-invoked second phase of
-  a deferred reply is the same click, and the keep-warm ping returns before it. JSON
-  rather than prose because Logs Insights discovers a JSON line's keys as fields, so on
-  `/aws/lambda/daily-game-play` a query needs no parse step:
+  a deferred reply is the same click, and the keep-warm ping returns before it. Modal
+  fields stay out of it; a submitted `/setup` form adds a second line saying what it
+  changed and what it refused, `{"event": "setup_saved", "guild", "section", "changed":
+  {field: value}, "problems": [...]}`, which is what "who set this, and when" is answered
+  from (match it to its click by timestamp). JSON rather than prose because Logs Insights
+  discovers a JSON line's keys as fields, so on `/aws/lambda/daily-game-play` a query
+  needs no parse step:
 
   ```
   filter event = "interaction"

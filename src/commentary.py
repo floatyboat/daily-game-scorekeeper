@@ -249,7 +249,7 @@ class Trigger:
     """One message kind -- THE place to add or change what the bot says.
 
         key       config override key (commentary_overrides) and state key
-        label     what /setup commentary's menu shows (<= 100 chars)
+        label     what the menu on /setup's Commentary form shows (<= 100 chars)
         describe  the menu's description line
         kind      BODY, BOARD or FLAVOR (see the module docstring)
         cadence   HOURLY (the daily lambda's tick) or STICKY (every minute)
@@ -832,7 +832,7 @@ TRIGGERS = [
             notify=NOTIFY, waits=NEVER),
     # Off until its cadence is settled: a nudge per player, each on the hour that
     # player goes quiet, put four pinging posts into a 40-message day (the
-    # 2026-09-15 replay). A server that wants it says so in /setup commentary.
+    # 2026-09-15 replay). A server that wants it ticks it on /setup's Commentary form.
     Trigger('nudge', 'Points nudge', 'Ask someone back for the games they left open',
             BODY, HOURLY, detect_nudge, render_nudge, sample_nudge, notify=PING,
             default=False, waits=OWN, headings=NUDGE_HEADINGS),

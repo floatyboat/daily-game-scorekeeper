@@ -88,7 +88,7 @@ def thank_you_message(spec, user_ids, enabled):
         return (f"{thanks} It's already switched on here, so post your results "
                 f"and they'll land on the board.")
     return (f'{thanks} You can now find it in the game menu, and an admin can turn '
-            f'it on with `/setup games`.')
+            f'it on under Games in `/setup`.')
 
 
 def answered_suggestions(spec, only_guilds, again):
