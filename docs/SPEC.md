@@ -178,7 +178,11 @@ description), which `register_commands.py` registers from and `handle_setup` dis
 off. `/setup channel` writes **both** fields — one channel for everything is the path a
 fresh server is pointed at, and the only one `go_live_hint()` names while nothing is
 set. `/setup input` / `/setup output` write one field each, to override one side of it
-afterwards; every reply from them says so.
+afterwards; every reply from them says so. Until both fields are set, the reply to
+every other `/setup` subcommand, and the confirmation of a saved games or commentary
+menu, ends with that same hint (`with_go_live_hint()`), so a server that starts
+anywhere but the channel is told what is still missing instead of "resumed" or
+"tracking".
 
 ## Games and per-server enabling
 
