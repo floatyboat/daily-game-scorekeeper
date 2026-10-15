@@ -844,6 +844,23 @@ def go_live_hint(cfg):
     return f'-# Still needed to go live: `/setup {missing[0]}`.' if missing else None
 
 
+def with_go_live_hint(response, cfg):
+    """`response` with go_live_hint appended to its text -- for every /setup
+    reply except the channel ones, which word their own against the config
+    they just wrote.
+
+    Until a channel is set nothing a server configures can post, so every
+    reply has to say so. Otherwise an admin who starts with /setup games or
+    /setup daily is told "tracking" or "resumed" by each command they try,
+    while the step that actually makes the bot post is never mentioned.
+    """
+    hint = go_live_hint(cfg)
+    if not hint:
+        return response
+    data = response['data']
+    return {**response, 'data': {**data, 'content': f"{data['content']}\n{hint}"}}
+
+
 def set_channel(guild_id, sub, channel_id, cfg=None):
     """Validate and store a channel choice. Returns (user-facing text, error).
 
@@ -1062,9 +1079,6 @@ def config_summary(cfg):
         todays = [by_key[k] for k in rotation if k in by_key]
         if todays:
             lines.append(f"-# Today's games: {_game_list(todays)}")
-    hint = go_live_hint(cfg)
-    if hint:
-        lines.append(hint)
     return '\n'.join(lines)
 
 
@@ -1100,6 +1114,13 @@ def handle_setup(body, guild_id):
         text, err = set_channel(guild_id, chan_sub, cid, cfg)
         return _ephemeral(err or text)
 
+    return with_go_live_hint(handle_setup_setting(sub, args, cfg, guild_id), cfg)
+
+
+def handle_setup_setting(sub, args, cfg, guild_id):
+    """The reply to every /setup subcommand except the channel ones, applying
+    the change first where there is one. None of them moves a channel, so
+    `cfg` as read before the write still says whether the server is live."""
     if sub == 'daily':
         # `dnf` rides along on this subcommand (store.CONFIG_FIELDS declares it
         # group='daily'), the same way the sticky's own fields do. Options left
@@ -1273,6 +1294,7 @@ def handle_setup(body, guild_id):
 def handle_setup_component(body, guild_id):
     custom_id = body['data']['custom_id']
     values = body['data'].get('values') or []
+    cfg = guild_cfg(guild_id, strict=True)
 
     if custom_id == GAMES_SELECT_ID:
         if len(values) > MAX_ENABLED_GAMES:
@@ -1285,16 +1307,16 @@ def handle_setup_component(body, guild_id):
             return _update(f'⚠️ A server can track up to {MAX_ENABLED_GAMES} games, '
                            f'and that was {len(values)} — untick {over} and save again.',
                            components=[games_select_row(picks)])
-        return _update(apply_games_selection(guild_id, values))
+        return with_go_live_hint(_update(apply_games_selection(guild_id, values)), cfg)
 
     if custom_id == COMMENTARY_SELECT_ID:
-        return _update(apply_commentary_selection(guild_id, values))
+        return with_go_live_hint(_update(apply_commentary_selection(guild_id, values)), cfg)
 
     if custom_id.startswith(CHANNEL_SELECT_PREFIX):
         sub = store.channel_sub(custom_id[len(CHANNEL_SELECT_PREFIX):])
         if not sub or not values:
             return _update('Nothing selected — run the command again.')
-        text, err = set_channel(guild_id, sub, values[0])
+        text, err = set_channel(guild_id, sub, values[0], cfg)
         if err:
             # Keep the picker so the admin can retry after fixing permissions.
             return _update(err, components=[channel_select_row(sub)])
