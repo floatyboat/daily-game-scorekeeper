@@ -11,10 +11,7 @@ Reads a Discord channel for daily puzzle results — Wordle, Connections, Pips a
 dozen more — and posts a scoreboard for yesterday's games, with streaks, per-game
 stats, and a live "Now Playing" sticky at the bottom of the channel.
 
-One deployment serves any number of servers. Configuration is **per server**, stored
-in DynamoDB and managed entirely from Discord with `/setup`; environment variables
-carry only the bot's global identity. Adding the bot to a server and running `/setup`
-there is the whole onboarding — no redeploy, no config file.
+By default, the app picks a rotation of games for the day for users to compete in for the top prize, adding variety to your daily game playing!
 
 ## What members see
 
@@ -23,7 +20,7 @@ there is the whole onboarding — no redeploy, no config file.
 | **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and the server's streaks — off-rotation plays listed below the scored games for zero points. On the default points scale, where first place is worth the day's whole turnout, each scored game is filled out to that turnout: whoever skipped it is slotted in below everyone who played as a 💩 DNF, which is where the scale already ranked them (untick **DNF lines** in `/setup` to leave them off). |
 | **Today's games** | Posted at the server's day start while rotation is on (the default): the rotating subset of games that scores today, as play links. Lands right under the board when the board posts at that same hour. Servers that would rather not have a second daily message can switch just this post off. |
 | **Now Playing sticky** | One message kept at the bottom of the input channel: how much the server has played today, today's games as play buttons, the server streak in its heading, and **Play**, **Scores** and **Yesterday** underneath. |
-| **Reactions** | Opt-in per server: within a minute of a result being posted, the bot reacts to it with how it went (💯 aced, 😎 great, 🙂 good, 😬 rough, 💩 poop) and where it placed in that game at that moment (👑 🥈 🥉, 👍 below third, nothing for the first to post). Great, good and rough are set per game. |
+| **Reactions** | Within a minute of a result being posted, the bot reacts to it with how it went (💯 aced, 😎 great, 🙂 good, 😬 rough, 💩 poop) and where it placed in that game at that moment (🥇 🥈 🥉, 👍 below third, nothing for the first to post). Great, good and rough are set per game; untick **Reactions** in `/setup` to switch them off. |
 | **`/play`** | A private list of games as buttons, linking straight to each puzzle, ordered by what the server is actually playing. It lists everything *except* the games already on the sticky, so the two don't repeat; **`/play all:true`** puts the whole roster in one list. |
 | **`/stats`** | A private view of your own streaks — overall, then game by game. Every streak on the board belongs to the server; this is where yours are. |
 | **`/suggest`** | Anyone can propose a game the bot doesn't track yet. |
@@ -44,7 +41,7 @@ and the bot picks it up.
 | Connections | https://www.nytimes.com/games/connections | yes |
 | Costcodle | https://costcodle.com | no |
 | Enclose | https://enclose.horse | yes |
-| Fermi | https://fermi.gg | no |
+| Fermi | https://fermi.gg | yes |
 | Flagle | https://flagle.org | no |
 | Gerrymandle | https://gerrymandle.com | yes |
 | Globle | https://globle.org | no |
@@ -56,7 +53,7 @@ and the bot picks it up.
 | Quizl | https://quizl.io | yes |
 | Seldom | https://www.playseldom.com | no |
 | Size It Up | https://magnitudle.com/size-it-up | no |
-| Sound | https://dialed.gg/sound?d=1 | yes |
+| Sound | https://dialed.gg/sound?d=1 | no |
 | Sports Connections | https://www.nytimes.com/athletic/connections-sports-edition | yes |
 | Travle | https://travle.earth | yes |
 | Wordle | https://www.nytimes.com/games/wordle | yes |
@@ -66,7 +63,7 @@ Every game can be flipped either way per server under **Games** in `/setup` — 
 above is only what a server gets before anyone touches that menu.
 
 Wordle counts pasted share text everywhere. Results the official Wordle Discord bot posts
-as *images* are ignored until a server opts in — see
+as *images* are included — see
 [Wordle image results](#wordle-image-results).
 
 ---
@@ -86,7 +83,7 @@ permissions and nothing else:
 | Send Messages | Posting the scoreboard and the sticky |
 | Manage Messages | Stripping link previews off the sticky, collapsing duplicate stickies, deleting the Wordle app's daily recap (opt-in) |
 | Pin Messages | Pinning the daily board, and unpinning it once it ages out |
-| Add Reactions | Reacting to each result with how it went and where it placed (only with **Reactions** switched on in `/setup`) |
+| Add Reactions | Reacting to each result with how it went and where it placed |
 
 Pin Messages is its own permission, not part of Manage Messages: Discord split it out
 with the current pins API, so a server invited on the older four-permission integer
@@ -94,7 +91,7 @@ with the current pins API, so a server invited on the older four-permission inte
 
 Add Reactions came later still, and only reactions use it. A server invited
 before it usually allows it anyway, since Discord gives it to `@everyone` by default;
-where reactions are restricted, grant it to the bot's role before switching them on.
+where reactions are restricted, grant it to the bot's role, or results go unreacted.
 
 Running your own instance? Build the link from your own application on the **OAuth2**
 tab of the [Developer Portal](https://discord.com/developers/applications) — scopes
@@ -164,7 +161,7 @@ one long form. Defaults in parentheses.
   turn up. The posted board only: mid-day the Scores button never calls anyone a no-show,
   because they may simply not have got to it yet.
 - **Rotation** — scores only a rotating subset of games each day (on by default).
-  **Games scored each day** (`3`) is a hard cap: when more games qualify than fit, the
+  **Games scored each day** (`5`) is a hard cap: when more games qualify than fit, the
   most-played keep the seats. In the `swap` draw (the default) a seat is earned by play,
   against two separate thresholds: a game in the set holds its seat by drawing **Players
   to keep a seat** (`5`), a game outside it earns one by drawing **Players to win a seat**
@@ -186,8 +183,8 @@ one long form. Defaults in parentheses.
   recap, which the bot's own board and streaks already cover, and which pings the players
   it names; the finished-grid message scores are read from is never touched. Both need
   **Manage Messages**. **React to rotation games only** (off) limits reactions to today's
-  rotation games while the rotation is on. Reactions (switched on under Basics, off by
-  default) react to each result as it's counted: how it went, against per-game
+  rotation games while the rotation is on. Reactions (on by default, switched off under
+  Basics) react to each result as it's counted: how it went, against per-game
   great/good/rough lines, and where it placed in that game when it was posted. They need
   **Add Reactions**. All of this happens as the sticky counts each result, so none of it
   runs while the sticky is off — and switching the sticky off deletes the one in the
@@ -393,6 +390,23 @@ them (`--again` resends). A game nobody suggested has nobody to thank; `-m`/`--f
 free text to every server, or only `--guild`. Messages land in each server's output channel
 (`--channel input` for the sticky's), with embeds suppressed and nobody pinged but the
 people being thanked.
+
+## Changing a game's default
+
+The Games form stores only the games a server has switched, so flipping a game's
+`disabled` flag reaches every server that never switched that game — including servers
+that picked their own games. To leave those where they stand, hold them first, while the
+code still carries the old default:
+
+```bash
+dotenv run -- python3 tools/hold_game_default.py seldom           # preview, writes nothing
+dotenv run -- python3 tools/hold_game_default.py seldom --write
+```
+
+Each server with any Games choice, and none for this game, gets what it already tracks
+written in as an explicit choice, so nothing changes until the flip deploys — and then
+the flip reaches only servers on the defaults. A later Games save keeps the held value,
+since a save records only the games it switches.
 
 ---
 

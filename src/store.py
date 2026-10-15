@@ -210,10 +210,11 @@ CONFIG_FIELDS = [
                 label='Commentary',
                 describe='Posts between the boards: standings, last call, lead changes'),
     # The sticky pass reacts to each fresh result with how it went and where it
-    # placed (sticky_lambda.react_to_results). Off by default: it needs the Add
-    # Reactions permission, which older invites didn't ask for (most servers
-    # give it to @everyone anyway).
-    ConfigField('reactions_enabled', default=False, coerce=bool, section='basics',
+    # placed (sticky_lambda.react_to_results). On by default, since the invite
+    # asks for Add Reactions; where the bot lacks it (an older invite, in a
+    # server that restricts reactions), each pass stops at its first 403 and the
+    # sticky is unaffected.
+    ConfigField('reactions_enabled', default=True, coerce=bool, section='basics',
                 label='Reactions',
                 describe='React to each result with how it went and where it placed'),
     # How much a result is worth. The rotation picks WHICH games score each
@@ -276,7 +277,7 @@ CONFIG_FIELDS = [
     # Bounded by the game table itself rather than a fixed number: adding a
     # GameSpec widens the menu with it, and a rotation wider than the roster
     # is unaskable (next_rotation would only min() it back down anyway).
-    ConfigField('rotation_count', default=3, coerce=int, section='rotation',
+    ConfigField('rotation_count', default=5, coerce=int, section='rotation',
                 label='Games scored each day', unit='game', minimum=1,
                 maximum=len(GAME_SPECS),
                 describe='When more games qualify, the most-played keep the seats'),
@@ -719,6 +720,28 @@ def update_config(guild_id, updates):
         ExpressionAttributeNames=names,
         ExpressionAttributeValues={':gid': str(guild_id), **values},
     )
+
+
+def hold_game_choice(guild_id, game_key, enabled):
+    """Write one game into a guild's game_overrides as an explicit choice --
+    tools/hold_game_default.py's write, ahead of flipping that game's default.
+    Conditioned both ways: a guild with no overrides map follows the defaults
+    and must keep following them, and a choice already there (a Games save
+    landing first) is never overwritten. Returns whether it wrote."""
+    try:
+        table().update_item(
+            Key={'PK': GUILDS_PK, 'SK': config_sk(guild_id)},
+            UpdateExpression='SET game_overrides.#k = :v',
+            ConditionExpression='attribute_exists(game_overrides) AND '
+                                'attribute_not_exists(game_overrides.#k)',
+            ExpressionAttributeNames={'#k': game_key},
+            ExpressionAttributeValues={':v': bool(enabled)},
+        )
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
+            raise
+        return False
+    return True
 
 
 def write_day(guild_id, day, results, points_by_game, puzzle_numbers, rotation=None,

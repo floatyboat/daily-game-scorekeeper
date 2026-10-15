@@ -496,7 +496,10 @@ class GameSpec:
       disabled  the game's DEFAULT state: guilds start with it untracked. Admins
                 flip any game either way per guild under Games in /setup
                 (game_overrides in the guild config); this flag only decides
-                what a guild gets before anyone touches the menu.
+                what a guild gets before anyone touches the menu. Flipping it
+                on a shipped game would also move guilds that customized the
+                menu but never this game: tools/hold_game_default.py writes
+                their current state in first.
       breakpoints
                 (great, good): where a result stops being great, and where it
                 stops being good, for the reaction the sticky pass puts on
@@ -944,7 +947,7 @@ GAME_SPECS = [
     ),
     GameSpec(
         key='dialed_sound', emoji='🔊', title='Sound', metric='score',
-        total=50, url='https://dialed.gg/sound?d=1', needs_timestamp=True,
+        total=50, url='https://dialed.gg/sound?d=1', needs_timestamp=True, disabled=True,
         breakpoints=(45, 35),
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         pattern=lambda ref, n: re.compile(r'dialed\.gg/sound\?\S*&s=(\d+(?:\.\d+)?)', re.IGNORECASE),
@@ -1029,7 +1032,7 @@ GAME_SPECS = [
     ),
     GameSpec(
         key='fermi', emoji='⚛️', title='Fermi', metric='fermi',
-        total=0, url='https://fermi.gg', disabled=True,
+        total=0, url='https://fermi.gg',
         breakpoints=(25, 50),
         puzzle=lambda ref: (ref - datetime(2026, 7, 27)).days + 1,
         # Three estimation rounds, each scored by how far off the guess was as a

@@ -142,7 +142,7 @@ few enough values is a menu, anything else a text box.
 | `sticky_enabled` | Basics | `true` | Whether the sticky is maintained |
 | `rotation_enabled` | Basics | `true` | Score only a rotating subset of the enabled games each day |
 | `commentary_enabled` | Basics | `true` | Whether the hourly commentary posts between boards — see Commentary |
-| `reactions_enabled` | Basics | `false` | Whether the sticky pass reacts to each fresh result with how it went and where it placed — see Reactions |
+| `reactions_enabled` | Basics | `true` | Whether the sticky pass reacts to each fresh result with how it went and where it placed — see Reactions |
 | `scoring` | Basics | `placement` | The points scale: `placement` (1st is worth the day's turnout), `per_game` (1 + players beaten, game by game) or `off` (scores only, no points) — see Scoring modes |
 | `game_overrides` | Games | `{}` | Explicit per-guild flips of each game's default state |
 | `hours_after_midnight` | Schedule | `0` | Hour the scoring day starts |
@@ -153,7 +153,7 @@ few enough values is a menu, anything else a text box.
 | `pin_keep_days` | Board | `30` | Days of boards kept pinned (1–`PIN_CAP`); older ones are unpinned |
 | `hundreds_of_messages` | Board | `1` | Input-channel volume (1–8), sets the fetch depth |
 | `daily_shame` | Board | `true` | Whether the posted board lists who skipped each scored game as a 💩 DNF, on the placement scale only |
-| `rotation_count` | Rotation | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 25), so adding a game widens the form's menu with it, and past 25 games the form offers a text box instead |
+| `rotation_count` | Rotation | `5` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 25), so adding a game widens the form's menu with it, and past 25 games the form offers a text box instead |
 | `rotation_mode` | Rotation | `swap` | `swap` replaces under-played members, `random` re-draws daily |
 | `rotation_keep_players` | Rotation | `5` | Swap threshold to hold a seat: a scored game under it rotates out |
 | `rotation_promote_players` | Rotation | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
@@ -195,6 +195,11 @@ highlights the Basics button.
   per guild. `config.game_overrides` stores just the explicit deviations, so a newly added
   game reaches every guild with its coded default rather than a frozen snapshot of an old
   menu submission.
+- Flipping a *shipped* game's default moves every guild with no explicit choice for it,
+  which includes guilds that customized the menu but never that game. Before such a flip,
+  `tools/hold_game_default.py <key> --write` writes each such guild's current state in as
+  an explicit choice (`store.hold_game_choice`, conditioned never to create the map or
+  overwrite a choice), so only guilds on pure defaults follow the flip.
 - `GameSpec.breakpoints` is `(great, good)`: where a result stops being great and where it
   stops being good, for its reaction (`game_parser.performance_tier`, see Reactions).
   Both are in the metric's own number, the one the board line prints: guesses, connections
@@ -544,7 +549,7 @@ players are (the test channel on a test run).
 
 ## Reactions
 
-With `reactions_enabled` on (off by default), the sticky pass reacts to every fresh result
+With `reactions_enabled` on (the default), the sticky pass reacts to every fresh result
 with one to four emoji, in this order: where it placed in its game the moment it was
 posted, how it went (drawn at random from that tier's pool), then a flourish or two if it
 was great enough to earn one.
@@ -866,7 +871,7 @@ retroactively.
   dropped from the working list, so a recap that landed on a settled sticky doesn't force
   a repost. A failed delete leaves the message in the list and the sticky reposts below
   it as usual.
-- Reactions ride on it too (`reactions_enabled`, off by default; see Reactions): after the
+- Reactions ride on it too (`reactions_enabled`, on by default; see Reactions): after the
   sticky settles, in their own try/except, needing Add Reactions, and nothing at all in a
   guild with the sticky off.
 - With `daily_enabled` off the board stops and the sticky drops its Yesterday link; the
