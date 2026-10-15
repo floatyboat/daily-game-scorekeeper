@@ -7,17 +7,17 @@ that's the whole setup.
 
 # Daily Scoreboard Bot
 
-Reads a Discord channel for daily puzzle results — Wordle, Connections, Pips and a
+Reads a Discord channel for daily puzzle results — Wordle, Connections, Pips and a more than a
 dozen more — and posts a scoreboard for yesterday's games, with streaks, per-game
 stats, and a live "Now Playing" sticky at the bottom of the channel.
 
-By default, the app picks a rotation of games for the day for users to compete in for the top prize, adding variety to your daily game playing!
+By default, the app picks a rotation of games for the day for users to compete in for the top prize, adding variety to your daily game playing! This bot is designed for servers that play multiple daily games or games other than Wordle, adding to the experience of playing daily games with your friends.
 
 ## What members see
 
 | Surface | What it is |
 |---|---|
-| **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and the server's streaks — off-rotation plays listed below the scored games for zero points. On the default points scale, where first place is worth the day's whole turnout, each scored game is filled out to that turnout: whoever skipped it is slotted in below everyone who played as a 💩 DNF, which is where the scale already ranked them (untick **DNF lines** in `/setup` to leave them off). |
+| **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every game, ranked scores, a points summary, and the server's streaks. |
 | **Today's games** | Posted at the server's day start while rotation is on (the default): the rotating subset of games that scores today, as play links. Lands right under the board when the board posts at that same hour. Servers that would rather not have a second daily message can switch just this post off. |
 | **Now Playing sticky** | One message kept at the bottom of the input channel: how much the server has played today, today's games as play buttons, the server streak in its heading, and **Play**, **Scores** and **Yesterday** underneath. |
 | **Reactions** | Within a minute of a result being posted, the bot reacts to it with how it went (💯 aced, 😎 great, 🙂 good, 😬 rough, 💩 poop) and where it placed in that game at that moment (🥇 🥈 🥉, 👍 below third, nothing for the first to post). Great, good and rough are set per game; untick **Reactions** in `/setup` to switch them off. |
@@ -213,13 +213,7 @@ configured a dev channel, the command still answers, saying it has nowhere to se
 **Always on, nothing to configure.** The official
 [Wordle Discord bot](https://support.nytimes.com/s/article/wordle-discord-bot) posts
 results as images rather than text, and this bot reads them — matching each grid to a
-player by their avatar. That bot is one application with the same ID in every server it
-joins, so there's nothing to look up and no setting to turn on.
-
-It costs nothing in a server that doesn't have it. Both image paths key on the message's
-author being that exact bot, and both are reached only after a message has failed to
-match every game's text pattern — so no image is downloaded and no avatar is looked up
-until a real grid shows up.
+player by their avatar.
 
 ---
 
