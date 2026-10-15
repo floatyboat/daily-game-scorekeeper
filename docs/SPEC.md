@@ -437,10 +437,10 @@ players are (the test channel on a test run).
   morning board never hold a nudge back, but two nudges never stack. The midday board and
   the last call (`NEVER`) wait on nothing, because a scheduled post is not the bot talking
   twice and a one-liner an hour earlier must not push it back for hours (a replay of a busy
-  day showed exactly that). The last call needs it for a second reason: its server-streak
-  branch fires only on a day nobody has played, and on exactly such a day nothing ever
-  clears the morning board out of `unanswered`, so `ANY` held it back on every day it had
-  something to say. Bodies then gate
+  day showed exactly that). The last call needs it for a second reason: a day nobody has
+  played puts every server streak on the line, and on exactly such a day nothing ever
+  clears the morning board out of `unanswered`, so `ANY` would hold it back on the day it
+  has the most to say. Bodies then gate
   themselves: the last call fires on the first pass within
   `commentary_last_call_hours` of the close, the midday board on the first pass at or
   after `commentary_midday_hour` with somebody actually on the standings (exactly what
@@ -453,18 +453,26 @@ players are (the test channel on a test run).
   `commentary_nudge_after_hours` ago — one line each
   with the games still open and what first place there pays right now (`placement`: the
   day's pool, `per_game`: one more than the players already in it, `off`: no number), plus
-  one row of link buttons for the union; pings. *Last call*: players whose server streak
+  one row of link buttons for the union; pings. *Last call*: the streaks that die at the
+  close, under a heading that is only `⏰ Last call!` — no countdown, since
+  `commentary_last_call_hours` decides when it posts, not what it says. First a
+  `Server streaks:` line with the server's own: its day streak while nobody has scored
+  today, and each game streak (the board's `🔥N`) that nobody has scored today,
+  off-rotation included, longest first. A poop never spends a server streak, since anyone
+  who hasn't posted can still carry it. Then one line per player whose overall streak
   (alive through yesterday, nothing scored today, a game still left to post) or per-game
   streak (same, that game not yet posted today, off-rotation included — streaks survive
-  off-rotation) dies at the close, filtered through the same `shown_streak()` floor
-  (`MINIMUM_STREAK`) every other surface spends, so the ping never names a streak the
-  board wouldn't print. POSTING closes a game here, where SCORING is what keeps a streak
-  alive everywhere else: a poop keeps nothing alive, but it spends the puzzle, so that
-  per-game streak is already gone rather than on the line, and naming it would ask for a
-  result the player can no longer produce (the overall streak survives a poop — another
-  game can still carry it — so it stays at risk until every game is posted);
-  longest first, at most 10 names; pings; notes the server's own streak when nobody has
-  scored yet. *Midday*: **the standings so far and nothing else**
+  off-rotation) dies at the close. Each line names its game streaks when any are on the
+  line, and the overall day streak only when none are (`_stake`): one result in that game
+  saves both, so naming the two said the same thing twice. Every number goes through the
+  same `shown_streak()` floor (`MINIMUM_STREAK`) every other surface spends, so the post
+  never names a streak the board wouldn't print. For a player, POSTING closes a game, where
+  SCORING is what keeps a streak alive everywhere else: a poop keeps nothing alive, but it
+  spends the puzzle, so that per-game streak is already gone rather than on the line, and
+  naming it would ask for a result the player can no longer produce (the overall streak
+  survives a poop — another game can still carry it — so it stays at risk until every game
+  is posted); longest first, at most 10 names; pings the players it names. Either line
+  alone is enough to post. *Midday*: **the standings so far and nothing else**
   (`format_scoreboard_components` with `MIDDAY_TITLE` and `standings_only`), so the post is
   the header container alone — heading, server streak, points summary — with no games
   section under it and `rotation_off_mode` therefore moot; `NOTIFY`. Points still come from
@@ -501,7 +509,8 @@ players are (the test channel on a test run).
   lines, in-order checks included (`+0 (3✓)`), since the checks are what break a tie at
   the same `+N`.
   Every line has two or three phrasings, picked by a hash of the day and the event, so a
-  retried pass repeats itself rather than rewording.
+  retried pass repeats itself rather than rewording. The last call's heading is the one
+  fixed line.
   House style: no em dashes in any line except the per-player nudge lines.
 - **How loudly a post lands** (`Trigger.notify`, three levels defined in `scoreboard.py`
   beside the flag they map to, spent by `scoreboard.send_commentary`, shared by both

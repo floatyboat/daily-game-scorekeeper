@@ -50,9 +50,9 @@ in a row; OWN (the nudge) waits only while one of them is its own kind, so no
 other post holds a nudge back but two nudges never stack; NEVER (the midday
 board, the last call) waits on nothing -- a scheduled post is not the bot
 talking twice, and a one-liner an hour earlier must not push it back. The last
-call needs that twice over: its server-streak branch only fires on a day nobody
-has played, which is exactly the day no one clears the morning board out of
-`unanswered`, so ANY would hold it back on every day it has something to say.
+call needs that twice over: a day nobody has played puts every server streak on
+the line, and that is exactly the day no one clears the morning board out of
+`unanswered`, so ANY would hold it back on the day it has the most to say.
 
 Events are plain dicts with an `id`. The state, shared by both passes, is the
 set of ids announced today: nothing is said twice, and a kind that has to
@@ -68,7 +68,6 @@ store.record_commentary persists the post's event ids.
 """
 
 import hashlib
-import math
 from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import cached_property
@@ -458,9 +457,39 @@ def sample_nudge(tick):
 
 # --- Last call: streaks on the line ---------------------------------------------
 
-def _at_risk(tick):
-    """[{uid, server, games: [(key, streak)]}] for everyone with a streak that
-    dies at the close unless they play. Sorted by the longest streak at stake.
+def _stake(overall, games):
+    """What one line of the last call names, or None when nothing is on the
+    line: {overall, games: [(key, streak)]} holding the game streaks, longest
+    first, or else the overall day streak. Never both: one result in a game
+    saves that game's streak and the day streak alike, so naming the two
+    would say the same thing twice."""
+    if games:
+        return {'overall': 0, 'games': sorted(games, key=lambda kn: (-kn[1], kn[0]))}
+    return {'overall': overall, 'games': []} if overall else None
+
+
+def _server_at_risk(tick):
+    """The server's own streaks that die at the close unless somebody scores,
+    as a _stake.
+
+    These are the board's numbers: the day streak under its heading, at risk
+    only while nobody has scored, and the fire on each game title,
+    off-rotation included. The streak bundle already reads a game nobody has
+    scored today as the streak alive through yesterday, which is exactly the
+    one on the line. Unlike a player's, a server streak is never spent by a
+    poop: anyone who has not posted can still carry it.
+    """
+    streaks = tick.streaks or {}
+    overall = 0 if any(tick.scorers.values()) else shown_streak(streaks.get('server', 0))
+    games = [(key, n) for key, n in (streaks.get('games') or {}).items()
+             if shown_streak(n) and not tick.scorers.get(key)]
+    return _stake(overall, games)
+
+
+def _players_at_risk(tick):
+    """[{uid, overall, games}] for everyone with a streak that dies at the
+    close unless they play, each a _stake plus its player. Sorted by the
+    longest streak at stake.
 
     A streak is at risk only while the player can still do something about it,
     which is why POSTING closes a game here and SCORING keeps a streak alive
@@ -476,9 +505,9 @@ def _at_risk(tick):
     risks = []
     for uid in sorted(tick.known_players)[:LAST_CALL_MAX_PLAYERS]:
         aggs = tick.player_aggs(uid) or {}
-        server = 0
+        overall = 0
         if uid not in scored_any and any(uid not in uids for uids in posted.values()):
-            server = shown_streak(
+            overall = shown_streak(
                 store.display_streak(aggs.get(store.SERVER_AGG_SK), tick.day, False))
         games = []
         for sk, item in aggs.items():
@@ -490,60 +519,55 @@ def _at_risk(tick):
             n = shown_streak(store.display_streak(item, tick.day, False))
             if n:
                 games.append((key, n))
-        if server or games:
-            games.sort(key=lambda kn: -kn[1])
-            risks.append({'uid': uid, 'server': server, 'games': games})
-    risks.sort(key=lambda r: -max([r['server']] + [n for _, n in r['games']]))
+        stake = _stake(overall, games)
+        if stake:
+            risks.append({'uid': uid, **stake})
+    risks.sort(key=lambda r: -max([r['overall']] + [n for _, n in r['games']]))
     return risks
 
 
 def detect_last_call(tick):
     hours = tick.cfg['commentary_last_call_hours']
-    if not hours:
+    if not hours or tick.close - tick.now > timedelta(hours=hours):
         return []
-    left = tick.close - tick.now
-    if left > timedelta(hours=hours):
+    server = _server_at_risk(tick)
+    players = _players_at_risk(tick)[:LAST_CALL_MAX_NAMES]
+    if not server and not players:
         return []
-    played_any = any(tick.scorers.values())
-    server = 0 if played_any else shown_streak((tick.streaks or {}).get('server', 0))
-    risks = _at_risk(tick)[:LAST_CALL_MAX_NAMES]
-    if not risks and not server:
-        return []
-    return [{'id': 'last_call', 'hours_left': max(1, math.ceil(left / timedelta(hours=1))),
-             'risks': risks, 'server_streak': server}]
+    return [{'id': 'last_call', 'server': server, 'players': players}]
+
+
+def stake_text(tick, stake):
+    """A _stake as the line reads it: `📗 Wordle 🔥8 · 🔗 Connections 🔥3`,
+    or `🔥 12-day streak` when no game streak is at stake."""
+    if not stake['games']:
+        return f"\U0001F525 {stake['overall']}-day streak"
+    games = [(tick.by_key[key], n) for key, n in stake['games'] if key in tick.by_key]
+    return ' · '.join(f'{g.emoji} {g.title} \U0001F525{n}' for g, n in games)
 
 
 def render_last_call(events, tick):
+    """One fixed heading with no countdown: when it posts is the guild's
+    commentary_last_call_hours, so the post only says what is at stake. The
+    server's streaks lead, since anyone can save those; each player line
+    pings its player."""
     e = events[0]
-    h = e['hours_left']
-    left = f"{h} hour{'' if h == 1 else 's'} left"
-    head = pick(tick, 'last_call', [
-        f'⏰ **Last call: {left}!**',
-        f'⏰ **{left}, streaks on the line**',
-        f'⏰ **Closing soon: {left}**',
-    ])
-    lines = [head]
-    for r in e['risks']:
-        parts = []
-        if r['server']:
-            parts.append(f"\U0001F525 {r['server']}-day streak")
-        for key, n in r['games']:
-            g = tick.by_key.get(key)
-            if g:
-                parts.append(f'{g.emoji} {g.title} \U0001F525{n}')
-        lines.append(f"{mention(r['uid'])}: {' · '.join(parts)}")
-    if e['server_streak']:
-        lines.append(f"-# Nobody has scored yet today, and the server's "
-                     f"{e['server_streak']}-day streak needs one result.")
-    return Rendered(content='\n'.join(lines), mentions=[r['uid'] for r in e['risks']])
+    lines = ['⏰ **Last call!**']
+    if e['server']:
+        lines.append(f"**Server streaks:** {stake_text(tick, e['server'])}")
+    lines += [f"{mention(p['uid'])}: {stake_text(tick, p)}" for p in e['players']]
+    return Rendered(content='\n'.join(lines), mentions=[p['uid'] for p in e['players']])
 
 
 def sample_last_call(tick):
     a, b = sample_players(tick, 2)
     games = sample_games(tick, 2)
-    risks = [{'uid': a, 'server': 12, 'games': [(games[0].key, 8)] if games else []},
-             {'uid': b, 'server': 0, 'games': [(games[-1].key, 3)] if games else []}]
-    return [{'id': 'last_call', 'hours_left': 3, 'risks': risks, 'server_streak': 0}]
+    # Both kinds of player line: a game streak (which hides a's day streak,
+    # as _stake does) and b's day streak alone.
+    players = [{'uid': a, **_stake(12, [(games[0].key, 8)] if games else [])},
+               {'uid': b, **_stake(5, [])}]
+    server = _stake(0, [(games[-1].key, 21)]) if games else None
+    return [{'id': 'last_call', 'server': server, 'players': players}]
 
 
 # --- Midday: the standings so far, as a board -------------------------------------
@@ -822,8 +846,8 @@ TRIGGERS = [
     # waits=NEVER for midday's reason and one of its own: where input and output
     # are one channel (the default a fresh server is pointed at), a quiet day
     # never clears the morning board out of `unanswered`, and a quiet day is
-    # precisely when this kind has something to say -- detect_last_call counts a
-    # server streak only when nobody has played.
+    # precisely when this kind has the most to say -- every server streak is
+    # on the line.
     Trigger('last_call', 'Last call', 'Streaks about to break, a few hours before the close',
             BODY, HOURLY, detect_last_call, render_last_call, sample_last_call,
             notify=PING, once=True, waits=NEVER),
