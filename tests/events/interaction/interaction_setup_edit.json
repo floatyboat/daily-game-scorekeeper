@@ -1,13 +1,14 @@
 {
-  "type": 2,
+  "type": 3,
   "guild_id": "${TEST_GUILD_ID}",
   "channel_id": "${TEST_CHANNEL_ID}",
   "member": {
     "permissions": "32",
     "user": {"id": "1"}
   },
+  "message": {"id": "0", "flags": 32832},
   "data": {
-    "name": "setup",
-    "options": [{"name": "commentary", "type": 1, "options": []}]
+    "component_type": 2,
+    "custom_id": "setup_edit:rotation"
   }
 }

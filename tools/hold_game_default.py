@@ -1,24 +1,24 @@
 """Hold servers that chose their own games where they stand before a game's default flips.
 
-Local-only tooling (never deployed). /setup games stores only where a server
-departs from each GameSpec's coded default, so flipping a shipped game's
-`disabled` flag moves every server holding no choice of its own for that game.
-That is the point for servers still on the defaults, but it also reaches
-servers that picked their own games, which would find one added to or dropped
-from a list they chose. Run from the repository root, BEFORE the flip, against
-the code that still carries the old default:
+Local-only tooling (never deployed). The Games form stores only the games a
+server has switched, so flipping a shipped game's `disabled` flag moves every
+server that never switched that game. That is the point for servers still on
+the defaults, but it also reaches servers that picked their own games, which
+would find one added to or dropped from a list they chose. Run from the
+repository root, BEFORE the flip, against the code that still carries the old
+default:
 
     dotenv run -- python3 tools/hold_game_default.py seldom           # preview
     dotenv run -- python3 tools/hold_game_default.py seldom --write
 
-Every server with at least one /setup games choice, and none for this game,
-gets the game's current default written in as an explicit choice. That is what
-it already tracks, so no board changes until the flip deploys, and from then on
-the flip reaches only servers on the defaults. Run after the flip, it would
-write the new default instead: harmless, but it holds nobody. Re-running is
-safe -- a server already holding a choice is skipped, and each write is
-conditioned on that. Until the flip deploys, the old code still treats the held
-value as the default, so a server that saves /setup games in between sheds it.
+Every server with at least one Games choice, and none for this game, gets the
+game's current default written in as an explicit choice. That is what it
+already tracks, so no board changes until the flip deploys, and from then on
+the flip reaches only servers on the defaults. A later Games save keeps the
+held value, since a save records only the games it switches. Run after the
+flip, it would write the new default instead: harmless, but it holds nobody.
+Re-running is safe -- a server already holding a choice is skipped, and each
+write is conditioned on that.
 
 PREVIEW IS THE DEFAULT. Nothing is written without --write.
 """

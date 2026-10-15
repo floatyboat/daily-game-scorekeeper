@@ -58,18 +58,14 @@ TEXT_CHANNEL_TYPES = (0, 5)   # guild text, announcement
 PERM_ADMINISTRATOR = 0x8
 PERM_MANAGE_GUILD = 0x20
 
-# Discord payload caps the rendered surfaces have to fit inside. The /setup
-# games menu is one option per GameSpec (25 of 25 today). /play is one button
-# per ENABLED game, in MAX_ACTION_ROWS rows of which the Random row takes one --
-# so a server may enable at most MAX_ENABLED_GAMES, and /setup games enforces
-# it. GAME_SPECS itself can grow past that; a server just can't switch every
-# game on at once.
-#
-# FUTURE: when GAME_SPECS outgrows the menu, split it across two messages (the
-# interaction reply plus a follow-up) rather than truncating -- a game missing
-# from the menu can't be turned on at all, and looks identical to one that was
-# never added. These live here as constants so that split has something to
-# divide by.
+# Discord payload caps the rendered surfaces have to fit inside. The Games form
+# in /setup is one menu option per GameSpec, MAX_SELECT_OPTIONS to a menu,
+# split across menus once GAME_SPECS outgrows one (setup_panel) rather than
+# truncated -- a game missing from the form couldn't be turned on at all. /play
+# is one button per ENABLED game, in MAX_ACTION_ROWS rows of which the Random
+# row takes one -- so a server may enable at most MAX_ENABLED_GAMES, and the
+# Games form enforces it. GAME_SPECS itself can grow past that; a server just
+# can't switch every game on at once.
 MAX_ACTION_ROWS = 5          # top-level components in one message
 MAX_BUTTONS_PER_ROW = store.MAX_BUTTONS_PER_ROW   # bounds sticky_games, so it lives there
 MAX_SELECT_OPTIONS = 25      # options in one string select
@@ -526,7 +522,7 @@ def is_sticky_message(msg, bot_id=None):
     (e.g. leftovers from older code versions).
 
     Every caller deletes what it matches -- sticky_lambda collapsing duplicates
-    back to one, /setup sticky off clearing the channel -- so both go through
+    back to one, /setup switching it off clearing the channel -- so both go through
     this single definition rather than each carrying its own idea of what a
     sticky looks like.
     """

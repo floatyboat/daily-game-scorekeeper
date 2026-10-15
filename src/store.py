@@ -18,7 +18,7 @@ Onboarding is automatic: /setup writes the item, the next tick picks it up.
 
 This module also owns the per-server config *schema* (CONFIG_FIELDS below): one
 declaration per setting, from which the defaults, the stored-value coercion, the
-/setup slash-command options, and the handler that writes them back all derive.
+/setup form that edits it, and the reading of that form back all derive.
 
 DAY# items are plain overwrites (same parse -> same item) and are the source of
 truth: rebuild_aggregates() recomputes every aggregate from them from scratch.
@@ -57,9 +57,6 @@ GAME_AGG_PREFIX = 'AGG#GAME#'
 # --- Per-server configuration schema -------------------------------------------
 # The table is the ONLY source of per-server config -- env vars configure
 # nothing per-server.
-#
-# Discord option types, for the fields /setup exposes as slash-command options.
-OPT_SUB_COMMAND, OPT_STRING, OPT_INTEGER, OPT_BOOLEAN, OPT_USER, OPT_CHANNEL = 1, 3, 4, 5, 6, 7
 
 # Discord's per-channel pin ceiling, and the page the pins endpoint hands back.
 # A pin past the ceiling is refused with 400 / code 30003. Declared here, the
@@ -86,54 +83,48 @@ class ConfigField:
         name      config item attribute, and the key callers read off a cfg dict
         default   value for a guild that never set it
         coerce    stored/incoming value -> the type callers expect. DynamoDB
-                  hands numbers back as Decimal, and Discord hands option values
-                  back as whatever JSON had; this is the one place that is fixed.
-        group     the /setup subcommand exposing this field as an option
-                  ('time'/'limits'/'sticky'), or None for settings with a
-                  surface of their own (the channel subcommands, the on/off
-                  toggles, /setup games, the run markers)
-        option    slash-command option name when it differs from `name`
-        opt_type  Discord option type
-        describe  option description shown in Discord's picker
-        minimum   value bounds: registered as Discord's min_value/max_value so
-        maximum   its picker rejects out-of-range input, and re-applied by
-                  apply() so nothing outside them can reach the table whatever
-                  the picker let through
-        choices   (label, value) pairs registered as the option's fixed menu
+                  hands numbers back as Decimal, and Discord hands form values
+                  back as strings; this is the one place that is fixed.
+        section   the /setup panel section whose form edits this field (one of
+                  setup_panel.SECTIONS), or None for state only the lambdas
+                  write: the run markers and the rotation draw
+        label     the field's name on that form, and an on/off field's name in
+                  the panel's summary (Discord caps a form label at 45 chars)
+        describe  the hint the form shows with it (100 chars)
+        unit      what a number counts, for the form's menu and the summary:
+                  'clock' for an hour of the day, else a singular noun
+        minimum   value bounds: enforced by apply() below, and a field bounded
+        maximum   narrowly enough is offered as a menu rather than a text box
+        choices   (value, label, describe) triples: the field's fixed options
 
     Same bargain as GameSpec in game_parser.py: adding a setting is one entry
-    here, not four coordinated edits across three files that silently no-op when
-    they drift. register_commands.py registers `group` fields straight off this
-    table and interaction_lambda.handle_setup reads them back the same way, so
-    an option name cannot exist on one side only.
+    here, not coordinated edits across files that silently no-op when they
+    drift. setup_panel builds each section's form straight off this table and
+    reads the submission back through it, so a field cannot exist on one side
+    only.
     """
     name: str
     default: object = None
     coerce: object = None
-    group: str = None
-    option: str = None
-    opt_type: int = OPT_INTEGER
+    section: str = None
+    label: str = ''
     describe: str = ''
+    unit: str = None
     minimum: int = None
     maximum: int = None
     choices: tuple = None
-
-    @property
-    def option_name(self):
-        return self.option or self.name
 
     def apply(self, value):
         """Incoming value -> what callers get: coerced, then held inside any
         declared bounds.
 
-        register_commands turns minimum/maximum into Discord's min_value and
-        max_value, but that only constrains the registration currently live.
-        A bound tightened since register_commands last ran, a client holding a
-        cached command, or a value written straight to the table all arrive
-        unchecked -- so the bound is enforced where it is declared rather than
-        trusted to whatever produced the value. Both the /setup write path and
-        the config read path go through here, which also repairs an
-        out-of-range value already sitting in the table.
+        A form's menu only offers values inside the bounds, but a text box
+        takes anything, a panel opened before a bound was tightened submits
+        the old menu, and a value can be written straight to the table -- so
+        the bound is enforced where it is declared rather than trusted to
+        whatever produced the value. Both the /setup write path and the config
+        read path go through here, which also repairs an out-of-range value
+        already sitting in the table.
         """
         if value is None:
             return None
@@ -147,38 +138,37 @@ class ConfigField:
 
 
 def _overrides(value):
-    """game_overrides holds only explicit deviations from each GameSpec's coded
-    default, so a newly added game reaches every guild with its own default
-    rather than a frozen snapshot of an old /setup games submission."""
+    """game_overrides holds only the games a server has explicitly chosen, so
+    a newly added game -- or one it never touched -- reaches every guild with
+    its coded default rather than a frozen snapshot of an old Games form
+    submission."""
     return {k: bool(v) for k, v in (value or {}).items()}
 
 
 # How the next day's rotation is picked, and whether the daily board shows
-# games outside it. (label, value) pairs: the label is what Discord's choice
-# menu shows.
+# games outside it. (value, label, describe) triples: the form offers each as
+# one option, and the panel names the chosen one by its label.
 ROTATION_MODES = (
-    ('swap — replace under-played games, keep the rest', 'swap'),
-    ('random — fresh draw every day', 'random'),
+    ('swap', 'Swap', 'Replace the under-played games, keep the rest'),
+    ('random', 'Random', 'A fresh draw every day'),
 )
 OFF_ROTATION_MODES = (
-    ('shown — on the board for zero points', 'shown'),
-    ('hidden — off the board entirely', 'hidden'),
+    ('shown', 'Shown', 'Listed under the scored games, for zero points'),
+    ('hidden', 'Hidden', 'Left off the board entirely'),
 )
-# The points scale (/setup scoring). The values are game_parser's: the
-# semantics live with points_per_game, this is only the menu.
+# The points scale. The values are game_parser's: the semantics live with
+# points_per_game, this is only the menu.
 SCORING_MODES = (
-    ("placement — 1st is worth the day's turnout, one fewer per place",
-     SCORING_PLACEMENT),
-    ('per_game — 1 point plus one per player you beat, game by game',
-     SCORING_PER_GAME),
-    ('off — scores only, no points and no crown', SCORING_OFF),
+    (SCORING_PLACEMENT, 'Placement', "1st is worth the day's turnout, one fewer per place"),
+    (SCORING_PER_GAME, 'Per game', '1 point plus one per player you beat, game by game'),
+    (SCORING_OFF, 'Off', 'Scores only, no points and no crown'),
 )
 
 
 def _choice(choices, default):
     """Enum coercion: anything outside the declared values snaps to the
     default, so a bad manual write can't leak an unknown mode into callers."""
-    values = {v for _, v in choices}
+    values = {v for v, _, _ in choices}
 
     def coerce(value):
         v = str(value)
@@ -192,135 +182,158 @@ def _keys(value):
 
 
 CONFIG_FIELDS = [
-    # Channels: their own /setup subcommands (native picker + raw-ID fallback).
-    ConfigField('input_channel_id'),    # scores are read + sticky lives here
-    ConfigField('output_channel_id'),   # daily scoreboard posts here
-
-    # /setup time
-    ConfigField('timezone', default='UTC', group='time', opt_type=OPT_STRING,
+    # Basics: where the bot reads and posts, its clock, which features run,
+    # and the points scale. A server with no scores channel is handed this
+    # form by /setup itself, since nothing else it could set would post.
+    ConfigField('input_channel_id', section='basics', label='Scores channel',
+                describe='Where players paste results. The sticky lives here too.'),
+    # Left blank on the form, the board posts in the scores channel: one
+    # channel for everything is the default path, a second one the override.
+    ConfigField('output_channel_id', section='basics', label='Board channel',
+                describe='Where the daily board posts. Leave empty to post it in the scores channel.'),
+    ConfigField('timezone', default='UTC', section='basics', label='Timezone',
                 describe='IANA name, e.g. America/New_York'),
-    ConfigField('hours_after_midnight', default=0, coerce=int, group='time',
-                option='day_start_hour', minimum=0, maximum=23,
-                describe='Hour the scoring day starts (default 0)'),
-    ConfigField('post_hour', coerce=int, group='time', minimum=0, maximum=23,
-                describe='Local hour the scoreboard posts (default: day start hour)'),
-    ConfigField('time_window_hours', default=24, coerce=int, group='time',
-                option='window_hours', minimum=1, maximum=24,
-                describe='Hours submissions stay open each day (default 24)'),
-
-    # /setup limits
-    ConfigField('minimum_players', default=1, coerce=int, group='limits', minimum=1,
-                describe='Hide games with fewer players than this (default 1)'),
-    ConfigField('hundreds_of_messages', default=1, coerce=int, group='limits',
-                option='message_volume', minimum=1, maximum=8,
-                describe='Hundreds of messages/day in the input channel (default 1)'),
-    # The channel's pin ceiling is shared with every other pin in it, so the
-    # daily board needs a window rather than an ever-growing stack. Bounded by
-    # PIN_CAP because a window wider than the channel can hold is meaningless.
-    ConfigField('pin_keep_days', default=30, coerce=int, group='limits',
-                option='pin_days', minimum=1, maximum=PIN_CAP,
-                describe=f'Days of scoreboards kept pinned, 1-{PIN_CAP} (default 30)'),
-
-    # Toggles (/setup daily, /setup sticky, /setup embeds, /setup reactions)
-    # and the game menu (/setup games). sticky_games and delete_wordle_recap
-    # ride along on the sticky toggle as optional options, since they only
-    # mean anything while the sticky is on.
-    ConfigField('daily_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
-    # Rides along on /setup daily, since the posted board is the only surface
-    # it touches. On the placement scale first place is worth the day's whole
-    # turnout, so a player who skipped a scored game has already been ranked
-    # under everyone in it; on by default, the board says so. A server that
-    # reads that as a callout rather than an explanation turns it off, and the
-    # scale is unchanged either way -- this moves nobody's points.
-    ConfigField('daily_shame', default=True, coerce=bool, group='daily',
-                option='shame', opt_type=OPT_BOOLEAN,
-                describe='List who skipped each scored game as \U0001F4A9 DNF '
-                         '(placement scoring only; default on)'),
-    ConfigField('sticky_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
-    # Capped at the width of one action row: a sixth button wraps to a second
-    # row, which is the screenful the sticky is trying not to be.
-    ConfigField('sticky_games', default=0, coerce=int, group='sticky',
-                option='games', minimum=0, maximum=MAX_BUTTONS_PER_ROW,
-                describe=f'Play buttons for today\'s games on the sticky, '
-                         f'0-{MAX_BUTTONS_PER_ROW} (default 0, off)'),
-    ConfigField('delete_wordle_recap', default=False, coerce=bool, group='sticky',
-                opt_type=OPT_BOOLEAN,
-                describe="Delete the Wordle app's daily recap of yesterday's "
-                         'results (default off)'),
-    ConfigField('suppress_embeds', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
+    # The feature switches. Each feature's tuning has a section of its own, so
+    # switching one off here keeps how it was set up.
+    ConfigField('daily_enabled', default=True, coerce=bool, section='basics',
+                label='Daily board',
+                describe="Post and pin each day's results once it closes"),
+    ConfigField('sticky_enabled', default=True, coerce=bool, section='basics',
+                label='Now Playing sticky',
+                describe='Play and Scores buttons kept at the bottom of the scores channel'),
+    ConfigField('rotation_enabled', default=True, coerce=bool, section='basics',
+                label='Daily rotation',
+                describe='Score a few of the games each day rather than all of them'),
+    # The hourly posts between boards (commentary.py). On by default; a server
+    # that doesn't want them stores False like any other choice.
+    ConfigField('commentary_enabled', default=True, coerce=bool, section='basics',
+                label='Commentary',
+                describe='Posts between the boards: standings, last call, lead changes'),
     # The sticky pass reacts to each fresh result with how it went and where it
     # placed (sticky_lambda.react_to_results). On by default, since the invite
     # asks for Add Reactions; where the bot lacks it (an older invite, in a
     # server that restricts reactions), each pass stops at its first 403 and the
     # sticky is unaffected.
-    # rotation_only rides along on the toggle, for a server that only wants the
-    # games that score today reacted to; it changes nothing on an unrestricted day.
-    ConfigField('reactions_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
-    ConfigField('reactions_rotation_only', default=False, coerce=bool, group='reactions',
-                option='rotation_only', opt_type=OPT_BOOLEAN,
-                describe="Only react to today's rotation games while the rotation is on "
-                         '(default off)'),
-    ConfigField('game_overrides', default={}, coerce=_overrides),
+    ConfigField('reactions_enabled', default=True, coerce=bool, section='basics',
+                label='Reactions',
+                describe='React to each result with how it went and where it placed'),
+    # How much a result is worth. The rotation picks WHICH games score each
+    # day; this picks HOW. Placement is the rotation's own scale and the
+    # default, so a server that never touches it sees no change on any
+    # rotation day.
+    ConfigField('scoring', default=SCORING_PLACEMENT,
+                coerce=_choice(SCORING_MODES, SCORING_PLACEMENT), section='basics',
+                label='Scoring', choices=SCORING_MODES,
+                describe='How a result turns into points on the board'),
 
-    # /setup rotation: score only a rotating subset of the enabled games each
-    # day. The six shape fields ride along on the toggle the same way
-    # sticky_games rides on /setup sticky. The two swap thresholds are separate
-    # from the minimum_players display gate, and from each other -- how hard a
-    # seat is to hold is a different question from how hard one is to win.
-    ConfigField('rotation_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
-    # Bounded by the game table itself rather than a fixed number: adding a
-    # GameSpec widens the option with it, and a rotation wider than the roster
-    # is unaskable (next_rotation would only min() it back down anyway).
-    ConfigField('rotation_count', default=5, coerce=int, group='rotation',
-                option='games', minimum=1, maximum=len(GAME_SPECS),
-                describe=f'How many games are scored each day, 1-{len(GAME_SPECS)} (default 5)'),
-    ConfigField('rotation_mode', default='swap', coerce=_choice(ROTATION_MODES, 'swap'),
-                group='rotation', option='mode', opt_type=OPT_STRING,
-                choices=ROTATION_MODES,
-                describe="How the next day's games are picked (default swap)"),
-    ConfigField('rotation_keep_players', default=5, coerce=int, group='rotation',
-                option='keep_players', minimum=1,
-                describe='Swap mode: a scored game holds its seat at this many players (default 5)'),
-    ConfigField('rotation_promote_players', default=5, coerce=int, group='rotation',
-                option='promote_players', minimum=1,
-                describe='Swap mode: an off-rotation game earns a seat at this many players (default 5)'),
+    ConfigField('game_overrides', default={}, coerce=_overrides, section='games',
+                label='Games',
+                describe='Unticked games are ignored: not read, not scored, not listed in Play'),
+
+    ConfigField('hours_after_midnight', default=0, coerce=int, section='schedule',
+                label='Day starts at', unit='clock', minimum=0, maximum=23,
+                describe='When one scoring day rolls over to the next'),
+    # Unset means "when the day starts" (see post_hour below). The form shows
+    # that hour, and a form saved without touching it leaves it unset.
+    ConfigField('post_hour', coerce=int, section='schedule', label='Board posts at',
+                unit='clock', minimum=0, maximum=23,
+                describe='Not before the day starts: the day has to close first'),
+    ConfigField('time_window_hours', default=24, coerce=int, section='schedule',
+                label='Results count for', unit='hour', minimum=1, maximum=24,
+                describe='Hours after the day starts that a result still counts'),
+
+    ConfigField('minimum_players', default=1, coerce=int, section='board',
+                label='Players a game needs', unit='player', minimum=1,
+                describe='Games with fewer players are hidden and score nobody'),
     ConfigField('rotation_off_mode', default='shown',
-                coerce=_choice(OFF_ROTATION_MODES, 'shown'), group='rotation',
-                option='off_rotation', opt_type=OPT_STRING, choices=OFF_ROTATION_MODES,
-                describe='Show off-rotation games on the board for zero points, or hide them (default shown)'),
+                coerce=_choice(OFF_ROTATION_MODES, 'shown'), section='board',
+                label='Off-rotation games', choices=OFF_ROTATION_MODES,
+                describe="Games played outside the day's rotation, while it is on"),
+    # The channel's pin ceiling is shared with every other pin in it, so the
+    # daily board needs a window rather than an ever-growing stack. Bounded by
+    # PIN_CAP because a window wider than the channel can hold is meaningless.
+    ConfigField('pin_keep_days', default=30, coerce=int, section='board',
+                label='Days of boards kept pinned', unit='day', minimum=1,
+                maximum=PIN_CAP,
+                describe=f'1-{PIN_CAP}. Pins are shared with everything else pinned in the channel.'),
+    ConfigField('hundreds_of_messages', default=1, coerce=int, section='board',
+                label='Messages a day in the scores channel', unit='hundred',
+                minimum=1, maximum=8,
+                describe='Roughly. Sets how far back the board reads.'),
+    # On the placement scale first place is worth the day's whole turnout, so
+    # a player who skipped a scored game has already been ranked under
+    # everyone in it; on by default, the board says so. A server that reads
+    # that as a callout rather than an explanation turns it off, and the
+    # scale is unchanged either way -- this moves nobody's points.
+    ConfigField('daily_shame', default=True, coerce=bool, section='board',
+                label='DNF lines',
+                describe='List who skipped each scored game as \U0001F4A9 DNF '
+                         '(placement scoring only)'),
+
+    # Score only a rotating subset of the enabled games each day. The two swap
+    # thresholds are separate from the minimum_players display gate, and from
+    # each other -- how hard a seat is to hold is a different question from
+    # how hard one is to win.
+    # Bounded by the game table itself rather than a fixed number: adding a
+    # GameSpec widens the menu with it, and a rotation wider than the roster
+    # is unaskable (next_rotation would only min() it back down anyway).
+    ConfigField('rotation_count', default=5, coerce=int, section='rotation',
+                label='Games scored each day', unit='game', minimum=1,
+                maximum=len(GAME_SPECS),
+                describe='When more games qualify, the most-played keep the seats'),
+    ConfigField('rotation_mode', default='swap', coerce=_choice(ROTATION_MODES, 'swap'),
+                section='rotation', label="Picking the next day's games",
+                choices=ROTATION_MODES,
+                describe='Swap goes by the two player counts below; random ignores them'),
+    ConfigField('rotation_keep_players', default=5, coerce=int, section='rotation',
+                label='Players to keep a seat', unit='player', minimum=1,
+                describe='A scored game drawing fewer players rotates out'),
+    ConfigField('rotation_promote_players', default=5, coerce=int, section='rotation',
+                label='Players to win a seat', unit='player', minimum=1,
+                describe='An off-rotation game drawing this many players rotates in'),
     # Only the "Today's games" POST -- the rotation itself still draws, and
     # every other consumer (board scoring, sticky row, /play) still narrows to
     # it. For a server that wants the rotation without a second daily message.
-    ConfigField('rotation_announce', default=True, coerce=bool, group='rotation',
-                option='announce', opt_type=OPT_BOOLEAN,
-                describe="Post \"Today's games\" when the rotation is drawn (default on)"),
+    ConfigField('rotation_announce', default=True, coerce=bool, section='rotation',
+                label="Announce today's games",
+                describe="Post the day's games when they are drawn"),
 
-    # /setup scoring: how much a result is worth. The rotation picks WHICH
-    # games score each day; this picks HOW. Placement is the rotation's own
-    # scale and the default, so a server that never touches it sees no change
-    # on any rotation day.
-    ConfigField('scoring', default=SCORING_PLACEMENT,
-                coerce=_choice(SCORING_MODES, SCORING_PLACEMENT), group='scoring',
-                option='mode', opt_type=OPT_STRING, choices=SCORING_MODES,
-                describe='Points scale for the board (default placement)'),
+    # Capped at the width of one action row: a sixth button wraps to a second
+    # row, which is the screenful the sticky is trying not to be.
+    ConfigField('sticky_games', default=0, coerce=int, section='sticky',
+                label='Game buttons on the sticky', unit='button', minimum=0,
+                maximum=MAX_BUTTONS_PER_ROW,
+                describe="Today's top games as Play buttons; /play lists the rest"),
+    # Link stripping, the recap cleanup and the reactions all happen on the
+    # sticky pass as it counts each result, so they share its section: with
+    # the sticky off, none of them runs.
+    ConfigField('suppress_embeds', default=True, coerce=bool, section='sticky',
+                label='Strip link previews',
+                describe='Remove the preview card from each result as it is counted'),
+    ConfigField('delete_wordle_recap', default=False, coerce=bool, section='sticky',
+                label='Delete the Wordle recap',
+                describe="Remove the Wordle app's daily recap of yesterday's results"),
+    # For a server that only wants the games that score today reacted to; it
+    # changes nothing on an unrestricted day.
+    ConfigField('reactions_rotation_only', default=False, coerce=bool, section='sticky',
+                label='React to rotation games only',
+                describe="While the rotation is on, react only to the day's games"),
 
-    # /setup commentary: the hourly posts between boards (commentary.py). The
-    # master switch, on by default (a server that doesn't want it stores
-    # enabled:False like any other choice); the per-kind overrides, a map like
-    # game_overrides that the bare command's menu edits -- so a new Trigger
-    # reaches every server with its coded default and needs no re-registration;
-    # and the numbers the triggers are tuned by, which ride along on the toggle.
-    ConfigField('commentary_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
-    ConfigField('commentary_overrides', default={}, coerce=_overrides),
-    ConfigField('commentary_midday_hour', default=13, coerce=int, group='commentary',
-                option='midday_hour', minimum=0, maximum=23,
-                describe='Local hour the midday standings post (default 13)'),
-    ConfigField('commentary_last_call_hours', default=3, coerce=int, group='commentary',
-                option='last_call_hours', minimum=0, maximum=12,
-                describe='Hours before the close for the streak last call; 0 = off (default 3)'),
-    ConfigField('commentary_nudge_after_hours', default=2, coerce=int, group='commentary',
-                option='nudge_after_hours', minimum=1, maximum=12,
-                describe="Hours since a player's last result before the nudge (default 2)"),
+    # The per-kind overrides are a map like game_overrides, so a Trigger added
+    # in code reaches every server with its coded default; the numbers below
+    # are what the triggers are tuned by.
+    ConfigField('commentary_overrides', default={}, coerce=_overrides,
+                section='commentary', label='Messages',
+                describe='Which kinds of commentary post'),
+    ConfigField('commentary_midday_hour', default=13, coerce=int, section='commentary',
+                label='Midday standings at', unit='clock', minimum=0, maximum=23,
+                describe='When the standings so far post, once a day'),
+    ConfigField('commentary_last_call_hours', default=3, coerce=int, section='commentary',
+                label='Last call', unit='hour', minimum=0, maximum=12,
+                describe='Hours before the day closes that streaks about to break are named; 0 is off'),
+    ConfigField('commentary_nudge_after_hours', default=2, coerce=int, section='commentary',
+                label='Nudge after', unit='hour', minimum=1, maximum=12,
+                describe="Hours since a player's last result before the nudge names them"),
 
     # Run markers, written by the daily lambda. last_posted_day is the post
     # gate; last_finalized_day is diagnostic only -- nothing reads it, it just
@@ -351,64 +364,13 @@ CONFIG_FIELDS = [
 
 CONFIG_DEFAULTS = {f.name: f.default for f in CONFIG_FIELDS}
 
-# The channel settings, in the order a summary lists them.
+# The channel settings: where scores are read, then where the board posts.
 CHANNEL_FIELDS = ('input_channel_id', 'output_channel_id')
 
 
-@dataclass(frozen=True)
-class ChannelSub:
-    """One /setup subcommand that points the bot at a channel.
-
-        name      the subcommand
-        fields    the channel config fields it writes
-        blurb     what that channel is, in prose -- used by the picker prompt,
-                  the confirmation, and the /setup show summary
-        describe  the subcommand description Discord shows in its picker
-
-    Same bargain as ConfigField above: register_commands.py builds these
-    subcommands straight off this list and interaction_lambda dispatches off
-    it, so a channel subcommand cannot exist on one side only.
-    """
-    name: str
-    fields: tuple
-    blurb: str
-    describe: str
-
-    @property
-    def combined(self):
-        """Whether this one sets every channel at once."""
-        return len(self.fields) > 1
-
-    @property
-    def label(self):
-        """How the target reads in prose: 'input channel', or plain 'channel'
-        for the combined subcommand."""
-        return self.name if self.combined else f'{self.name} channel'
-
-
-# One channel for everything is the default path a fresh server is pointed at;
-# the single-sided subcommands exist to override one half of it afterwards.
-CHANNEL_SUBS = [
-    ChannelSub('channel', CHANNEL_FIELDS,
-               'where scores are read and the daily scoreboard posts',
-               'Use one channel for everything — start here'),
-    ChannelSub('input', ('input_channel_id',),
-               'where scores are read and the sticky lives',
-               'Read scores from a different channel than /setup channel'),
-    ChannelSub('output', ('output_channel_id',),
-               'where the daily scoreboard posts',
-               'Post the daily scoreboard somewhere other than /setup channel'),
-]
-
-
-def channel_sub(name):
-    """The ChannelSub a /setup subcommand name refers to, or None."""
-    return next((c for c in CHANNEL_SUBS if c.name == name), None)
-
-
-def setup_options(group):
-    """The /setup subcommand's fields, in declaration order."""
-    return [f for f in CONFIG_FIELDS if f.group == group]
+def section_fields(section):
+    """The fields one /setup section's form edits, in declaration order."""
+    return [f for f in CONFIG_FIELDS if f.section == section]
 
 
 def post_hour(cfg):
@@ -764,8 +726,8 @@ def hold_game_choice(guild_id, game_key, enabled):
     """Write one game into a guild's game_overrides as an explicit choice --
     tools/hold_game_default.py's write, ahead of flipping that game's default.
     Conditioned both ways: a guild with no overrides map follows the defaults
-    and must keep following them, and a choice already there (a /setup games
-    save landing first) is never overwritten. Returns whether it wrote."""
+    and must keep following them, and a choice already there (a Games save
+    landing first) is never overwritten. Returns whether it wrote."""
     try:
         table().update_item(
             Key={'PK': GUILDS_PK, 'SK': config_sk(guild_id)},

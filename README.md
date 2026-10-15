@@ -1,6 +1,7 @@
 ### ➕ [Add the bot to your Discord server](https://discord.com/oauth2/authorize?client_id=1425892168471548006&scope=bot+applications.commands&permissions=2251799813762112)
 
-Then run `/setup channel` in the server — that's the whole setup.
+Then run `/setup` in the server and pick the channel people post their results in —
+that's the whole setup.
 
 ---
 
@@ -16,10 +17,10 @@ By default, the app picks a rotation of games for the day for users to compete i
 
 | Surface | What it is |
 |---|---|
-| **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and the server's streaks — off-rotation plays listed below the scored games for zero points. On the default points scale, where first place is worth the day's whole turnout, each scored game is filled out to that turnout: whoever skipped it is slotted in below everyone who played as a 💩 DNF, which is where the scale already ranked them (`/setup daily shame:false` to leave them off). |
+| **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every scored game someone played yesterday, ranked scores, a points summary, and the server's streaks — off-rotation plays listed below the scored games for zero points. On the default points scale, where first place is worth the day's whole turnout, each scored game is filled out to that turnout: whoever skipped it is slotted in below everyone who played as a 💩 DNF, which is where the scale already ranked them (untick **DNF lines** in `/setup` to leave them off). |
 | **Today's games** | Posted at the server's day start while rotation is on (the default): the rotating subset of games that scores today, as play links. Lands right under the board when the board posts at that same hour. Servers that would rather not have a second daily message can switch just this post off. |
 | **Now Playing sticky** | One message kept at the bottom of the input channel: how much the server has played today, today's games as play buttons, the server streak in its heading, and **Play**, **Scores** and **Yesterday** underneath. |
-| **Reactions** | Within a minute of a result being posted, the bot reacts to it with how it went (💯 aced, 😎 great, 🙂 good, 😬 rough, 💩 poop) and where it placed in that game at that moment (🥇 🥈 🥉, 👍 below third, nothing for the first to post). Great, good and rough are set per game; `/setup reactions enabled:false` switches them off. |
+| **Reactions** | Within a minute of a result being posted, the bot reacts to it with how it went (💯 aced, 😎 great, 🙂 good, 😬 rough, 💩 poop) and where it placed in that game at that moment (🥇 🥈 🥉, 👍 below third, nothing for the first to post). Great, good and rough are set per game; untick **Reactions** in `/setup` to switch them off. |
 | **`/play`** | A private list of games as buttons, linking straight to each puzzle, ordered by what the server is actually playing. It lists everything *except* the games already on the sticky, so the two don't repeat; **`/play all:true`** puts the whole roster in one list. |
 | **`/stats`** | A private view of your own streaks — overall, then game by game. Every streak on the board belongs to the server; this is where yours are. |
 | **`/suggest`** | Anyone can propose a game the bot doesn't track yet. |
@@ -58,8 +59,8 @@ and the bot picks it up.
 | Wordle | https://www.nytimes.com/games/wordle | yes |
 | Worldle | https://worldlegame.io | no |
 
-Every game can be flipped either way per server with `/setup games` — the column above
-is only what a server gets before anyone touches that menu.
+Every game can be flipped either way per server under **Games** in `/setup` — the column
+above is only what a server gets before anyone touches that menu.
 
 Wordle counts pasted share text everywhere. Results the official Wordle Discord bot posts
 as *images* are included — see
@@ -88,7 +89,7 @@ Pin Messages is its own permission, not part of Manage Messages: Discord split i
 with the current pins API, so a server invited on the older four-permission integer
 (`76800`) posts its board fine and then fails the pin with `403 / 50013`.
 
-Add Reactions came later still, and only the reactions use it. A server invited
+Add Reactions came later still, and only reactions use it. A server invited
 before it usually allows it anyway, since Discord gives it to `@everyone` by default;
 where reactions are restricted, grant it to the bot's role, or results go unreacted.
 
@@ -104,88 +105,93 @@ https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=bot+applic
 The bot has to be running somewhere before its slash commands do anything — see
 [Self-hosting on AWS](#self-hosting-on-aws) below.
 
-## 2. Point it at a channel
+## 2. Run `/setup`
 
-Run this in the server:
+Run **`/setup`** in the server. The first time, it opens one short form:
 
-- **`/setup channel`** — the one channel the bot reads scores from and posts in.
+- **Scores channel** — where people paste their results, and where the sticky lives. The
+  only field you have to fill in.
+- **Board channel** — where the daily scoreboard posts. Leave it empty to post it in the
+  scores channel, which is what most servers want.
+- **Timezone** — an IANA name like `America/New_York` (`UTC` until you set one).
+- **Features** — the daily board, the Now Playing sticky, the daily rotation, commentary
+  and reactions, each ticked on or off.
+- **Scoring** — which points scale the board uses.
 
-That is the whole thing for most servers. If you want the daily scoreboard to land
-somewhere other than where people paste their results, override one side afterwards:
-
-- **`/setup input`** — read scores from a different channel (the sticky follows it).
-- **`/setup output`** — post the daily scoreboard to a different channel.
-
-Each moves only the side it names and leaves the other where `/setup channel` put it.
-
-All three take a channel from the native picker, or `channel_id:<id>` for channels the
-picker can't show, or no arguments at all — the reply is then a channel-select menu.
-Every path verifies the bot can actually see the channel and tells you what to fix if
-it can't; a private channel needs the bot's role added to it.
-
-Nothing posts until a channel is set. **`/setup show`** prints the whole configuration.
+Submit it and the bot is live, and the reply is the panel below, where every other
+setting is one click away. Every channel is checked before it's saved: the bot has to be
+able to see a channel to read or post in it, and the reply says what to fix when it can't
+(a private channel needs the bot's role added to it).
 
 ## 3. Tune it (optional)
 
-Defaults in parentheses.
+Once there's a scores channel, `/setup` shows the whole configuration instead, a section
+at a time, each with an **Edit** button that opens that section's form already filled in
+with what the server has now. Submitting a form saves only what you changed and redraws
+the summary. A value that can't be saved (an unknown timezone, a channel the bot can't
+see) is named at the top, and the rest of the form saves anyway.
 
-- **`/setup time timezone:<IANA name> day_start_hour:<0-23> post_hour:<0-23> window_hours:<1-24>`**
-  (`UTC` / `0` / day start hour / `24`) — `day_start_hour` is when a scoring day rolls
-  over, `post_hour` is the local hour the board posts, `window_hours` is how long
-  submissions stay open each day. Example: `America/New_York`, day start 3, post 9,
-  window 21 keeps submissions open 3AM–midnight local and posts the board at 9AM.
-- **`/setup limits minimum_players:<n> message_volume:<hundreds per day>`**
-  (`1` / `1`) — `minimum_players` hides (and stops scoring) games with fewer players
-  than that, `message_volume` is roughly how many hundreds of messages a day the input
-  channel sees.
-- **`/setup games`** — a multi-select of every supported game, pre-ticked to this
-  server's current state. A server can track up to 20 at once — as many as the Play
-  list has room for.
-- **`/setup rotation enabled:<bool> games:<1-25> mode:<swap|random> keep_players:<n> promote_players:<n> off_rotation:<shown|hidden> announce:<bool>`**
-  (`true` / `5` / `swap` / `5` / `5` / `shown` / `true`) — score only a rotating subset of games
-  each day. In `swap` mode a spot is earned by play, against two separate thresholds:
-  a game in the set holds its seat by drawing `keep_players`, a game outside it earns
-  one by drawing `promote_players`, and random picks fill the rest. Splitting the two
-  is how a server sets seats that are easy to win and hard to hold, or the reverse.
-  `games` is a hard cap — when more games qualify than fit, the most-played keep the
-  seats. `random` re-draws the whole set daily and consults neither threshold.
-  `off_rotation` only decides whether the daily board lists off-rotation plays below
-  the scored games for zero points, or leaves them off the board — either way they're
-  archived, keep streaks alive, and still count toward rotating in. The
-  day's set is what the sticky puts up as buttons, so `/play` and the sticky's Play button
-  list everything else — `/play all:true` puts both halves in one list. It is drawn and announced at the server's **day start**, so a server that
-  posts its board later still gets today's games first thing; when the two hours match
-  (the default) the announcement lands right under the board. `announce:false` silences
-  that post without touching the rotation itself — the day's set is still drawn, still
-  scores the board, and still shapes the sticky and `/play`; the server just gets one
-  message a day instead of two.
-- **`/setup daily enabled:<bool> shame:<bool>`** (`true` / `true`) — `enabled:false`
-  pauses the daily post. The sticky drops its Yesterday link while paused, since
-  whatever board is still in the channel is stale. Today's games keep being drawn and
-  announced — pausing the board doesn't pause the rotation.
-  `shame` fills each scored game out to the day's full turnout: whoever skipped it is
-  listed below everyone who played as a 💩 DNF, which is where the default points
-  scale already ranked them. Presentation only — the same scale pays the same points
-  either way — and it does nothing under `per_game` or `off` scoring, which never rank
-  a player who didn't turn up. The posted board only: mid-day the Scores button never
-  calls anyone a no-show, because they may simply not have got to it yet.
-- **`/setup sticky enabled:false`** — remove the sticky. While it's on, `games:1-5` puts
-  that many of today's games on it as play buttons (off by default) — one row's worth is
-  the cap, and whatever lands there is what `/play` leaves out.
-- **`/setup sticky enabled:true delete_wordle_recap:true`** — have the sticky pass
-  delete the Wordle app's daily "here are yesterday's results" recap (`false` by
-  default). The bot's own board and streaks already cover yesterday, and the recap
-  pings the players it names. Needs **Manage Messages**; the finished-grid message
-  scores are read from is never touched.
-- **`/setup embeds suppress:false`** — stop stripping link previews off posted results
-  (`true` by default). Stripping happens as the sticky counts each result, so it needs
-  **Manage Messages** and does nothing at all while the sticky is off. Turning it off
-  doesn't restore previews already stripped.
-- **`/setup reactions enabled:<bool> rotation_only:<bool>`** (`true` / `false`) — react
-  to each result as it's counted: how it went, against per-game great/good/rough lines,
-  and where it placed in that game when it was posted. `rotation_only:true` limits it to
-  today's rotation games while the rotation is on. Needs **Add Reactions** and, like
-  link stripping, does nothing while the sticky is off.
+Discord fits at most five fields in a form, so the settings come in sections rather than
+one long form. Defaults in parentheses.
+
+- **Basics** — the first form again: channels, timezone, which features run, scoring.
+  Unticking a feature switches it off without forgetting how its section was set.
+  Pausing the daily board stops the daily post, and the sticky drops its Yesterday link
+  while it's paused, since whatever board is still in the channel is stale. Today's games
+  keep being drawn and announced — pausing the board doesn't pause the rotation.
+- **Games** — tick the games this server tracks, up to 20 at once (as many as the Play
+  list has room for).
+- **Schedule** — **Day starts at** (`00:00`) is when a scoring day rolls over, **Board
+  posts at** (the day start) is the local hour the board posts, and **Results count for**
+  (`24 hours`) is how long submissions stay open each day. Example: `America/New_York`,
+  day start 03:00, post 09:00, results counting for 21 hours keeps submissions open
+  3AM–midnight local and posts the board at 9AM. A board can't post before its day closes,
+  so the form refuses a post hour earlier than the day start.
+- **Board** — **Players a game needs** (`1`) hides, and stops scoring, games with fewer
+  players than that. **Off-rotation games** (`shown`) decides whether the board lists
+  plays outside the day's rotation below the scored games for zero points, or leaves them
+  off — either way they're archived, keep streaks alive, and still count toward rotating
+  in. **Days of boards kept pinned** (`30`, up to 250) shares the channel's pin limit with
+  everything else pinned there. **Messages a day in the scores channel** (about `100`) is
+  roughly how busy the channel is, which sets how far back the board reads. **DNF lines**
+  (on) fills each scored game out to the day's full turnout: whoever skipped it is listed
+  below everyone who played as a 💩 DNF, which is where the default points scale already
+  ranked them. Presentation only — the same scale pays the same points either way — and
+  it does nothing under `per game` or `off` scoring, which never rank a player who didn't
+  turn up. The posted board only: mid-day the Scores button never calls anyone a no-show,
+  because they may simply not have got to it yet.
+- **Rotation** — scores only a rotating subset of games each day (on by default).
+  **Games scored each day** (`5`) is a hard cap: when more games qualify than fit, the
+  most-played keep the seats. In the `swap` draw (the default) a seat is earned by play,
+  against two separate thresholds: a game in the set holds its seat by drawing **Players
+  to keep a seat** (`5`), a game outside it earns one by drawing **Players to win a seat**
+  (`5`), and random picks fill the rest. Splitting the two is how a server sets seats
+  that are easy to win and hard to hold, or the reverse. `random` re-draws the whole set
+  daily and consults neither threshold. The day's set is what the sticky puts up as
+  buttons, so `/play` and the sticky's Play button list everything else — `/play all:true`
+  puts both halves in one list. It is drawn and announced at the server's **day start**,
+  so a server that posts its board later still gets today's games first thing; when the
+  two hours match (the default) the announcement lands right under the board. Unticking
+  **Announce today's games** silences that post without touching the rotation itself —
+  the day's set is still drawn, still scores the board, and still shapes the sticky and
+  `/play`; the server just gets one message a day instead of two.
+- **Sticky** — **Game buttons on the sticky** (`0`, up to 5) puts that many of today's
+  games on it as play buttons: one row's worth is the cap, and whatever lands there is
+  what `/play` leaves out. **Strip link previews** (on) takes the preview card off each
+  posted result; switching it off doesn't restore previews already stripped. **Delete the
+  Wordle recap** (off) removes the Wordle app's daily "here are yesterday's results"
+  recap, which the bot's own board and streaks already cover, and which pings the players
+  it names; the finished-grid message scores are read from is never touched. Both need
+  **Manage Messages**. **React to rotation games only** (off) limits reactions to today's
+  rotation games while the rotation is on. Reactions (on by default, switched off under
+  Basics) react to each result as it's counted: how it went, against per-game
+  great/good/rough lines, and where it placed in that game when it was posted. They need
+  **Add Reactions**. All of this happens as the sticky counts each result, so none of it
+  runs while the sticky is off — and switching the sticky off deletes the one in the
+  channel.
+- **Commentary** — which kinds of message post between the boards, and when: **Midday
+  standings at** (`13:00`), **Last call** (`3` hours before the day closes, `0` for none)
+  and **Nudge after** (`2` hours after a player's last result). The nudge ships off.
 
 ## Suggesting a game
 
@@ -197,7 +203,7 @@ the operator can thank whoever suggested it, in the server they suggested it fro
 
 Suggestions naming a game that is already supported are answered on the spot instead of
 forwarded, including the case worth acting on: *supported, but turned off in this
-server — an admin can switch it back on with `/setup games`*. If the operator hasn't
+server — an admin can switch it back on under Games in `/setup`*. If the operator hasn't
 configured a dev channel, the command still answers, saying it has nowhere to send them.
 
 ## Wordle image results
@@ -341,7 +347,7 @@ dotenv run -- python3 tools/infra_setup.py --plan  # should report no drift
 A local run of `lambda_function.py` is always test mode: it posts to `TEST_CHANNEL_ID`,
 never pins, and never advances the "already posted today" marker. `interaction_lambda.py`
 replays `tests/events/interaction/interaction_sticky_scores.json` by default; pass
-another fixture path as an argument. In the server, `/setup show` should print the
+another fixture path as an argument. In the server, `/setup` should show the
 configuration you just wrote.
 
 Every click and command the bot serves prints one JSON line to the interaction lambda's
@@ -378,8 +384,8 @@ dotenv run -- python3 tools/broadcast.py -m "back in an hour" --guild 818... --s
 **Preview is the default**; nothing is posted without `--send`. `--game` finds its
 recipients among the suggestions the bot keeps, matched to the game the same way `/suggest`
 recognises a game it already tracks. The note mentions the people who asked, carries a play
-button, and reads off that server's own setting — *an admin can turn it on with
-`/setup games`*, or that it's already on. Thanked suggestions are stamped, so a re-run skips
+button, and reads off that server's own setting — *an admin can turn it on under Games
+in `/setup`*, or that it's already on. Thanked suggestions are stamped, so a re-run skips
 them (`--again` resends). A game nobody suggested has nobody to thank; `-m`/`--file` send
 free text to every server, or only `--guild`. Messages land in each server's output channel
 (`--channel input` for the sticky's), with embeds suppressed and nobody pinged but the
@@ -387,27 +393,27 @@ people being thanked.
 
 ## Changing a game's default
 
-`/setup games` stores only where a server departs from each game's default, so flipping a
-game's `disabled` flag reaches every server without a choice of its own for that game —
-including servers that picked their own games. To leave those where they stand, hold them
-first, while the code still carries the old default:
+The Games form stores only the games a server has switched, so flipping a game's
+`disabled` flag reaches every server that never switched that game — including servers
+that picked their own games. To leave those where they stand, hold them first, while the
+code still carries the old default:
 
 ```bash
 dotenv run -- python3 tools/hold_game_default.py seldom           # preview, writes nothing
 dotenv run -- python3 tools/hold_game_default.py seldom --write
 ```
 
-Each server with any `/setup games` choice, and none for this game, gets what it already
-tracks written in as an explicit choice, so nothing changes until the flip deploys — and
-then the flip reaches only servers on the defaults. Deploy soon after: until the flip
-lands, a server that saves `/setup games` sheds the held value again.
+Each server with any Games choice, and none for this game, gets what it already tracks
+written in as an explicit choice, so nothing changes until the flip deploys — and then
+the flip reaches only servers on the defaults. A later Games save keeps the held value,
+since a save records only the games it switches.
 
 ---
 
 # Repository layout
 
 ```
-src/      the six modules that ship to Lambda
+src/      the seven modules that ship to Lambda
 tools/    local-only CLIs (never deployed)
 tests/    event fixtures for local runs
 docs/     SPEC.md, the design doc

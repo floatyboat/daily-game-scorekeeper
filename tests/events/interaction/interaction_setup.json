@@ -7,7 +7,6 @@
     "user": {"id": "1"}
   },
   "data": {
-    "name": "setup",
-    "options": [{"name": "show", "type": 1}]
+    "name": "setup"
   }
 }

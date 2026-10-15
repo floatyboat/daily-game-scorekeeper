@@ -244,7 +244,7 @@ def update_sticky(channel_id, channel_messages, results, server_streak=0,
     catches the day-transition case where the sticky is still at the bottom but
     shows yesterday's stats, and button comparison catches a Yesterday link gone
     stale behind a freshly posted scoreboard, or a shortcut row the day's plays
-    have since reordered (or an admin has resized via /setup sticky).
+    have since reordered (or an admin has resized in /setup).
 
     link_yesterday=False (the guild has the daily scoreboard disabled, or the
     board covering the day before this one has not posted yet) drops the

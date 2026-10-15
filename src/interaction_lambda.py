@@ -12,7 +12,7 @@ from game_parser import (
     build_games, compute_puzzle_numbers, format_scoreboard_components,
     make_timestamp_checker, game_sort_key, match_suggestion, GAME_SPECS,
     spec_enabled, game_link_button, sticky_row_games,
-    SCORING_PLACEMENT, SCORING_PER_GAME, SCORING_OFF, tier_examples, ACED,
+    SCORING_PER_GAME, SCORING_OFF, tier_examples, ACED,
     PLACE_EMOJI, BELOW_PODIUM, POOP_MEDAL, NO_SHOW_SCORE,
 )
 from scoreboard import (
@@ -24,7 +24,7 @@ from scoreboard import (
     MAX_ENABLED_GAMES,
     MAX_MESSAGE_LENGTH, FLAG_EPHEMERAL, FLAG_IS_COMPONENTS_V2,
 )
-import commentary
+import setup_panel
 import store
 
 # Global bot identity only -- per-server settings live in the guild's config
@@ -34,15 +34,6 @@ DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 DISCORD_BOT_ID = os.getenv('DISCORD_BOT_ID') or 0
 
 _session = make_session(DISCORD_BOT_TOKEN)
-
-GAMES_SELECT_ID = 'setup_games'
-COMMENTARY_SELECT_ID = 'setup_commentary'
-CHANNEL_SELECT_PREFIX = 'setup_channel:'
-# Every reply from a one-sided channel subcommand says so: `/setup channel`
-# points both sides at one channel, and an admin who then runs `/setup input`
-# should be able to tell that it moved one side and left the other alone.
-OVERRIDE_NOTE = ('-# Overrides `/setup channel` on this side only — '
-                 'the other channel stays as it is.')
 
 
 def get_body(event):
@@ -444,11 +435,12 @@ _NESTING_OPTIONS = (1, 2)
 def describe_interaction(body):
     """One flat record of what an interaction is and who sent it.
 
-    `name` is the thing the user reached for -- a command with its subcommand
-    path (`setup rotation`), or a component's custom_id (`sticky_play`) -- and
-    `args` its leaf options as `k=v` pairs, or a select's chosen values. Modal
-    fields are left out: a /suggest paste is long, and it already lands in the
-    dev channel whole.
+    `name` is the thing the user reached for -- a command with any subcommand
+    path, or a component's or modal's custom_id (`sticky_play`,
+    `setup_form:rotation`) -- and `args` its leaf options as `k=v` pairs, or a
+    select's chosen values. Modal fields are left out: a /suggest paste is
+    long, and it already lands in the dev channel whole, and a /setup form logs
+    what it changed itself (handle_setup_submit).
     """
     data = body.get('data') or {}
     kind = INTERACTION_KINDS.get(body.get('type'), f"type{body.get('type')}")
@@ -579,8 +571,8 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_
 
     buttons = [game_link_button(g, game_streaks.get(g.key, 0)) for g in games]
 
-    # /setup games holds a server to MAX_ENABLED_GAMES, which is exactly what
-    # fits under the Random row. The one way past it is a default-on GameSpec
+    # The Games form in /setup holds a server to MAX_ENABLED_GAMES, exactly
+    # what fits under the Random row. The one way past it is a default-on GameSpec
     # shipping into a server already at the cap, so drop the tail rather than
     # send a sixth row for Discord to reject -- and say so in the content, since
     # a game that vanished silently is indistinguishable from one an admin
@@ -610,7 +602,7 @@ def build_play_response(channel_id, user_id=None, guild_id=None, cfg=None, show_
         content = "Pick a game to play!"
         if hidden:
             content += (f" (+{hidden} more this list can't fit — "
-                        f"turn some off with `/setup games`.)")
+                        f"turn some off under Games in `/setup`.)")
     elif restricted and sticky_left:
         content = STICKY_GAMES_MESSAGE
     else:
@@ -766,12 +758,9 @@ def run_deferred(work):
 
 
 # --- /setup (admin configuration) ----------------------------------------------
-
-def _update(content, components=None):
-    """UPDATE_MESSAGE: rewrite the ephemeral message a component lives on --
-    how a select menu turns into its own confirmation."""
-    return {'type': 7, 'data': {'content': content, 'components': components or []}}
-
+# One command, no options: a panel of every setting, each section edited
+# through its own pre-filled form. setup_panel builds both straight off
+# store.CONFIG_FIELDS and reads the forms back; this is the I/O around it.
 
 def is_admin(body):
     """member.permissions re-checked here; command registration also gates on
@@ -782,12 +771,6 @@ def is_admin(body):
     except (TypeError, ValueError):
         perms = 0
     return bool(perms & (PERM_ADMINISTRATOR | PERM_MANAGE_GUILD))
-
-
-def _sub_options(body):
-    """(subcommand_name, {option: value}) for a slash command with subcommands."""
-    sub = (body.get('data', {}).get('options') or [{}])[0]
-    return sub.get('name'), {o['name']: o.get('value') for o in sub.get('options') or []}
 
 
 def resolve_channel(channel_id, guild_id):
@@ -801,201 +784,14 @@ def resolve_channel(channel_id, guild_id):
     except Exception:
         return None, "Couldn't reach Discord to check that channel — try again."
     if not r.ok:
-        return None, (f"I can't access that channel (`{channel_id}`). If the ID is right, "
-                      "give me **View Channel** and **Read Message History** there and retry. "
-                      "You can always pass the raw ID via the `channel_id` option.")
+        return None, (f"I can't see <#{channel_id}>. Give me **View Channel** and "
+                      "**Read Message History** there, then pick it again.")
     ch = r.json()
     if str(ch.get('guild_id')) != str(guild_id):
         return None, 'That channel belongs to a different server.'
     if ch.get('type') not in TEXT_CHANNEL_TYPES:
         return None, 'Pick a text or announcement channel.'
     return ch, None
-
-
-def channel_select_row(sub):
-    return {'type': 1, 'components': [{
-        'type': 8,   # channel select
-        'custom_id': f'{CHANNEL_SELECT_PREFIX}{sub.name}',
-        'channel_types': list(TEXT_CHANNEL_TYPES),
-        'placeholder': f'Select the {sub.label}',
-    }]}
-
-
-def channel_picker_response(sub):
-    lines = [f'Pick the **{sub.label}** — {sub.blurb}.',
-             f'-# Channel not listed? Run `/setup {sub.name} channel_id:<id>` '
-             'with the raw ID instead.']
-    if not sub.combined:
-        lines.append(OVERRIDE_NOTE)
-    return _ephemeral('\n'.join(lines), components=[channel_select_row(sub)])
-
-
-def go_live_hint(cfg):
-    """The `-#` line naming what a server still has to point the bot at, or
-    None when both channels are set.
-
-    A server with neither set is being onboarded, so it gets pointed at the
-    one-channel default rather than told to run two commands.
-    """
-    if not any(cfg[f] for f in store.CHANNEL_FIELDS):
-        return '-# Nothing posts yet — run `/setup channel` to go live.'
-    missing = [c.name for c in store.CHANNEL_SUBS
-               if not c.combined and not cfg[c.fields[0]]]
-    return f'-# Still needed to go live: `/setup {missing[0]}`.' if missing else None
-
-
-def with_go_live_hint(response, cfg):
-    """`response` with go_live_hint appended to its text -- for every /setup
-    reply except the channel ones, which word their own against the config
-    they just wrote.
-
-    Until a channel is set nothing a server configures can post, so every
-    reply has to say so. Otherwise an admin who starts with /setup games or
-    /setup daily is told "tracking" or "resumed" by each command they try,
-    while the step that actually makes the bot post is never mentioned.
-    """
-    hint = go_live_hint(cfg)
-    if not hint:
-        return response
-    data = response['data']
-    return {**response, 'data': {**data, 'content': f"{data['content']}\n{hint}"}}
-
-
-def set_channel(guild_id, sub, channel_id, cfg=None):
-    """Validate and store a channel choice. Returns (user-facing text, error).
-
-    `sub` is the store.ChannelSub that was invoked, which is also what decides
-    how many fields the choice writes: `/setup channel` sets both sides at once.
-    """
-    ch, err = resolve_channel(channel_id, guild_id)
-    if err:
-        return None, err
-    cfg = cfg or guild_cfg(guild_id, strict=True)
-    updates = {f: str(channel_id) for f in sub.fields}
-    store.update_config(guild_id, updates)
-    lines = [f'✅ Set: <#{channel_id}> is {sub.blurb}.']
-    if not sub.combined:
-        lines.append(OVERRIDE_NOTE)
-    # Apply the write to the config we already hold rather than re-reading it:
-    # get_item is eventually consistent, so a read this soon after the write can
-    # still miss it and tell the admin to set the channel they just set.
-    hint = go_live_hint({**cfg, **updates})
-    if hint:
-        lines.append(hint)
-    return '\n'.join(lines), None
-
-
-def games_select_row(game_overrides):
-    # One option per GameSpec, all 25 of scoreboard.MAX_SELECT_OPTIONS today;
-    # the next game needs the split-across-two-messages note on that constant.
-    options = [{
-        'label': spec.title,
-        'value': spec.key,
-        'emoji': {'name': spec.emoji},
-        'default': spec_enabled(spec, game_overrides),
-    } for spec in sorted(GAME_SPECS, key=lambda s: s.title.lower())]
-    # Discord's picker stops taking ticks at max_values, which is where the cap
-    # is felt. It widens past the cap only for a menu that already shows more
-    # ticked -- a default-on GameSpec shipped into a server at the cap -- rather
-    # than pre-ticking more games than it allows; the submit handler still
-    # refuses to save that many.
-    ticked = sum(1 for o in options if o['default'])
-    return {'type': 1, 'components': [{
-        'type': 3,   # string select
-        'custom_id': GAMES_SELECT_ID,
-        'options': options,
-        'min_values': 0,
-        'max_values': min(len(options), max(MAX_ENABLED_GAMES, ticked)),
-        'placeholder': f'Choose up to {MAX_ENABLED_GAMES} games to track',
-    }]}
-
-
-def _game_list(specs):
-    return ', '.join(f'{s.emoji} {s.title}'
-                     for s in sorted(specs, key=lambda s: s.title.lower()))
-
-
-def apply_games_selection(guild_id, selected_keys):
-    """Store the admin's menu choice as overrides-only: games matching their
-    coded default are left unset, so a future game arrives with its default
-    instead of a frozen snapshot of this menu."""
-    selected = set(selected_keys)
-    overrides = {spec.key: spec.key in selected for spec in GAME_SPECS
-                 if (spec.key in selected) != (not spec.disabled)}
-    store.update_config(guild_id, {'game_overrides': overrides})
-    enabled = [s for s in GAME_SPECS if s.key in selected]
-    disabled = [s for s in GAME_SPECS if s.key not in selected]
-    if not enabled:
-        return '⚠️ No games tracked — the scoreboard will be empty until some are re-enabled.'
-    text = f'✅ Tracking {len(enabled)} games: {_game_list(enabled)}'
-    if disabled:
-        text += f'\n-# Off: {_game_list(disabled)}'
-    return text
-
-
-def commentary_select_row(overrides):
-    """One option per registered message kind (commentary.TRIGGERS), ticked to
-    the guild's effective state -- the same shape as the games menu, so a
-    Trigger added in code shows up here with no re-registration."""
-    options = [{
-        'label': t.label,
-        'value': t.key,
-        'description': t.describe[:100],
-        'default': commentary.trigger_enabled(t, overrides),
-    } for t in commentary.TRIGGERS]
-    return {'type': 1, 'components': [{
-        'type': 3,   # string select
-        'custom_id': COMMENTARY_SELECT_ID,
-        'options': options,
-        'min_values': 0,
-        'max_values': len(options),
-        'placeholder': 'Choose which messages to post',
-    }]}
-
-
-def apply_commentary_selection(guild_id, selected_keys):
-    """Overrides-only, like apply_games_selection: kinds matching their coded
-    default are left unset, so a future kind arrives with its default."""
-    selected = set(selected_keys)
-    overrides = {t.key: t.key in selected for t in commentary.TRIGGERS
-                 if (t.key in selected) != t.default}
-    store.update_config(guild_id, {'commentary_overrides': overrides})
-    on = [t.label for t in commentary.TRIGGERS if t.key in selected]
-    off = [t.label for t in commentary.TRIGGERS if t.key not in selected]
-    text = (f"✅ Commentary will post: {', '.join(on)}." if on
-            else '⚠️ Every message kind is off — commentary will post nothing.')
-    if off:
-        text += f"\n-# Off: {', '.join(off)}"
-    return text
-
-
-def commentary_phrase(cfg):
-    """The commentary settings in prose, for the summary and the toggle reply."""
-    if not cfg['commentary_enabled']:
-        return ('\U0001F4AC Commentary: **off** — nothing posts between boards '
-                '(`/setup commentary enabled:True` starts it).')
-    on = commentary.enabled_triggers(cfg)
-    # Only the tuning of the kinds actually posting: with a kind switched off --
-    # the nudge ships that way -- its hours would describe nothing.
-    keys = {t.key for t in on}
-    tuning = []
-    if 'midday' in keys:
-        tuning.append(f"midday standings at {cfg['commentary_midday_hour']:02d}:00")
-    if 'last_call' in keys:
-        tuning.append(f"last call {cfg['commentary_last_call_hours']}h before the close"
-                      if cfg['commentary_last_call_hours'] else 'no last call (0 hours)')
-    if 'nudge' in keys:
-        tuning.append(f"nudges {cfg['commentary_nudge_after_hours']}h after a player's "
-                      'last result')
-    return (f"\U0001F4AC Commentary: **on**{' — ' + ', '.join(tuning) if tuning else ''}; "
-            f"posting {', '.join(t.label for t in on) if on else 'nothing (every kind is off)'}.")
-
-
-def reactions_phrase(cfg):
-    """The reactions setting in a few words, for the summary."""
-    if not cfg['reactions_enabled']:
-        return 'off'
-    return 'on, rotation games only' if cfg['reactions_rotation_only'] else 'on'
 
 
 def delete_stickies(channel_id):
@@ -1011,318 +807,103 @@ def delete_stickies(channel_id):
     return removed
 
 
-def _shame_phrase(cfg):
-    """The board's no-show lines in a few words, for the summary and the
-    /setup daily reply. Named for the setting (`shame`), phrased for the board,
-    where the line itself reads DNF. Says plainly when the setting is moot: the
-    lines only exist on the placement scale, which is the only one that ranks a
-    player who never turned up."""
-    if not cfg['daily_shame']:
-        return 'no DNF lines'
-    if cfg['scoring'] != SCORING_PLACEMENT:
-        return f"DNF lines on (unused while scoring is {cfg['scoring']})"
-    return f'skipped games shown as {POOP_MEDAL} {NO_SHOW_SCORE}'
-
-
-def sticky_row_phrase(count):
-    """The sticky's game row in prose, for the summary and the toggle reply."""
-    if not count:
-        return 'no game buttons'
-    return f"{count} game button{'' if count == 1 else 's'}"
-
-
-def config_summary(cfg):
-    def ch(v):
-        return f'<#{v}>' if v else '*not set*'
-
-    def onoff(v):
-        return 'on' if v else 'off'
-
-    post_hour = store.post_hour(cfg)
-    lines = ['### ⚙️ Scoreboard setup']
-    lines += [f'{c.label.capitalize()} ({c.blurb}): {ch(cfg[c.fields[0]])}'
-              for c in store.CHANNEL_SUBS if not c.combined]
-    lines += [
-        f"Daily scoreboard: **{onoff(cfg['daily_enabled'])}** "
-        f"({_shame_phrase(cfg)}) · "
-        f"Sticky: **{onoff(cfg['sticky_enabled'])}** "
-        f"({sticky_row_phrase(cfg['sticky_games'])}) · "
-        f"Link previews: **{'stripped' if cfg['suppress_embeds'] else 'kept'}** · "
-        f"Wordle recap: **{'deleted' if cfg['delete_wordle_recap'] else 'kept'}** · "
-        f"Reactions: **{reactions_phrase(cfg)}**",
-        f"Rotation: **{onoff(cfg['rotation_enabled'])}** — "
-        f"{cfg['rotation_count']} games/day, {cfg['rotation_mode']} mode, "
-        f"stay \u2265{cfg['rotation_keep_players']} / "
-        f"join \u2265{cfg['rotation_promote_players']} players, "
-        f"off-rotation {cfg['rotation_off_mode']}, "
-        f"announcement **{onoff(cfg['rotation_announce'])}** · "
-        f"Scoring: **{cfg['scoring']}**",
-        f"Timezone `{cfg['timezone']}` · day starts {cfg['hours_after_midnight']:02d}:00 · "
-        f"posts {post_hour:02d}:00 · window {cfg['time_window_hours']}h",
-        f"Minimum players {cfg['minimum_players']} · "
-        f"volume ~{cfg['hundreds_of_messages'] * 100} msgs/day · "
-        f"pins {cfg['pin_keep_days']} days",
-        commentary_phrase(cfg),
-    ]
-    enabled = [s for s in GAME_SPECS if spec_enabled(s, cfg['game_overrides'])]
-    disabled = [s for s in GAME_SPECS if not spec_enabled(s, cfg['game_overrides'])]
-    lines.append(f'Tracking {len(enabled)} games: {_game_list(enabled)}'
-                 if enabled else '⚠️ Tracking no games!')
-    if disabled:
-        lines.append(f'-# Off: {_game_list(disabled)}')
-    tz = ZoneInfo(cfg['timezone'])
-    today = store.day_str(reference_date(datetime.now(tz), tz,
-                                         cfg['hours_after_midnight']))
-    rotation = store.current_rotation(cfg, today)
-    if rotation:
-        by_key = {s.key: s for s in GAME_SPECS}
-        todays = [by_key[k] for k in rotation if k in by_key]
-        if todays:
-            lines.append(f"-# Today's games: {_game_list(todays)}")
-    return '\n'.join(lines)
-
-
-def collect_updates(group, args):
-    """Slash-command options for one /setup subcommand -> config updates.
-
-    Driven entirely by store.CONFIG_FIELDS, the same table register_commands.py
-    registers the options from, so an option name cannot exist on one side only
-    -- the old hand-written mapping silently ignored anything that drifted.
-    Absent options are left out, so a subcommand only writes what was passed.
-
-    field.apply, not field.coerce: it also holds the value inside the field's
-    declared bounds, which Discord's picker enforces only for the registration
-    currently live.
-    """
-    updates = {}
-    for field in store.setup_options(group):
-        value = args.get(field.option_name)
-        if value is not None:
-            updates[field.name] = field.apply(value)
-    return updates
+def setup_reply(cfg, status=(), update=False):
+    """The panel as an interaction response: a new ephemeral reply, or with
+    update=True an edit of the panel message the submitted form came from."""
+    components = setup_panel.panel(cfg, status)
+    if update:
+        return {'type': 7, 'data': {'flags': FLAG_IS_COMPONENTS_V2, 'components': components}}
+    return {'type': 4, 'data': {'flags': FLAG_EPHEMERAL | FLAG_IS_COMPONENTS_V2,
+                                'components': components}}
 
 
 def handle_setup(body, guild_id):
-    sub, args = _sub_options(body)
+    """`/setup`: the panel -- or, for a server with no scores channel yet, the
+    Basics form itself. Until that one field is set nothing a server
+    configures can post, so it is the step that can't be left for later."""
     cfg = guild_cfg(guild_id, strict=True)
-
-    chan_sub = store.channel_sub(sub)
-    if chan_sub:
-        cid = args.get('channel') or (str(args.get('channel_id') or '').strip() or None)
-        if cid is None:
-            return channel_picker_response(chan_sub)
-        text, err = set_channel(guild_id, chan_sub, cid, cfg)
-        return _ephemeral(err or text)
-
-    return with_go_live_hint(handle_setup_setting(sub, args, cfg, guild_id), cfg)
-
-
-def handle_setup_setting(sub, args, cfg, guild_id):
-    """The reply to every /setup subcommand except the channel ones, applying
-    the change first where there is one. None of them moves a channel, so
-    `cfg` as read before the write still says whether the server is live."""
-    if sub == 'daily':
-        # `dnf` rides along on this subcommand (store.CONFIG_FIELDS declares it
-        # group='daily'), the same way the sticky's own fields do. Options left
-        # out keep their stored values.
-        enabled = bool(args.get('enabled'))
-        updates = {'daily_enabled': enabled, **collect_updates('daily', args)}
-        store.update_config(guild_id, updates)
-        if not enabled:
-            return _ephemeral('⏸️ Daily scoreboard paused — no daily posts, '
-                              'and the sticky drops its Yesterday link.')
-        return _ephemeral('▶️ Daily scoreboard resumed — posts at its scheduled '
-                          f'hour, {_shame_phrase({**cfg, **updates})}.')
-
-    if sub == 'sticky':
-        # `games` and `delete_wordle_recap` ride along on this subcommand
-        # (store.CONFIG_FIELDS declares them group='sticky'), so one call can
-        # switch the sticky on, size its game row, and set the recap cleanup.
-        # Options left out keep their stored values.
-        enabled = bool(args.get('enabled'))
-        updates = {'sticky_enabled': enabled, **collect_updates('sticky', args)}
-        store.update_config(guild_id, updates)
-        merged = {**cfg, **updates}
-        if enabled:
-            recap = (", deleting the Wordle app's daily recap on sight"
-                     if merged['delete_wordle_recap'] else '')
-            return _ephemeral('▶️ Sticky enabled — it will appear in the input '
-                              'channel within a minute, with '
-                              f"{sticky_row_phrase(merged['sticky_games'])}{recap}. "
-                              'Play lists whatever the row leaves out.')
-        note = ''
-        if cfg['input_channel_id']:
-            try:
-                removed = delete_stickies(cfg['input_channel_id'])
-                if removed:
-                    note = f' (removed {removed} existing)'
-            except Exception:
-                pass
-        return _ephemeral(f'⏸️ Sticky disabled{note}.')
-
-    if sub == 'rotation':
-        # The shape fields ride along on this toggle (group='rotation'), the
-        # same way sticky_games rides on /setup sticky: one call can switch
-        # rotation on and size, re-mode, or re-threshold it in one write.
-        # Options left out keep their stored values.
-        enabled = bool(args.get('enabled'))
-        updates = {'rotation_enabled': enabled, **collect_updates('rotation', args)}
-        store.update_config(guild_id, updates)
-        merged = {**cfg, **updates}
-        if enabled:
-            # The thresholds are swap-mode rules, so a random-mode server is
-            # not told two numbers that will never be consulted.
-            shape = f"{merged['rotation_count']} games a day, {merged['rotation_mode']} mode"
-            if merged['rotation_mode'] == 'swap':
-                shape += (f" (stay \u2265{merged['rotation_keep_players']} players, "
-                          f"join \u2265{merged['rotation_promote_players']})")
-            # The announcement is the only part a server sees as a message of
-            # its own, so say which way it is set rather than promising a post
-            # that rotation_announce has switched off.
-            tail = ("The first draw is announced with the next daily board."
-                    if merged['rotation_announce'] else
-                    "Today's games are drawn silently — no announcement post.")
-            return _ephemeral(
-                f"\U0001F504 Rotation on — {shape}, off-rotation games "
-                f"{merged['rotation_off_mode']}. {tail}")
-        return _ephemeral('▶️ Rotation off — every enabled game scores daily.')
-
-    if sub == 'embeds':
-        suppress = bool(args.get('suppress'))
-        store.update_config(guild_id, {'suppress_embeds': suppress})
-        # Suppression happens on the sticky pass, as each result is counted, so
-        # a server with the sticky off has nothing scanning for links to strip.
-        note = '' if cfg['sticky_enabled'] else ('\n-# The sticky is off, so nothing '
-                                                 'scans for results to strip.')
-        if suppress:
-            return _ephemeral('🔗 Link previews will be stripped from game results '
-                              f'as they are counted.{note}')
-        return _ephemeral('🔗 Link previews left alone — results already stripped '
-                          f'stay that way.{note}')
-
-    if sub == 'reactions':
-        # rotation_only rides along (group='reactions'), the way the sticky's
-        # options ride on /setup sticky; left out, it keeps its stored value.
-        enabled = bool(args.get('enabled'))
-        updates = {'reactions_enabled': enabled, **collect_updates('reactions', args)}
-        store.update_config(guild_id, updates)
-        merged = {**cfg, **updates}
-        if not enabled:
-            return _ephemeral('⏸️ Reactions off — results already reacted to keep theirs.')
-        which = ("today's rotation games" if merged['reactions_rotation_only']
-                 and merged['rotation_enabled'] else 'every game')
-        # Reactions go on as the sticky pass counts each result, like link
-        # stripping, so a server with the sticky off has nothing reacting.
-        note = '' if merged['sticky_enabled'] else ('\n-# The sticky is off, so nothing '
-                                                    'reacts to results.')
-        return _ephemeral(
-            f"{BELOW_PODIUM} Reactions on for {which}: every new result gets one, "
-            f"where it placed ({' '.join(PLACE_EMOJI)}, {BELOW_PODIUM} otherwise), and how "
-            f"it went on top of that, from an ace down to a rough one "
-            f"({' '.join(e for _, e in tier_examples())} and friends: every face but the "
-            f"{dict(tier_examples())[ACED]} is picked at random), with a flourish or two "
-            "piled on a great one or an ace.\n-# Needs Add Reactions in the input "
-            "channel. Most servers give it "
-            f"to everyone; where yours doesn't, grant it to the bot's role.{note}")
-
-    if sub == 'games':
-        return _ephemeral(
-            f'Select every game this server should track, up to {MAX_ENABLED_GAMES} — '
-            'unselected games are hidden from parsing, the scoreboard, and the Play list.',
-            components=[games_select_row(cfg['game_overrides'])],
-        )
-
-    if sub == 'time':
-        updates = collect_updates('time', args)
-        if not updates:
-            return _ephemeral(config_summary(cfg))
-        tz_name = updates.get('timezone')
-        if tz_name:
-            try:
-                ZoneInfo(tz_name)
-            except Exception:
-                return _ephemeral(f'Unknown timezone `{tz_name}` — use an IANA name '
-                                  'like `America/New_York` or `Europe/London`.')
-        merged = {**cfg, **updates}
-        post_hour = store.post_hour(merged)
-        if post_hour < merged['hours_after_midnight']:
-            return _ephemeral("`post_hour` can't be earlier than `day_start_hour` — "
-                              "the scoring window must close before the board posts.")
-        store.update_config(guild_id, updates)
-        return _ephemeral(f"✅ Schedule updated: timezone `{merged['timezone']}`, "
-                          f"day starts {merged['hours_after_midnight']:02d}:00, posts "
-                          f"{post_hour:02d}:00, window {merged['time_window_hours']}h.")
-
-    if sub == 'limits':
-        updates = collect_updates('limits', args)
-        if not updates:
-            return _ephemeral(config_summary(cfg))
-        store.update_config(guild_id, updates)
-        merged = {**cfg, **updates}
-        return _ephemeral(f"✅ Limits updated: minimum players {merged['minimum_players']}, "
-                          f"volume ~{merged['hundreds_of_messages'] * 100} msgs/day, "
-                          f"pinning {merged['pin_keep_days']} days of scoreboards.")
-
-    if sub == 'scoring':
-        updates = collect_updates('scoring', args)
-        if not updates:
-            return _ephemeral(config_summary(cfg))
-        store.update_config(guild_id, updates)
-        # The archive freezes each day's points on the scale that scored it, so
-        # a change is forward-only: the boards already posted keep their numbers.
-        blurb = dict((v, label) for label, v in store.SCORING_MODES)[updates['scoring']]
-        return _ephemeral(f"✅ Scoring set to **{blurb}**. Applies from the next "
-                          "board; days already scored keep their points.")
-
-    if sub == 'commentary':
-        # The two tuning fields ride along (group='commentary') as on the other
-        # toggles; `enabled` is optional here, unlike theirs, because the bare
-        # command is the door to the per-kind menu.
-        updates = collect_updates('commentary', args)
-        if args.get('enabled') is not None:
-            updates['commentary_enabled'] = bool(args['enabled'])
-        if not updates:
-            return _ephemeral(commentary_phrase(cfg) + '\nPick which messages it posts:',
-                              components=[commentary_select_row(cfg['commentary_overrides'])])
-        store.update_config(guild_id, updates)
-        return _ephemeral('✅ ' + commentary_phrase({**cfg, **updates}))
-
-    # 'show' and anything unrecognized fall back to the summary.
-    return _ephemeral(config_summary(cfg))
+    if not cfg['input_channel_id']:
+        return setup_panel.form(setup_panel.BASICS, cfg)
+    return setup_reply(cfg)
 
 
 def handle_setup_component(body, guild_id):
-    custom_id = body['data']['custom_id']
-    values = body['data'].get('values') or []
-    cfg = guild_cfg(guild_id, strict=True)
+    """A panel's Edit button: that section's form, filled in with what is
+    stored now rather than what the panel showed, which may be minutes old."""
+    key = setup_panel.section_for(body['data']['custom_id'])
+    if key is None:
+        # A menu or button from a panel an earlier deploy drew.
+        return _ephemeral('That panel is out of date. Run `/setup` again.')
+    return setup_panel.form(key, guild_cfg(guild_id, strict=True))
 
-    if custom_id == GAMES_SELECT_ID:
-        if len(values) > MAX_ENABLED_GAMES:
-            # The picker enforces max_values itself, so this is a stale client
-            # or a menu widened to show a server already over the cap. Nothing
-            # is written; the menu comes back with their picks still ticked, so
-            # the fix is unticking rather than starting over.
-            over = len(values) - MAX_ENABLED_GAMES
-            picks = {spec.key: spec.key in values for spec in GAME_SPECS}
-            return _update(f'⚠️ A server can track up to {MAX_ENABLED_GAMES} games, '
-                           f'and that was {len(values)} — untick {over} and save again.',
-                           components=[games_select_row(picks)])
-        return with_go_live_hint(_update(apply_games_selection(guild_id, values)), cfg)
 
-    if custom_id == COMMENTARY_SELECT_ID:
-        return with_go_live_hint(_update(apply_commentary_selection(guild_id, values)), cfg)
+def modal_values(body):
+    """{custom_id: submitted value} for a modal submission: a text input's or
+    radio group's `value` (text stripped), a select's or checkbox group's
+    `values` list. Each field arrives inside a Label, or inside an action row
+    for a form built the older way (/suggest)."""
+    values = {}
+    for top in (body.get('data') or {}).get('components') or []:
+        children = [top['component']] if 'component' in top else top.get('components') or []
+        for c in children:
+            if 'custom_id' not in c:
+                continue
+            value = c['values'] if 'values' in c else c.get('value')
+            values[c['custom_id']] = value.strip() if isinstance(value, str) else value
+    return values
 
-    if custom_id.startswith(CHANNEL_SELECT_PREFIX):
-        sub = store.channel_sub(custom_id[len(CHANNEL_SELECT_PREFIX):])
-        if not sub or not values:
-            return _update('Nothing selected — run the command again.')
-        text, err = set_channel(guild_id, sub, values[0], cfg)
+
+def checked_channels(updates, guild_id):
+    """`updates` minus any channel the bot can't use, and the reason for each.
+    Only a channel the form changed is checked; a stored one passed this when
+    it was picked."""
+    problems = []
+    for cid in dict.fromkeys(updates[f] for f in store.CHANNEL_FIELDS if f in updates):
+        _, err = resolve_channel(cid, guild_id)
         if err:
-            # Keep the picker so the admin can retry after fixing permissions.
-            return _update(err, components=[channel_select_row(sub)])
-        return _update(text)
+            problems.append(err)
+            updates = {k: v for k, v in updates.items()
+                       if not (k in store.CHANNEL_FIELDS and v == cid)}
+    return updates, problems
 
-    return _update('Unknown control — re-run `/setup`.')
+
+def remove_sticky(channel_id):
+    """delete_stickies for a sticky just switched off, as a status line for
+    the panel. Never fails the save it follows."""
+    if not channel_id:
+        return []
+    try:
+        removed = delete_stickies(channel_id)
+    except Exception as e:
+        print(f'setup: sticky cleanup skipped -- {type(e).__name__}: {e}')
+        return []
+    return [f'-# Removed the sticky from <#{channel_id}>.'] if removed else []
+
+
+def handle_setup_submit(body, guild_id):
+    """A submitted form: save what changed, then answer with the panel --
+    redrawn in place when the form was opened from one, else as a new reply
+    (the Basics form a fresh server's /setup opened directly)."""
+    key = setup_panel.section_for(body['data']['custom_id'])
+    if key is None:
+        return _ephemeral('That form is out of date. Run `/setup` again.')
+    cfg = guild_cfg(guild_id, strict=True)
+    updates, problems = setup_panel.read_form(key, modal_values(body), cfg)
+    updates, refused = checked_channels(updates, guild_id)
+    problems += refused
+    if updates:
+        store.update_config(guild_id, updates)
+    # The per-click line logs no form fields, so what a form changed is logged
+    # here: it is what "who set this?" gets answered from.
+    print(json.dumps({'event': 'setup_saved', 'guild': guild_id, 'section': key,
+                      'changed': updates, 'problems': problems}))
+    status = setup_panel.status_lines(cfg, updates, problems)
+    if cfg['sticky_enabled'] and updates.get('sticky_enabled') is False:
+        status += remove_sticky(cfg['input_channel_id'])
+    # The write applied to the config already held rather than re-read:
+    # get_item is eventually consistent, so a read this soon after the write
+    # could miss it and show the admin the settings they just changed.
+    return setup_reply({**cfg, **updates}, status, update=bool(body.get('message')))
 
 
 # --- /suggest (a game we don't track yet -> the dev channel) -------------------
@@ -1368,13 +949,6 @@ def suggest_modal():
                         style=2, max_length=SUGGEST_MAX_SCORE),
         ],
     }}
-
-
-def modal_values(body):
-    """{custom_id: submitted value} for a modal submission."""
-    return {c['custom_id']: (c.get('value') or '').strip()
-            for row in (body.get('data') or {}).get('components') or []
-            for c in row.get('components') or []}
 
 
 def _fenced(text):
@@ -1424,7 +998,8 @@ def already_tracked(spec, guild_id):
     # A DM has no server to have turned it off, so it is seeing the coded default.
     where = 'in this server' if guild_id else 'by default'
     return _ephemeral(f'{spec.emoji} **{spec.title}** is already supported but turned '
-                      f'off {where} — an admin can switch it back on with `/setup games`.')
+                      f'off {where} — an admin can switch it back on under Games in '
+                      '`/setup`.')
 
 
 def keep_suggestion(body, name, url, score):
@@ -1476,7 +1051,7 @@ def handle_suggest(body):
         print(f'suggest: post failed {r.status_code} {r.text[:200]}')
         return _ephemeral("I couldn't pass that along just now — try again shortly.")
     return _ephemeral(f'✅ Sent **{_inline(name)}** to the devs — thanks! Games show '
-                      'up in `/setup games` once one is added.')
+                      'up under Games in `/setup` once one is added.')
 
 
 def guarded(fn, *args):
@@ -1563,21 +1138,23 @@ def lambda_handler(event, context):
             # separate MODAL_SUBMIT interaction below.
             return _http(suggest_modal())
 
-    # MESSAGE_COMPONENT (type 3) — sticky buttons + setup selects
+    # MESSAGE_COMPONENT (type 3) — sticky buttons + the /setup panel's Edit buttons
     if body.get('type') == 3:
         custom_id = body.get('data', {}).get('custom_id', '')
         if custom_id == PLAY_BUTTON_CUSTOM_ID:
             return _http(defer(ACTION_PLAY, body))
         if custom_id == SCORES_BUTTON_CUSTOM_ID:
             return _http(defer(ACTION_SCORES, body))
-        if (custom_id in (GAMES_SELECT_ID, COMMENTARY_SELECT_ID)
-                or custom_id.startswith(CHANNEL_SELECT_PREFIX)):
+        if custom_id.startswith(setup_panel.CUSTOM_ID_PREFIX):
             return _http(admin_dispatch(handle_setup_component, body))
 
-    # MODAL_SUBMIT (type 5) — the /suggest form coming back filled in
+    # MODAL_SUBMIT (type 5) — a /setup form or the /suggest form, filled in
     if body.get('type') == 5:
-        if body.get('data', {}).get('custom_id') == SUGGEST_MODAL_ID:
+        custom_id = body.get('data', {}).get('custom_id', '')
+        if custom_id == SUGGEST_MODAL_ID:
             return _http(guarded(handle_suggest, body))
+        if custom_id.startswith(setup_panel.CUSTOM_ID_PREFIX):
+            return _http(admin_dispatch(handle_setup_submit, body))
 
     return {'statusCode': 400, 'body': 'Unknown interaction type'}
 

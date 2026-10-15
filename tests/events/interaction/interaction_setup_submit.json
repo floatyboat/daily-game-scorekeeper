@@ -1,0 +1,20 @@
+{
+  "type": 5,
+  "guild_id": "${TEST_GUILD_ID}",
+  "channel_id": "${TEST_CHANNEL_ID}",
+  "member": {
+    "permissions": "32",
+    "user": {"id": "1"}
+  },
+  "message": {"id": "0", "flags": 32832},
+  "data": {
+    "custom_id": "setup_form:rotation",
+    "components": [
+      {"type": 18, "id": 1, "component": {"type": 3, "id": 2, "custom_id": "rotation_count", "values": ["3"]}},
+      {"type": 18, "id": 3, "component": {"type": 21, "id": 4, "custom_id": "rotation_mode", "value": "swap"}},
+      {"type": 18, "id": 5, "component": {"type": 4, "id": 6, "custom_id": "rotation_keep_players", "value": "5"}},
+      {"type": 18, "id": 7, "component": {"type": 4, "id": 8, "custom_id": "rotation_promote_players", "value": "4"}},
+      {"type": 18, "id": 9, "component": {"type": 22, "id": 10, "custom_id": "toggles", "values": ["rotation_announce"]}}
+    ]
+  }
+}
