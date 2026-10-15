@@ -121,9 +121,10 @@ Run **`/setup`** in the server. The first time, it opens one short form:
   and reactions, each ticked on or off.
 - **Scoring** — which points scale the board uses.
 
-Submit it and the bot is live. Every channel is checked before it's saved: the bot has to
-be able to see a channel to read or post in it, and the reply says what to fix when it
-can't (a private channel needs the bot's role added to it).
+Submit it and the bot is live, and the reply is the panel below, where every other
+setting is one click away. Every channel is checked before it's saved: the bot has to be
+able to see a channel to read or post in it, and the reply says what to fix when it can't
+(a private channel needs the bot's role added to it).
 
 ## 3. Tune it (optional)
 

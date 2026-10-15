@@ -276,8 +276,11 @@ BASICS = 'basics'
 # Panel order. Basics comes first because it is what makes the bot post; the
 # rest tune what Basics has switched on.
 SECTIONS = (
+    # A form can't carry buttons or links, so the hint is the form's only way
+    # to point at the other sections: a new server meets this form before it
+    # has ever seen the panel.
     Section(BASICS, 'Basics', '\U0001F4CD', _summarize_basics, toggles='Features',
-            toggles_hint='Untick one to switch it off. Its own settings stay as they are.',
+            toggles_hint="Each one's settings are on the panel that opens after you submit.",
             form_title='Set up the scoreboard'),
     Section('games', 'Games', '\U0001F3AE', _summarize_games),
     Section('schedule', 'Schedule', '\U0001F550', _summarize_schedule),
