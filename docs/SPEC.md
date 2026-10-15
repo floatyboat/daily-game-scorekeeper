@@ -145,10 +145,10 @@ registrar and the handler.
 | `sticky_games` | `sticky games` | `0` | Today's games as play buttons on the sticky (0–`MAX_BUTTONS_PER_ROW`, one row's worth); 0 skips the ranking pass entirely and hands Play the whole roster |
 | `delete_wordle_recap` | `sticky delete_wordle_recap` | `false` | Whether the sticky pass deletes the Wordle app's daily recap of yesterday's results |
 | `suppress_embeds` | `embeds suppress` | `true` | Whether link previews are stripped off counted results |
-| `reactions_enabled` | `reactions enabled` | `false` | Whether the sticky pass reacts to each fresh result with how it went and where it placed — see Reactions |
+| `reactions_enabled` | `reactions enabled` | `true` | Whether the sticky pass reacts to each fresh result with how it went and where it placed — see Reactions |
 | `reactions_rotation_only` | `reactions rotation_only` | `false` | While a rotation governs the day, react only to its games |
 | `rotation_enabled` | `rotation enabled` | `true` | Score only a rotating subset of the enabled games each day |
-| `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 25), so adding a game widens the option — re-run `register_commands.py` for the picker to follow |
+| `rotation_count` | `rotation games` | `5` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 25), so adding a game widens the option — re-run `register_commands.py` for the picker to follow |
 | `rotation_mode` | `rotation mode` | `swap` | `swap` replaces under-played members, `random` re-draws daily |
 | `rotation_keep_players` | `rotation keep_players` | `5` | Swap threshold to hold a seat: a scored game under it rotates out |
 | `rotation_promote_players` | `rotation promote_players` | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
@@ -192,6 +192,11 @@ anywhere but the channel is told what is still missing instead of "resumed" or
   per guild. `config.game_overrides` stores just the explicit deviations, so a newly added
   game reaches every guild with its coded default rather than a frozen snapshot of an old
   menu submission.
+- Flipping a *shipped* game's default moves every guild with no explicit choice for it,
+  which includes guilds that customized the menu but never that game. Before such a flip,
+  `tools/hold_game_default.py <key> --write` writes each such guild's current state in as
+  an explicit choice (`store.hold_game_choice`, conditioned never to create the map or
+  overwrite a choice), so only guilds on pure defaults follow the flip.
 - `GameSpec.breakpoints` is `(great, good)`: where a result stops being great and where it
   stops being good, for its reaction (`game_parser.performance_tier`, see Reactions).
   Both are in the metric's own number, the one the board line prints: guesses, connections
@@ -536,7 +541,7 @@ players are (the test channel on a test run).
 
 ## Reactions
 
-With `reactions_enabled` on (off by default), the sticky pass reacts to every fresh result
+With `reactions_enabled` on (the default), the sticky pass reacts to every fresh result
 with one to four emoji, in this order: where it placed in its game the moment it was
 posted, how it went (drawn at random from that tier's pool), then a flourish or two if it
 was great enough to earn one.
@@ -851,7 +856,7 @@ retroactively.
   dropped from the working list, so a recap that landed on a settled sticky doesn't force
   a repost. A failed delete leaves the message in the list and the sticky reposts below
   it as usual.
-- Reactions ride on it too (`reactions_enabled`, off by default; see Reactions): after the
+- Reactions ride on it too (`reactions_enabled`, on by default; see Reactions): after the
   sticky settles, in their own try/except, needing Add Reactions, and nothing at all in a
   guild with the sticky off.
 - With `daily_enabled` off the board stops and the sticky drops its Yesterday link; the

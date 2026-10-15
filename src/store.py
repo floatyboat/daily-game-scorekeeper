@@ -249,12 +249,13 @@ CONFIG_FIELDS = [
                          'results (default off)'),
     ConfigField('suppress_embeds', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     # The sticky pass reacts to each fresh result with how it went and where it
-    # placed (sticky_lambda.react_to_results). Off by default: it needs the Add
-    # Reactions permission, which older invites didn't ask for (most servers give
-    # it to @everyone anyway).
+    # placed (sticky_lambda.react_to_results). On by default, since the invite
+    # asks for Add Reactions; where the bot lacks it (an older invite, in a
+    # server that restricts reactions), each pass stops at its first 403 and the
+    # sticky is unaffected.
     # rotation_only rides along on the toggle, for a server that only wants the
     # games that score today reacted to; it changes nothing on an unrestricted day.
-    ConfigField('reactions_enabled', default=False, coerce=bool, opt_type=OPT_BOOLEAN),
+    ConfigField('reactions_enabled', default=True, coerce=bool, opt_type=OPT_BOOLEAN),
     ConfigField('reactions_rotation_only', default=False, coerce=bool, group='reactions',
                 option='rotation_only', opt_type=OPT_BOOLEAN,
                 describe="Only react to today's rotation games while the rotation is on "
@@ -270,9 +271,9 @@ CONFIG_FIELDS = [
     # Bounded by the game table itself rather than a fixed number: adding a
     # GameSpec widens the option with it, and a rotation wider than the roster
     # is unaskable (next_rotation would only min() it back down anyway).
-    ConfigField('rotation_count', default=3, coerce=int, group='rotation',
+    ConfigField('rotation_count', default=5, coerce=int, group='rotation',
                 option='games', minimum=1, maximum=len(GAME_SPECS),
-                describe=f'How many games are scored each day, 1-{len(GAME_SPECS)} (default 3)'),
+                describe=f'How many games are scored each day, 1-{len(GAME_SPECS)} (default 5)'),
     ConfigField('rotation_mode', default='swap', coerce=_choice(ROTATION_MODES, 'swap'),
                 group='rotation', option='mode', opt_type=OPT_STRING,
                 choices=ROTATION_MODES,
@@ -757,6 +758,28 @@ def update_config(guild_id, updates):
         ExpressionAttributeNames=names,
         ExpressionAttributeValues={':gid': str(guild_id), **values},
     )
+
+
+def hold_game_choice(guild_id, game_key, enabled):
+    """Write one game into a guild's game_overrides as an explicit choice --
+    tools/hold_game_default.py's write, ahead of flipping that game's default.
+    Conditioned both ways: a guild with no overrides map follows the defaults
+    and must keep following them, and a choice already there (a /setup games
+    save landing first) is never overwritten. Returns whether it wrote."""
+    try:
+        table().update_item(
+            Key={'PK': GUILDS_PK, 'SK': config_sk(guild_id)},
+            UpdateExpression='SET game_overrides.#k = :v',
+            ConditionExpression='attribute_exists(game_overrides) AND '
+                                'attribute_not_exists(game_overrides.#k)',
+            ExpressionAttributeNames={'#k': game_key},
+            ExpressionAttributeValues={':v': bool(enabled)},
+        )
+    except ClientError as e:
+        if e.response['Error']['Code'] != 'ConditionalCheckFailedException':
+            raise
+        return False
+    return True
 
 
 def write_day(guild_id, day, results, points_by_game, puzzle_numbers, rotation=None,
