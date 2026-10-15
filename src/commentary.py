@@ -118,9 +118,10 @@ LEAD_MIN_POINTS = 2
 SWEEP_MIN_GAMES = 3
 
 # The metrics a tie can be talked about in, where beating the tie is a clear
-# ask: fewer guesses, mistakes or hints, a travle closer to a Perfect, or a
-# higher score short of the game's ceiling (beatable says where each tops out).
-TIE_METRICS = ('guesses', 'connections', 'cryptic', 'travle', 'score')
+# ask: fewer guesses, mistakes or hints, a travle closer to a Perfect, a higher
+# score short of the game's ceiling, or a golf tally above 0 (beatable says
+# where each tops out).
+TIE_METRICS = ('guesses', 'connections', 'cryptic', 'travle', 'score', 'golf')
 
 
 @dataclass
@@ -335,7 +336,7 @@ def short_score(game, score):
         # The in-order checks break ties at the same +N, so they are part of
         # what is tied: the line reads like the board lines it names.
         return format_travle_score(score)
-    return str(score)   # score: the bare number, as the board line prints it
+    return str(score)   # score, golf: the bare number, as the board line prints it
 
 
 def beatable(game, score):
@@ -353,6 +354,8 @@ def beatable(game, score):
         # The ceiling is the ace (performance_tier); a game without one has
         # no top to reach, so any tie can be beaten.
         return not game.total or score < game.total
+    if game.metric == 'golf':
+        return score > 0
     return False
 
 
@@ -802,8 +805,10 @@ def sample_tie(tick):
     g = games[0]
     # A score game's scale is its own (5 greens, 100%, 5000 points), so its
     # sample sits at four fifths of the ceiling rather than at a fixed number.
+    # A golf tally has no ceiling to take a share of; it counts down to 0.
     score = {'guesses': 4, 'connections': (1, 4), 'cryptic': (2, 2, 0, 0, 0),
-             'travle': (0, 1, 0, -3), 'score': g.total * 4 // 5}[g.metric]
+             'travle': (0, 1, 0, -3), 'golf': 40,
+             'score': g.total * 4 // 5}[g.metric]
     return [{'id': 'tie:sample', 'game': g.key, 'players': [a, b], 'score': score,
              'payout': on_offer(tick, g)}]
 

@@ -148,7 +148,7 @@ registrar and the handler.
 | `reactions_enabled` | `reactions enabled` | `false` | Whether the sticky pass reacts to each fresh result with how it went and where it placed — see Reactions |
 | `reactions_rotation_only` | `reactions rotation_only` | `false` | While a rotation governs the day, react only to its games |
 | `rotation_enabled` | `rotation enabled` | `true` | Score only a rotating subset of the enabled games each day |
-| `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 24), so adding a game widens the option — re-run `register_commands.py` for the picker to follow |
+| `rotation_count` | `rotation games` | `3` | Games in the daily rotation; the upper bound is `len(GAME_SPECS)` (currently 25), so adding a game widens the option — re-run `register_commands.py` for the picker to follow |
 | `rotation_mode` | `rotation mode` | `swap` | `swap` replaces under-played members, `random` re-draws daily |
 | `rotation_keep_players` | `rotation keep_players` | `5` | Swap threshold to hold a seat: a scored game under it rotates out |
 | `rotation_promote_players` | `rotation promote_players` | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
@@ -191,16 +191,19 @@ afterwards; every reply from them says so.
 - `GameSpec.breakpoints` is `(great, good)`: where a result stops being great and where it
   stops being good, for its reaction (`game_parser.performance_tier`, see Reactions).
   Both are in the metric's own number, the one the board line prints: guesses, connections
-  mistakes, `time` and `timed_win` seconds, travle +N, `score` and `maptap` the points
-  themselves, Fermi the percentile its share reports (`top 66%`) rather than the multiple
-  it ranks on, whose scale belongs to the day's puzzle and not to the player. Lower is
-  better, except for the metrics that count upward (`HIGHER_IS_BETTER`: `score`, `maptap`),
-  which read the same way round as they rank. A score game still carries its real ceiling
-  in `total` (Chronophoto and Chainle 5000, Krillion 700, Size It Up 500, MapTap 1000),
-  because that is what a result has to reach to be aced — no score game's board line prints
-  it, so the ceiling never reads as a fraction, while guesses, connections and cryptic lines
-  keep their "/N". A spec without breakpoints gets no great, good or rough: Minute Cryptic is
-  the one game that carries none on purpose, being tiered on the day's community par instead.
+  mistakes, `time` and `timed_win` seconds, travle +N, `score`, `golf` and `maptap` the
+  points themselves, Fermi the percentile its share reports (`top 66%`) rather than the
+  multiple it ranks on, whose scale belongs to the day's puzzle and not to the player. Lower
+  is better, except for the metrics that count upward (`HIGHER_IS_BETTER`: `score`,
+  `maptap`), which read the same way round as they rank. A score game still carries its
+  real ceiling in `total` (Chronophoto and Chainle 5000, Krillion 700, Size It Up 500,
+  MapTap 1000), because that is what a result has to reach to be aced — no score game's
+  board line prints it, so the ceiling never reads as a fraction, while guesses,
+  connections and cryptic lines keep their "/N". `golf` is a points tally counted the other
+  way, down to a perfect 0 (Seldom), with no ceiling at all since hints add to it: its
+  `total` is 0 and its line prints the bare tally. A spec without breakpoints gets no
+  great, good or rough: Minute Cryptic is the one game that carries none on purpose, being
+  tiered on the day's community par instead.
 - The effective list is resolved by `spec_enabled(spec, overrides)` / `build_games(pn,
   overrides)` and used by **all** paths: daily parse, aggregate updates, sticky counts, Play
   list, Scores, scoreboard render.
@@ -473,11 +476,12 @@ players are (the test channel on a test run).
   making” only while that player holds every contested game — otherwise it just says how
   much of the day they have. How a single result went is no line at all: it is that
   result's own reaction (see Reactions). *Tie*: a scored
-  `guesses`/`connections`/`cryptic`/`travle`/`score` game whose best non-poop score is
-  shared and beatable (anything short of one guess, no mistakes, no hints, a Travle
-  Perfect, or a score game's ceiling, its `total`: 5 greens in Quizl, 100% in Enclose),
-  with what first outright would pay. A Travle tie reads like its board lines, in-order
-  checks included (`+0 (3✓)`), since the checks are what break a tie at the same `+N`.
+  `guesses`/`connections`/`cryptic`/`travle`/`score`/`golf` game whose best non-poop score
+  is shared and beatable (anything short of one guess, no mistakes, no hints, a Travle
+  Perfect, a score game's ceiling, its `total`: 5 greens in Quizl, 100% in Enclose, or a
+  golf tally of 0), with what first outright would pay. A Travle tie reads like its board
+  lines, in-order checks included (`+0 (3✓)`), since the checks are what break a tie at
+  the same `+N`.
   Every line has two or three phrasings, picked by a hash of the day and the event, so a
   retried pass repeats itself rather than rewording.
   House style: no em dashes in any line except the per-player nudge lines.
@@ -545,8 +549,9 @@ was great enough to earn one.
   each: a `guesses` game in 1, a connections grid solved vertically (the VERT, which ranks
   above a clean grid), a Travle Perfect (`+0` with every square a check — a solve that
   wasted no guess **and** strayed off the path for none of them), a cryptic with no hints at
-  all, a `score` or `maptap` result at its ceiling (`total`), a Fermi in the world's top 1%
-  (`FERMI_ACE`), a clock inside `TIME_ACE_SECONDS` (Pips, two minutes) or, on a win,
+  all, a `score` or `maptap` result at its ceiling (`total`), a `golf` tally of 0 (Seldom's
+  PERFECT, five answers nobody else gave), a Fermi in the world's top 1% (`FERMI_ACE`), a
+  clock inside `TIME_ACE_SECONDS` (Pips, two minutes) or, on a win,
   `TIMED_WIN_ACE_SECONDS` (Gerrymandle, one). Minute Cryptic is then tiered on the day's
   **community par**, which its share states in words on the hint line: under it great, level
   good, over it rough. A puzzle that sets its own hint count has no fixed scale of its own,

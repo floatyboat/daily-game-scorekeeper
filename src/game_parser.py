@@ -502,8 +502,8 @@ class GameSpec:
                 stops being good, for the reaction the sticky pass puts on
                 it (performance_tier). Both are in the metric's own number --
                 guesses, connections mistakes, time and timed_win seconds,
-                travle +N, fermi the percentile its share reports, score and
-                maptap the points themselves -- so a breakpoint reads in the
+                travle +N, fermi the percentile its share reports, score, golf
+                and maptap the points themselves -- so a breakpoint reads in the
                 same units as the board line beside it. Lower is better, except
                 for the metrics that count upward (HIGHER_IS_BETTER). A score
                 game still carries its real ceiling in `total`, which is what a
@@ -820,10 +820,10 @@ def _parse_costcodle(m, content):
 # surfaces have Discord payload caps this list now feeds (scoreboard.py holds
 # the constants): the /setup games menu is one option per spec and tops out
 # at 25, and /play is one button per ENABLED game, which is why a server may
-# switch on at most MAX_ENABLED_GAMES (20) of them. 24 specs today. Past 25 the
-# menu needs splitting across two messages -- see the FUTURE note in
-# scoreboard.py. A default-on game lands in every server at once, including
-# one already at the cap; build_play_response is what copes with that.
+# switch on at most MAX_ENABLED_GAMES (20) of them. 25 specs today, which fills
+# the menu: the next game needs it split across two messages -- see the FUTURE
+# note in scoreboard.py. A default-on game lands in every server at once,
+# including one already at the cap; build_play_response is what copes with that.
 
 GAME_SPECS = [
     GameSpec(
@@ -1120,6 +1120,37 @@ GAME_SPECS = [
         # number that starts counting from the day before.
         pattern=lambda ref, n: re.compile(rf'Costcodle #{n} ([1-6X])/6', re.IGNORECASE),
         parse=_parse_costcodle,
+    ),
+    GameSpec(
+        key='seldom', emoji='🦄', title='Seldom', metric='golf',
+        total=0, url='https://www.playseldom.com', disabled=True,
+        breakpoints=(50, 250),
+        puzzle=lambda ref: (ref - datetime(2026, 4, 21)).days + 1,
+        # Five answers to the day's prompt, each scored 0 to 100 by how many of
+        # a hundred people would call it obvious, so the tally counts down: lower
+        # is better, and 0 -- five answers nobody would have called obvious --
+        # is the perfect round. No other game ranks that way round, hence the
+        # golf metric. There is no ceiling to carry in `total` either: a hint
+        # taken adds to the tally, which can then pass 500. The breakpoints are
+        # the site's own grades, grouped the way its share text treats them:
+        # LEGENDARY (up to 50) gets a boast of its own, BRILLIANT and NICE (up
+        # to 250) are shared alike, and past 250 the share names no grade.
+        #
+        # Under the heading sits a line that changes with the grade -- the
+        # boast, or the day's question -- then a line per answer, each opening
+        # with its emoji, so the first line holding a number alone is the
+        # tally. A hint tax, when there was one, follows it in brackets
+        # ('62 (55 + 7 hint tax)').
+        #
+        # A puzzle replayed from the archive shares the same text under its own
+        # day's number, so the number alone keeps it off today's board. The site
+        # turns the day over at midnight UTC, which means an evening share in
+        # the Americas already carries tomorrow's number and lands on
+        # tomorrow's board.
+        pattern=lambda ref, n: re.compile(
+            rf'Seldom #{n}\b.*?^(\d+)(?: \([^)\n]*\))?\s*$',
+            re.IGNORECASE | re.DOTALL | re.MULTILINE),
+        parse=lambda m, c: (int(m.group(1)), {}),
     ),
 ]
 
@@ -1477,8 +1508,9 @@ def performance_tier(game, score):
     ACED is the best a game has to offer, which is a different thing in each:
     a guesses game in one, a connections grid solved vertically, a travle
     Perfect, a cryptic with no hints at all, a score or maptap result at its
-    ceiling (`total`), a fermi in the world's top 1% (FERMI_ACE), a clock under
-    TIME_ACE_SECONDS or, on a win, TIMED_WIN_ACE_SECONDS.
+    ceiling (`total`), a golf tally of 0, a fermi in the world's top 1%
+    (FERMI_ACE), a clock under TIME_ACE_SECONDS or, on a win,
+    TIMED_WIN_ACE_SECONDS.
 
     Minute Cryptic is then tiered on the day's community par -- under it GREAT,
     level GOOD, over it ROUGH -- since a puzzle that sets its own hint count
@@ -1497,6 +1529,7 @@ def performance_tier(game, score):
             or (metric == 'cryptic' and score[1] == 0)
             or (metric in HIGHER_IS_BETTER and total
                 and (score if metric == 'score' else score[0]) >= total)
+            or (metric == 'golf' and score == 0)
             or (metric == 'fermi' and score[1] is not None and score[1] <= FERMI_ACE)
             or (metric == 'time' and score <= TIME_ACE_SECONDS)
             or (metric == 'timed_win' and not score[2]
@@ -1534,7 +1567,7 @@ def performance_tier(game, score):
         if score[1] is None:
             return None
         value = score[1]
-    else:  # guesses, time: the score is the number
+    else:  # guesses, time, golf: the score is the number
         value = score
     return GREAT if value <= great else GOOD if value <= good else ROUGH
 
@@ -1991,7 +2024,7 @@ def _format_game_players(game_scores, metric, total, names=None,
                 score_str = f"{mistakes}{out_of} ({solved} solved)"
             else:
                 score_str = f"{mistakes}{out_of}"
-        elif metric == 'score':
+        elif metric in ('score', 'golf'):
             score_str = f"{current_score}"
         elif metric == 'travle':
             score_str = format_travle_score(current_score)

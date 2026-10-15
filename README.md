@@ -53,6 +53,7 @@ and the bot picks it up.
 | Minute Cryptic | https://www.minutecryptic.com | yes |
 | Pips | https://www.nytimes.com/games/pips | yes |
 | Quizl | https://quizl.io | yes |
+| Seldom | https://www.playseldom.com | no |
 | Size It Up | https://magnitudle.com/size-it-up | no |
 | Sound | https://dialed.gg/sound?d=1 | yes |
 | Sports Connections | https://www.nytimes.com/athletic/connections-sports-edition | yes |
@@ -143,7 +144,7 @@ Defaults in parentheses.
 - **`/setup games`** — a multi-select of every supported game, pre-ticked to this
   server's current state. A server can track up to 20 at once — as many as the Play
   list has room for.
-- **`/setup rotation enabled:<bool> games:<1-24> mode:<swap|random> keep_players:<n> promote_players:<n> off_rotation:<shown|hidden> announce:<bool>`**
+- **`/setup rotation enabled:<bool> games:<1-25> mode:<swap|random> keep_players:<n> promote_players:<n> off_rotation:<shown|hidden> announce:<bool>`**
   (`true` / `3` / `swap` / `5` / `5` / `shown` / `true`) — score only a rotating subset of games
   each day. In `swap` mode a spot is earned by play, against two separate thresholds:
   a game in the set holds its seat by drawing `keep_players`, a game outside it earns

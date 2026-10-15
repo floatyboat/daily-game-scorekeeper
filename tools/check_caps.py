@@ -68,7 +68,7 @@ def fake_score(metric, i):
             'timed_win': (0, 1, 0, 90 + i),
             'cryptic': (10, 4, 3, 6, 1),
             'fermi': (round(9.63 + i, 2), min(99, i + 1)),
-            'score': 50 + i}.get(metric, 3)
+            'score': 50 + i, 'golf': 100 + i}.get(metric, 3)
 
 
 def turnout(uids, game_index, skipped):
