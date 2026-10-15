@@ -2369,10 +2369,12 @@ def format_scoreboard_components(results, reference_date, puzzle_numbers, title=
 # on two surfaces that don't mean the same thing by it: a live view (the Scores
 # button, the midday standings, a days_back=0 preview) is a day still open,
 # where nobody has played YET, and the posted board is a day that is over.
-# Each gets its own headline, drawn from a small pool by the date so a run of
-# quiet days doesn't read like a stuck record, and a subtext line naming the
-# next thing the reader can do about it. The accent goes gray with them: gold
-# on this board means the day was scored, and this one wasn't.
+# The live view draws its headline from a small pool by the date, so a run of
+# quiet days doesn't read like a stuck record, and closes on a subtext line
+# naming the next thing the reader can do about it. The posted board only says
+# there were no results: it is the record of yesterday, and nothing done now
+# changes it. The accent goes gray on both: gold on this board means the day
+# was scored, and this one wasn't.
 EMPTY_LIVE_EMOJI = '\u23F3'
 EMPTY_LIVE_LINES = (
     'No scores yet today.',
@@ -2380,38 +2382,33 @@ EMPTY_LIVE_LINES = (
     'The board is still empty today.',
 )
 EMPTY_CLOSED_EMOJI = '\U0001F997'
-EMPTY_CLOSED_LINES = (
-    'Nobody played this one.',
-    'A quiet day: nobody scored.',
-    'This day went unplayed.',
-)
+EMPTY_CLOSED_LINE = 'No results yesterday.'
 EMPTY_LIVE_NUDGE = 'Post a result in this channel and it lands on the board right away.'
-EMPTY_CLOSED_NUDGE = "Today's board is wide open. The first result of the day takes the lead."
 # How many of the day's games the live empty board names before it stops
 # counting them out, the same cap the sticky's own game row keeps.
 EMPTY_GAMES_SHOWN = 5
 
 
 def empty_board_lines(reference_date, games, rotation, streaks, live, hint=None):
-    """The body of a board with no results on it: a headline, the day's games,
-    and one line of what to do next.
+    """The body of a board with no results on it: a headline and, on a live
+    board, the day's games and one line of what to do next.
 
     Returns (lines, closing): everything that sits directly under the heading,
-    and the one line that closes the board. They are split because the day's
-    streak callouts go between them -- a broken streak is news about the day,
-    and the closing line is what to do about the next one, so it reads last.
+    and the one line that closes the board, or None for a board that ends on
+    its headline. They are split because the day's streak callouts go between
+    them -- a broken streak is news about the day, and the closing line is
+    what to do about the next one, so it reads last.
 
     live is "the day this board covers is still open" -- the Scores button and
     the midday standings, against the closed day the posted board scores. It
-    decides every line here: a closed day is told plainly that nobody played,
-    an open one that nobody has played yet, and only an open day has "today's
-    games" to name at all, since a closed board's games and puzzle numbers are
-    that day's rather than this one's.
+    decides every line here: an open day is told that nobody has played yet,
+    what it has to play and how to get on the board, and a closed one only
+    that it had no results: there is nothing left to do about a day that is
+    over, and its games and puzzle numbers are that day's, not this one's.
 
     hint replaces the closing line with the caller's own (interaction_lambda
     points at the scoreboard channel when the view was run somewhere else).
     """
-    pool = EMPTY_LIVE_LINES if live else EMPTY_CLOSED_LINES
     emoji = EMPTY_LIVE_EMOJI if live else EMPTY_CLOSED_EMOJI
     # Stable for the day, like every other pick the app makes from a pool: two
     # clicks an hour apart are the same empty board, not two different ones.
@@ -2419,7 +2416,9 @@ def empty_board_lines(reference_date, games, rotation, streaks, live, hint=None)
     # land on correlated draws from a pool this small, which is exactly the run
     # of days a pool is here to break up.
     day = getattr(reference_date, 'date', lambda: reference_date)()
-    lines = [f'{emoji} **{random.Random(f"empty-board:{day}").choice(pool)}**']
+    headline = (random.Random(f'empty-board:{day}').choice(EMPTY_LIVE_LINES)
+                if live else EMPTY_CLOSED_LINE)
+    lines = [f'{emoji} **{headline}**']
 
     if live and games:
         # Ordered the way every other list of games in the app is ordered, so
@@ -2440,13 +2439,15 @@ def empty_board_lines(reference_date, games, rotation, streaks, live, hint=None)
     streak = shown_streak((streaks or {}).get('server', 0))
     if hint:
         closing = hint
-    elif live and streak:
+    elif not live:
+        closing = None
+    elif streak:
         # The heading is already showing the number; what it doesn't say is
         # what a day with nothing on it would cost.
         closing = f'That {streak}-day streak needs one result today.'
     else:
-        closing = EMPTY_LIVE_NUDGE if live else EMPTY_CLOSED_NUDGE
-    return lines, f'-# {closing}'
+        closing = EMPTY_LIVE_NUDGE
+    return lines, (f'-# {closing}' if closing else None)
 
 
 def _render_scoreboard(results, reference_date, puzzle_numbers, title,
@@ -2479,7 +2480,7 @@ def _render_scoreboard(results, reference_date, puzzle_numbers, title,
                  "components": header_children
                  + [{"type": 10, "content": "\n".join(empty)}]
                  + break_child
-                 + [{"type": 10, "content": closing}]}]
+                 + ([{"type": 10, "content": closing}] if closing else [])}]
 
     # --- Points container (gold accent) ---
     # The same fold the archive freezes (points_per_game, via total_points):

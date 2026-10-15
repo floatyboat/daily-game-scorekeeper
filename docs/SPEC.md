@@ -724,9 +724,10 @@ retroactively.
 - **A board with nothing on it** (`empty_board_lines()`) says which kind of empty it is. A
   live view (the Scores button, the midday standings, a `days_back: 0` preview) passes
   `live=True` and reads "no scores **yet**", names a few of the day's games, and closes on
-  the server streak today would cost; the posted board's day is closed, so it says nobody
-  played and points at today instead. The headline comes from a small pool keyed on the
-  date, so a run of quiet days doesn't repeat itself, and both render **gray** rather than
+  the server streak today would cost, under a headline drawn from a small pool keyed on
+  the date so a run of quiet days doesn't repeat itself. The posted board's day is closed,
+  so it says "No results yesterday." and stops there: it is the record of a day that is
+  over, and nothing done now changes it. Both render **gray** rather than
   gold, which is the same rule the rest of the board follows: gold means the day was
   scored. `empty_hint` replaces the closing line — `interaction_lambda.empty_board_hint()`
   spends it on the one thing the board can't know, that a live view run outside the
