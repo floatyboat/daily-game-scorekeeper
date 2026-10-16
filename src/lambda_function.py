@@ -280,7 +280,8 @@ def draw_rotation(cfg, is_test, day, today_day, results):
     prev = cfg['rotation_games'] if cfg['rotation_day'] == day else None
     rotation = next_rotation(enabled_keys, cfg['rotation_count'], cfg['rotation_mode'],
                              cfg['rotation_keep_players'],
-                             cfg['rotation_promote_players'], prev, results or {})
+                             cfg['rotation_promote_players'], prev, results or {},
+                             fixed=store.fixed_games(cfg))
     if not rotation:
         return None
     if not is_test:

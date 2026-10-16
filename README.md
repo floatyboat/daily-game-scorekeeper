@@ -140,7 +140,12 @@ one long form. Defaults in parentheses.
   while it's paused, since whatever board is still in the channel is stale. Today's games
   keep being drawn and announced — pausing the board doesn't pause the rotation.
 - **Games** — tick the games this server tracks, up to 20 at once (as many as the Play
-  list has room for).
+  list has room for). **Always in the rotation** (none by default) keeps the games ticked
+  there in every day's rotation however many people play them: the fix for a small
+  server whose players all stick to one game, which the swap draw would otherwise only
+  score on days a random pick lands on it. Each takes one of the **Games scored each
+  day**; tick that many or more and the rotation is just those games. A change takes
+  effect at the next day start.
 - **Schedule** — **Day starts at** (`00:00`) is when a scoring day rolls over, **Board
   posts at** (the day start) is the local hour the board posts, and **Results count for**
   (`24 hours`) is how long submissions stay open each day. Example: `America/New_York`,
@@ -161,8 +166,8 @@ one long form. Defaults in parentheses.
   turn up. The posted board only: mid-day the Scores button never calls anyone a no-show,
   because they may simply not have got to it yet.
 - **Rotation** — scores only a rotating subset of games each day (on by default).
-  **Games scored each day** (`5`) is a hard cap: when more games qualify than fit, the
-  most-played keep the seats. In the `swap` draw (the default) a seat is earned by play,
+  **Games scored each day** (`5`) is a hard cap, games always in the rotation (under
+  Games) included: when more games qualify than fit, the most-played keep the seats. In the `swap` draw (the default) a seat is earned by play,
   against two separate thresholds: a game in the set holds its seat by drawing **Players
   to keep a seat** (`5`), a game outside it earns one by drawing **Players to win a seat**
   (`5`), and random picks fill the rest. Splitting the two is how a server sets seats

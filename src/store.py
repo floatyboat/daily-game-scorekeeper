@@ -42,9 +42,11 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 # game_parser imports nothing local, so this stays a leaf-ward dependency --
-# scoreboard already pulls in both. Only the game count is needed here, to
-# bound the rotation size against the games that actually exist.
-from game_parser import GAME_SPECS, SCORING_PLACEMENT, SCORING_PER_GAME, SCORING_OFF
+# scoreboard already pulls in both. The game table is needed here to bound the
+# rotation size against the games that actually exist, and to tell which of a
+# server's always-in games it tracks (fixed_games).
+from game_parser import (GAME_SPECS, SCORING_PLACEMENT, SCORING_PER_GAME, SCORING_OFF,
+                         spec_enabled)
 
 TABLE_NAME = os.getenv('TABLE_NAME') or 'daily-game-tracker'
 AWS_REGION = os.getenv('AWS_REGION') or 'us-east-1'
@@ -229,6 +231,15 @@ CONFIG_FIELDS = [
     ConfigField('game_overrides', default={}, coerce=_overrides, section='games',
                 label='Games',
                 describe='Unticked games are ignored: not read, not scored, not listed in Play'),
+    # The rotation's one per-game setting. It sits on the Games form because it
+    # is picked from the same list, and the Rotation form is at Discord's five
+    # components. A map of explicit choices like game_overrides, so it rides
+    # the same menu (setup_panel.CATALOGS); no game is fixed by default, so
+    # only a True entry acts.
+    ConfigField('rotation_fixed', default={}, coerce=_overrides, section='games',
+                label='Always in the rotation',
+                describe='Kept in however many play them. Each takes one of the daily seats; '
+                         'the draw fills the rest.'),
 
     ConfigField('hours_after_midnight', default=0, coerce=int, section='schedule',
                 label='Day starts at', unit='clock', minimum=0, maximum=23,
@@ -280,7 +291,8 @@ CONFIG_FIELDS = [
     ConfigField('rotation_count', default=5, coerce=int, section='rotation',
                 label='Games scored each day', unit='game', minimum=1,
                 maximum=len(GAME_SPECS),
-                describe='When more games qualify, the most-played keep the seats'),
+                describe='Games always in (under Games) count toward it. When more qualify, '
+                         'the most-played keep the seats'),
     ConfigField('rotation_mode', default='swap', coerce=_choice(ROTATION_MODES, 'swap'),
                 section='rotation', label="Picking the next day's games",
                 choices=ROTATION_MODES,
@@ -401,6 +413,15 @@ def current_rotation(cfg, day):
         if cfg[day_field] == day and cfg[games_field]:
             return cfg[games_field]
     return None
+
+
+def fixed_games(cfg):
+    """The games every draw seats first (rotation_fixed), in GAME_SPECS order:
+    the ones ticked there that the server also tracks. A ticked game that isn't
+    tracked stays in the map, inert, and is seated again from the next draw
+    once it is switched back on."""
+    return [s.key for s in GAME_SPECS
+            if cfg['rotation_fixed'].get(s.key) and spec_enabled(s, cfg['game_overrides'])]
 
 
 _resource = None

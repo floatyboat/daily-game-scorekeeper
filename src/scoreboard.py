@@ -59,8 +59,9 @@ PERM_ADMINISTRATOR = 0x8
 PERM_MANAGE_GUILD = 0x20
 
 # Discord payload caps the rendered surfaces have to fit inside. The Games form
-# in /setup is one menu option per GameSpec, MAX_SELECT_OPTIONS to a menu,
-# split across menus once GAME_SPECS outgrows one (setup_panel) rather than
+# in /setup is two menus of one option per GameSpec (the games tracked, and the
+# games always in the rotation), MAX_SELECT_OPTIONS to a menu, each split
+# across menus once GAME_SPECS outgrows one (setup_panel) rather than
 # truncated -- a game missing from the form couldn't be turned on at all. /play
 # is one button per ENABLED game, in MAX_ACTION_ROWS rows of which the Random
 # row takes one -- so a server may enable at most MAX_ENABLED_GAMES, and the
