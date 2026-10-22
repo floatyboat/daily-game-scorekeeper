@@ -41,6 +41,7 @@ and the bot picks it up.
 | Connections | https://www.nytimes.com/games/connections | yes |
 | Costcodle | https://costcodle.com | no |
 | Enclose | https://enclose.horse | yes |
+| Farflung | https://farflung.game | yes |
 | Fermi | https://fermi.gg | yes |
 | Flagle | https://flagle.org | no |
 | Gerrymandle | https://gerrymandle.com | yes |

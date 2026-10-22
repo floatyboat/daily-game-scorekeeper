@@ -155,7 +155,7 @@ few enough values is a menu, anything else a text box.
 | `pin_keep_days` | Board | `30` | Days of boards kept pinned (1–`PIN_CAP`); older ones are unpinned |
 | `hundreds_of_messages` | Board | `1` | Input-channel volume (1–8), sets the fetch depth |
 | `daily_shame` | Board | `true` | Whether the posted board lists who skipped each scored game as a 💩 DNF, on the placement scale only |
-| `rotation_count` | Rotation | `5` | Games in the daily rotation, fixed games included; the upper bound is `len(GAME_SPECS)` (currently 25), so adding a game widens the form's menu with it, and past 25 games the form offers a text box instead |
+| `rotation_count` | Rotation | `5` | Games in the daily rotation, fixed games included; the upper bound is `len(GAME_SPECS)` (currently 26), so adding a game widens it; the form offers a menu while the values fit in one (25 games or fewer) and a text box past that, as now, and reads either shape back |
 | `rotation_mode` | Rotation | `swap` | `swap` replaces under-played members, `random` re-draws daily |
 | `rotation_keep_players` | Rotation | `5` | Swap threshold to hold a seat: a scored game under it rotates out |
 | `rotation_promote_players` | Rotation | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
@@ -211,12 +211,12 @@ highlights the Basics button.
   multiple it ranks on, whose scale belongs to the day's puzzle and not to the player. Lower
   is better, except for the metrics that count upward (`HIGHER_IS_BETTER`: `score`,
   `maptap`), which read the same way round as they rank. A score game still carries its
-  real ceiling in `total` (Chronophoto and Chainle 5000, Krillion 700, Size It Up 500,
-  MapTap 1000), because that is what a result has to reach to be aced — no score game's
-  board line prints it, so the ceiling never reads as a fraction, while guesses,
-  connections and cryptic lines keep their "/N". `golf` is a points tally counted the other
-  way, down to a perfect 0 (Seldom), with no ceiling at all since hints add to it: its
-  `total` is 0 and its line prints the bare tally. A spec without breakpoints gets no
+  real ceiling in `total` (Chronophoto and Chainle 5000, Krillion 700, Size It Up and
+  Farflung 500, MapTap 1000), because that is what a result has to reach to be aced — no
+  score game's board line prints it, so the ceiling never reads as a fraction, while
+  guesses, connections and cryptic lines keep their "/N". `golf` is a points tally
+  counted the other way, down to a perfect 0 (Seldom), with no ceiling at all since hints
+  add to it: its `total` is 0 and its line prints the bare tally. A spec without breakpoints gets no
   great, good or rough: Minute Cryptic is the one game that carries none on purpose, being
   tiered on the day's community par instead.
 - The effective list is resolved by `spec_enabled(spec, overrides)` / `build_games(pn,
@@ -224,15 +224,16 @@ highlights the Basics button.
   list, Scores, scoreboard render.
 - Historical day and aggregate data for a disabled game is retained, and neither displayed
   nor accrued while disabled.
-- The Games form in `/setup` manages the set: one multi-select of all games, pre-selected
-  to the guild's current effective state. A save records each game whose state it
-  switched and leaves every other stored entry as it was (`setup_panel.Catalog`), so a
-  choice a server made once — even one that matches today's default — survives later
-  saves, and a game it never touched keeps following its coded default. A second
-  multi-select on the same form, **Always in the rotation**, picks the games seated in
-  every day's rotation (`rotation_fixed`, the same `Catalog` machinery over the same list,
-  uncapped; see Daily rotation). It sits here rather than on the Rotation form because that
-  form is already at Discord's five fields.
+- The Games form in `/setup` manages the set: a multi-select of all games (two that split
+  the list, past 25 games; see the payload caps below), pre-selected to the guild's
+  current effective state. A save records each game whose state it switched and leaves
+  every other stored entry as it was (`setup_panel.Catalog`), so a choice a server made
+  once — even one that matches today's default — survives later saves, and a game it never
+  touched keeps following its coded default. A second multi-select on the same form, split
+  the same way, **Always in the rotation**, picks the games seated in every day's rotation
+  (`rotation_fixed`, the same `Catalog` machinery over the same list, uncapped; see Daily
+  rotation). It sits here rather than on the Rotation form because that form is already at
+  Discord's five fields.
 - Wordle results posted as **images** by the official Wordle Discord bot are parsed with no
   configuration at all. That bot is one application, so it carries the same ID in every
   server it joins: `game_parser.WORDLE_BOT_ID` is a **constant, not a setting** — there is
@@ -247,9 +248,10 @@ highlights the Basics button.
   trip. A server without the Wordle bot does no image work whatsoever.
 - Two Discord payload caps bound the game surfaces (constants in `scoreboard.py`, noted at
   the `GAME_SPECS` declaration). The Games form is two menus of one option per spec (the
-  games tracked, and the games always in the rotation), 25 to a menu; past 25 specs each
-  splits into a second menu on the same form by itself, which holds the form inside
-  Discord's five fields up to 50 specs (`check_limits` refuses a deploy past that). `/play` is one
+  games tracked, and the games always in the rotation), 25 to a menu at most; past 25 specs
+  each splits by itself into two menus on the same form that share the games evenly (13
+  and 13 at 26), which holds the form inside Discord's five fields up to 50 specs
+  (`check_limits` refuses a deploy past that). `/play` is one
   button per *enabled* game at 5 per row under the Random row, so a server may enable at
   most `MAX_ENABLED_GAMES` (20): while one menu holds every game its `max_values` enforces
   that in the picker, and `read_form` re-checks it on every submit (split menus can't see

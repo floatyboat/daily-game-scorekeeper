@@ -822,13 +822,14 @@ def _parse_costcodle(m, content):
 # Adding a game is one entry here and nothing else. Two rendered surfaces have
 # Discord payload caps this list feeds (scoreboard.py holds the constants): the
 # Games form in /setup is two menus of one option per spec -- the games tracked
-# and the games always in the rotation -- 25 to a menu, each splitting into a
-# second menu by itself past that, so the form stays inside Discord's five
-# components up to 50 games (setup_panel.check_limits refuses a deploy past
-# it); and /play is one button per ENABLED game, which is why a server may
-# switch on at most MAX_ENABLED_GAMES (20) of them. A default-on game lands in
-# every server at once, including one already at the cap; build_play_response
-# is what copes with that.
+# and the games always in the rotation -- 25 to a menu at most, each splitting
+# by itself into two that share the games evenly past that (as 26 games do), so
+# the form stays inside Discord's five components up to 50 games
+# (setup_panel.check_limits refuses a deploy past it); and /play is one button
+# per ENABLED game, which is why a server may switch on at most
+# MAX_ENABLED_GAMES (20) of them. A default-on game lands in every server at
+# once, including one already at the cap; build_play_response is what copes
+# with that.
 
 GAME_SPECS = [
     GameSpec(
@@ -1156,6 +1157,34 @@ GAME_SPECS = [
             rf'Seldom #{n}\b.*?^(\d+)(?: \([^)\n]*\))?\s*$',
             re.IGNORECASE | re.DOTALL | re.MULTILINE),
         parse=lambda m, c: (int(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='farflung', emoji='🧭', title='Farflung', metric='score',
+        total=500, url='https://farflung.game',
+        breakpoints=(350, 250),
+        puzzle=lambda ref: (ref - datetime(2026, 10, 5)).days + 1,
+        # Five prompts, each answered with a pin on the map and paid in
+        # kilometres for how rare a place it is: 40 for the one everybody
+        # picks, up to 100 for the day's gem, nothing for a miss. So higher is
+        # better, with a ceiling of 500, which the site calls reaching the
+        # edge. The breakpoints are the site's own landmarks on the way there:
+        # the ice from 350 km, the mountains from 250.
+        #
+        # The heading carries the whole result -- 'Farflung #17 · 255/500 km'
+        # -- and the line under it lists the five pins' grades or, failing
+        # that, says something about the field, so only the heading is read.
+        # Anything after 'km' marks how the day was played (an asterisk for
+        # each help switched off, ⌕ for a pin placed by typing its name) and
+        # leaves the distance alone, so the pattern stops at the slash.
+        #
+        # The number turns over at the player's own midnight, as Wordle's
+        # does, and a missed day caught up later shares under that day's
+        # number, which alone keeps it off today's board. Practice and
+        # unlimited runs share as 'Farflung ∞', and the similarly named game
+        # at farflunggame.com heads its share with a date, so neither matches.
+        pattern=lambda ref, n: re.compile(rf'Farflung #{n}\b\s*·?\s*(\d[\d,]*)\s*/',
+                                          re.IGNORECASE),
+        parse=lambda m, c: (int(m.group(1).replace(',', '')), {}),
     ),
 ]
 

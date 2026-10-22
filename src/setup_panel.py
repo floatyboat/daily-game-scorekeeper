@@ -399,13 +399,16 @@ def _channel_input(field, cfg):
 
 
 def _catalog_inputs(field, cfg):
-    """One multi-select per MAX_SELECT_OPTIONS entries. A lone menu holds a
+    """One multi-select, or as few as hold every entry when they outnumber
+    MAX_SELECT_OPTIONS, the entries shared out evenly between them: 26 games
+    make two menus of 13, not one of 25 and one of 1. A lone menu holds a
     capped catalog to its cap by itself; menus split across a form can't see
     each other's ticks, so _read_catalog re-checks the cap on every submit."""
     catalog = CATALOGS[field.name]
     entries = list(catalog.entries())
-    chunks = [entries[i:i + MAX_SELECT_OPTIONS]
-              for i in range(0, len(entries), MAX_SELECT_OPTIONS)]
+    n = len(entries)
+    count = -(-n // MAX_SELECT_OPTIONS)   # menus needed, rounded up
+    chunks = [entries[n * i // count:n * (i + 1) // count] for i in range(count)]
     inputs = []
     for i, chunk in enumerate(chunks):
         options = [{**catalog.option(e), 'default': catalog.enabled(e, cfg[field.name])}
@@ -540,9 +543,14 @@ def _read(field, values, cfg):
         return str(raw[0]) if raw else None
     if field.choices:
         return field.apply(raw)
-    if _has_menu(field):
-        return field.apply(int(raw[0])) if raw else MISSING
     if field.coerce is int:
+        # A menu submits [value] and a text box the bare text, and a field can
+        # move from one to the other (rotation_count did at 26 games), so read
+        # either: a form opened before such a deploy is submitted after it.
+        if isinstance(raw, list):
+            if not raw:
+                return MISSING
+            raw = raw[0]
         try:
             return field.apply(int(raw))
         except ValueError:
