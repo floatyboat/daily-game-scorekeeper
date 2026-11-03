@@ -1071,16 +1071,30 @@ GAME_SPECS = [
         puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
         # Five rounds of resizing a silhouette against a known reference, each
         # worth up to 100 for how close it came, so higher is better, with a
-        # ceiling of 500. As with krillion, the line prints no total: the share
-        # text prints a tally, not a fraction.
+        # ceiling of 500. As with krillion, the line prints no total.
         #
-        # That share text carries no puzzle number and no date, and a replay
-        # from the site's archive writes exactly the same lines, so like the
-        # dialed games it is tied to a day by when it was posted and nothing
-        # else. Its first line is the variant's label, which is what keeps the
+        # The share has had two layouts. Since 2026-11-03 it heads 'Magnitudle
+        # — Size It Up', then the puzzle's date on a line of its own, a blank
+        # line and 'Score: 189/500'; before that it was a bare 'Size It Up'
+        # over 'Overall Score 195'. The pattern takes either, since the old
+        # one is what a replay of channel history (tools/backfill.py) finds.
+        #
+        # The date is the player's own calendar day (the site keys its puzzle
+        # on the browser's time zone), and the pattern holds it to the board's
+        # day, so yesterday's share posted today stays off today's board. A
+        # replay from the site's archive and its unlimited mode write the same
+        # lines but tag the date ('2026-10-20 · Practice', '· Unlimited'),
+        # which the pattern refuses by wanting the score line straight after
+        # it. The old layout carried no date at all, so like the dialed games
+        # the result is tied to its posting window as well, and a dated share
+        # keeps that rule: posted after the window closes, it is not counted.
+        # The first line is the variant's label, which is what keeps the
         # sister games off this board: 'Size It Up: Pop Culture' and 'Size It
-        # Up: Geography' put a colon where this pattern needs the score line.
-        pattern=lambda ref, n: re.compile(r'Size It Up\s*Overall Score\s*(\d+)', re.IGNORECASE),
+        # Up: Geography' put a colon where this pattern needs the date or the
+        # score line.
+        pattern=lambda ref, n: re.compile(
+            rf'Size It Up\s*(?:{ref.strftime("%Y-%m-%d")}\s*Score:|Overall Score)\s*(\d+)',
+            re.IGNORECASE),
         parse=lambda m, c: (int(m.group(1)), {}),
     ),
     GameSpec(
