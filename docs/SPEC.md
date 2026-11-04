@@ -507,7 +507,18 @@ players are (the test channel on a test run).
   checked only once yesterday is finalized, since the sets fold at post hour. *Lead
   change*: someone takes **sole** control of the lead — one player alone on top, clear of
   one win's worth of points (`one_win`: the pool under `placement`, the biggest game's
-  field under `per_game`), who is not the leader the day's latest lead line already named.
+  field under `per_game`), on no more of today's scoring games than the player in second
+  (`Tick.games_played`; one of them, when second is shared), who is not the leader the
+  day's latest lead line already named. The games-played check is there because points
+  pile up with every game played, so early in the day the standings rank who has played
+  most: a player who posted four results before anyone else "took the lead" the moment a
+  second player posted one, and a replay of five weeks found every day's first lead line
+  landing exactly there. Waiting for a third player, or for most of the slate to be
+  played, only moved that line later, since the newcomer usually arrives with one game
+  too. A leader on fewer games than second is ahead on merit and is announced at once.
+  The day's first line reads “leads” — once the race is even it often names someone who
+  was in front all along — and every later one “takes the lead”, since it always names
+  someone other than the last line did.
   The comparison is with the last announcement, not the previous pass's standings:
   measured pass to pass, a tie at the top resolving in one player's favour read as no
   change (they were already among the leaders), and since a shared lead is never
@@ -517,14 +528,22 @@ players are (the test channel on a test run).
   No rate limit: replays showed the early flip-flops happen at 2 to 6 points, under the
   one-win floor. *Clean sweep*: one player sole first in
   most of the day's scored games — a strict majority of the slate (`tick.scored`, so the
-  rotation when there is one) and never fewer than `SWEEP_MIN_GAMES` (3). The bar is a
-  share of the day, not a count of results, because measuring it against what had been
-  played meant announcing whoever was in front of the first two results of the morning;
-  a five-game rotation now asks for three games, a three-game one for all three. Only
-  contested (≥ 2 players) games count toward it, and the line says “a clean sweep in the
-  making” only while that player holds every contested game — otherwise it just says how
-  much of the day they have. How a single result went is no line at all: it is that
-  result's own reaction (see Reactions). *Tie*: a scored
+  rotation when there is one) and never fewer than `SWEEP_MIN_GAMES` (3) — who can still
+  be sole first in all of them (`can_still_sweep`). That means nothing lost yet: they
+  lead every game they have posted outright (one only they have played counts as theirs
+  for now), and every game they have not posted can still be won (`still_winnable`:
+  nobody has the best score the game allows, by the tie line's `beatable`, which reads a
+  score or MapTap game's `total` as its ceiling and a clock or an estimate as having
+  none). A loss or a tie for first ends it, since the player's own result is final; the
+  old line went on announcing “1st in 3 of 5” after the sweep was already gone. The bar
+  is a share of the day, not a count of results, because measuring it against what had
+  been played meant announcing whoever was in front of the first two results of the
+  morning; a five-game rotation asks for three games, a three-game one for all three.
+  Only contested (≥ 2 players) games count toward it. Two lines, each once a day: “a
+  clean sweep in the making” with how many games are still open (`sweep:<uid>`), then
+  the clean sweep itself once they lead every game on the slate (`sweep:<uid>:all`); a
+  slate whose bar is all of it only ever gets the second. How a single result went is no
+  line at all: it is that result's own reaction (see Reactions). *Tie*: a scored
   `guesses`/`connections`/`cryptic`/`travle`/`score`/`golf` game whose best non-poop score
   is shared and beatable (anything short of one guess, no mistakes, no hints, a Travle
   Perfect, a score game's ceiling, its `total`: 5 greens in Quizl, 100% in Enclose, or a

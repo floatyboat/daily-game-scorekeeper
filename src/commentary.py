@@ -68,6 +68,7 @@ store.record_commentary persists the post's event ids.
 """
 
 import hashlib
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import cached_property
@@ -77,7 +78,8 @@ from dateutil import parser as dateutil_parser
 from game_parser import (
     build_games, format_scoreboard_components, format_travle_score, game_link_button,
     game_sort_key, is_poop, over_budget, rotation_points_base, score_sort_key,
-    scoring_players, shown_streak, total_points, SCORING_OFF, SCORING_PLACEMENT,
+    scoring_players, shown_streak, total_points, HIGHER_IS_BETTER, SCORING_OFF,
+    SCORING_PLACEMENT,
 )
 from scoreboard import (
     LOUDNESS, MAX_ACTION_ROWS, MAX_BUTTONS_PER_ROW, MIDDAY_TITLE, NOTIFY, PING,
@@ -173,6 +175,15 @@ class Tick:
     def totals(self):
         return total_points(self.results, self.games, self.cfg['minimum_players'],
                             self.rotation, self.cfg['scoring'])
+
+    @cached_property
+    def games_played(self):
+        """{uid: how many of today's scored games they have a result in}, counting
+        only games that pay anyone yet (minimum_players): the games their points
+        could have come from. A poop counts, since they had their go at it."""
+        floor = self.cfg['minimum_players']
+        fields = (self.results.get(g.key) or {} for g in self.scored)
+        return Counter(uid for scores in fields if len(scores) >= floor for uid in scores)
 
     def streak_of(self, game_key):
         return ((self.streaks or {}).get('games') or {}).get(game_key, 0)
@@ -340,7 +351,8 @@ def short_score(game, score):
 
 def beatable(game, score):
     """Is there a better score than this one? A tie at the best possible score
-    is not an opportunity for anyone."""
+    is not an opportunity for anyone, and a game somebody has already topped
+    cannot be won outright by anyone still to play it (still_winnable)."""
     if game.metric == 'guesses':
         return score > 1
     if game.metric == 'connections':
@@ -349,13 +361,15 @@ def beatable(game, score):
         return score[1] > 0
     if game.metric == 'travle':
         return score[0] >= 0    # anything short of a Perfect, tier -1
-    if game.metric == 'score':
+    if game.metric in HIGHER_IS_BETTER:
         # The ceiling is the ace (performance_tier); a game without one has
-        # no top to reach, so any tie can be beaten.
-        return not game.total or score < game.total
+        # no top to reach, so any score can be beaten.
+        return not game.total or (score if game.metric == 'score' else score[0]) < game.total
     if game.metric == 'golf':
         return score > 0
-    return False
+    # A clock or an estimate (time, timed_win, fermi) has no top a result can
+    # reach: there is always a faster solve or a closer guess.
+    return True
 
 
 def standings(tick):
@@ -363,15 +377,30 @@ def standings(tick):
     return [[uid, p] for uid, p in sorted(tick.totals.items(), key=lambda kv: (-kv[1], kv[0]))]
 
 
-def sole_first(tick, game):
-    """The one player alone at the top of `game` (non-poop), or None."""
+def top_of(tick, game):
+    """(best score, [players on it]) in `game` so far, poops aside, or
+    (None, []) while nobody has a result that counts. The one reading of who
+    is 1st that the sweep and the tie share."""
     scores = {u: s for u, s in (tick.results.get(game.key) or {}).items()
               if not is_poop(game.metric, s, game.total)}
     if not scores:
-        return None
+        return None, []
     best = min(scores.values(), key=lambda s: score_sort_key(game.metric, s))
-    top = [u for u, s in scores.items() if s == best]
+    return best, sorted(u for u, s in scores.items() if s == best)
+
+
+def sole_first(tick, game):
+    """The one player alone at the top of `game` (non-poop), or None."""
+    _, top = top_of(tick, game)
     return top[0] if len(top) == 1 else None
+
+
+def still_winnable(tick, game):
+    """Can a player who has not posted `game` yet still finish alone in 1st in
+    it? Not once the best result in is the best the game allows (beatable):
+    matching it would only tie."""
+    best, _ = top_of(tick, game)
+    return best is None or beatable(game, best)
 
 
 def sample_players(tick, n):
@@ -676,8 +705,20 @@ def announced_leads(state):
 
 def detect_lead(tick):
     """Someone takes sole control of the lead: one player alone on top, on
-    more than a single first place pays, with somebody behind them, and not
-    already the leader the day's latest lead announcement named.
+    more than a single first place pays, no further into the day's games than
+    the player in second, and not already the leader the day's latest lead
+    announcement named.
+
+    No further into the day, because points pile up with every game played:
+    early on, the standings rank who has played most, not who is playing best.
+    Someone who posts four results before anyone else "takes the lead" the
+    moment a second player posts one, and a replay of five weeks found every
+    day's first lead line landing exactly there. So a lead counts once the
+    player in second (one of them, when second is shared) has played at least
+    as many of the day's games as the leader: won, not banked. A leader on
+    FEWER games than second is ahead on merit and counts at once. Waiting for
+    a third player, or for most of the slate to be played, only moved the
+    line later: the newcomer usually arrives with one game too.
 
     The yardstick is the last ANNOUNCEMENT, not the last pass. Compared with
     the previous pass's standings, a tie at the top resolving in one player's
@@ -695,45 +736,89 @@ def detect_lead(tick):
     leaders = [uid for uid, p in now if p == top]
     if len(leaders) != 1 or top <= one_win(tick) or top < LEAD_MIN_POINTS:
         return []
-    leads = announced_leads(tick.state)
-    if leads and leads[-1][1] == leaders[0]:
-        return []
+    leader = leaders[0]
     chasers = [[uid, p] for uid, p in now[1:] if p == now[1][1]]
-    return [{'id': lead_id(len(leads) + 1, leaders[0]), 'leader': leaders[0],
-             'points': top, 'chasers': chasers}]
+    played = tick.games_played
+    if played[leader] > max(played[uid] for uid, _ in chasers):
+        return []
+    leads = announced_leads(tick.state)
+    if leads and leads[-1][1] == leader:
+        return []
+    n = len(leads) + 1
+    return [{'id': lead_id(n, leader), 'n': n, 'leader': leader, 'points': top,
+             'chasers': chasers}]
 
 
 def render_lead(events, tick):
+    """The day's first line says who leads: once the race is even, that is
+    often someone who was in front all along, so nothing has changed hands.
+    Every later line names someone new (detect_lead skips the last leader
+    announced), so it says they took it."""
     lines = []
     for e in events:
-        line = pick(tick, e['id'], [
-            f"\U0001F451 {mention(e['leader'])} takes the lead with {pts(e['points'])}",
-            f"\U0001F451 New leader: {mention(e['leader'])} on {pts(e['points'])}",
-        ])
+        who, points = mention(e['leader']), pts(e['points'])
+        if e['n'] == 1:
+            line = pick(tick, e['id'], [
+                f"\U0001F451 {who} leads with {points}",
+                f"\U0001F451 {who} is out in front with {points}",
+            ])
+        else:
+            line = pick(tick, e['id'], [
+                f"\U0001F451 {who} takes the lead with {points}",
+                f"\U0001F451 New leader: {who} on {points}",
+            ])
         chasers = ', '.join(f'{mention(uid)} {p}' for uid, p in e['chasers'])
         lines.append(f'{line} ({chasers})' if chasers else line)
     return Rendered(lines=lines)
 
 
 def sample_lead(tick):
+    """Both lines: the day's first lead, then the lead changing hands."""
     a, b = sample_players(tick, 2)
-    return [{'id': lead_id(1, a), 'leader': a, 'points': 9, 'chasers': [[b, 7]]}]
+    return [{'id': lead_id(1, a), 'n': 1, 'leader': a, 'points': 9, 'chasers': [[b, 7]]},
+            {'id': lead_id(2, b), 'n': 2, 'leader': b, 'points': 14, 'chasers': [[a, 12]]}]
 
 
-# --- Clean sweep: one player alone at the top of most of the day's games ---------
+# --- Clean sweep: alone in 1st in every game, or still on course for it ---------
 # How a single result went (an ace, a flawless grid, no hints) is the sticky's
 # reaction on that result (sticky_lambda.react_to_results), not a line here; a
 # sweep spans the day's games, so it stays commentary.
 
+def can_still_sweep(tick, uid):
+    """Can `uid` still finish alone in 1st in every game on today's slate?
+
+    Only while nothing is lost. A game they have posted they must lead
+    outright: their result is final, so a loss or a tie for 1st never comes
+    back, which is what the old "1st in 3 of 5" line never checked. A game
+    only they have posted is theirs for now, since nobody else has had a go
+    at it. A game they have not posted must still be winnable (still_winnable)."""
+    for g in tick.scored:
+        if uid in (tick.results.get(g.key) or {}):
+            if sole_first(tick, g) != uid:
+                return False
+        elif not still_winnable(tick, g):
+            return False
+    return True
+
+
 def detect_sweep(tick):
-    """One player alone in 1st in most of the day's scored games.
+    """A clean sweep in the making, then the clean sweep: one player alone in
+    1st in most of the day's scored games while they can still be alone in 1st
+    in all of them (can_still_sweep), and again once they are.
 
     "Most" is measured against the whole slate (tick.scored), not against the
     games played so far: being in front of the only two results anyone has
-    posted at 9am is not a sweep, it is the first two results, and the old
-    two-contested-games floor announced exactly that. A strict majority of the
-    slate can only ever belong to one player, so this never has to break a tie
-    between two people holding the same number of games."""
+    posted at 9am is not a sweep, it is the first two results. Only contested
+    games count toward it, since leading a game nobody else has played is not
+    beating anybody. A strict majority of the slate can only ever belong to
+    one player, so this never has to break a tie between two people holding
+    the same number of games.
+
+    Two events, each said once a day: `sweep:<uid>` while part of the slate is
+    still open, then `sweep:<uid>:all` once they lead every game on it.
+    Separate ids, so the finished sweep still gets its line after the one that
+    saw it coming; a slate small enough that the bar is all of it only ever
+    gets the finished line."""
     floor = max(2, tick.cfg['minimum_players'])
     contested = [g for g in tick.scored if len(tick.results.get(g.key) or {}) >= floor]
     firsts = [f for f in (sole_first(tick, g) for g in contested) if f]
@@ -741,46 +826,45 @@ def detect_sweep(tick):
         return []
     wins = {uid: firsts.count(uid) for uid in set(firsts)}
     uid = max(sorted(wins), key=wins.get)
-    if wins[uid] < SWEEP_MIN_GAMES or wins[uid] * 2 <= len(tick.scored):
+    n, of = wins[uid], len(tick.scored)
+    if n < SWEEP_MIN_GAMES or n * 2 <= of or not can_still_sweep(tick, uid):
         return []
-    return [{'id': f'sweep:{uid}', 'uid': uid, 'n': wins[uid], 'of': len(tick.scored),
-             'clean': wins[uid] == len(contested)}]
+    done = n == of
+    return [{'id': f"sweep:{uid}{':all' if done else ''}", 'uid': uid, 'n': n, 'of': of,
+             'done': done}]
 
 
 def render_sweep(events, tick):
-    """Three lines for three days: every game there is, every game anyone has
-    finished yet, or simply most of them."""
+    """The finished sweep, or one on its way with how many games are still open."""
     lines = []
     for e in events:
         who, key = mention(e['uid']), f"sweep:{e['id']}"
-        if e['clean'] and e['n'] == e['of']:
+        if e['done']:
             line = pick(tick, key, [
                 f"\U0001F9F9 {who} is 1st in all {e['n']} of today's games, a clean sweep",
                 f"\U0001F9F9 Clean sweep: {who} is 1st in every game today, all {e['n']} of them",
             ])
-        elif e['clean']:
-            line = pick(tick, key, [
-                f"\U0001F9F9 {who} is 1st in every game played so far "
-                f"({e['n']} of today's {e['of']}), a clean sweep in the making",
-                f"\U0001F9F9 A clean sweep in the making: {who} is 1st in every game "
-                f"anyone has finished, {e['n']} of {e['of']}",
-            ])
         else:
+            left = e['of'] - e['n']
             line = pick(tick, key, [
-                f"\U0001F9F9 {who} is 1st in {e['n']} of today's {e['of']} games",
-                f"\U0001F9F9 {who} has most of the day: 1st in {e['n']} of {e['of']} games",
+                f"\U0001F9F9 {who} is 1st in {e['n']} of today's {e['of']} games "
+                f"with {left} still open, a clean sweep in the making",
+                f"\U0001F9F9 A clean sweep in the making: {who} is 1st in {e['n']} of "
+                f"{e['of']} games, {left} to go",
             ])
         lines.append(line)
     return Rendered(lines=lines)
 
 
 def sample_sweep(tick):
+    """Both lines a sweep can get: on its way at the bar, then finished. A
+    slate small enough that the bar is all of it only ever gets the second."""
     uid = sample_players(tick, 1)[0]
     of = max(len(tick.scored), SWEEP_MIN_GAMES)
     n = max(SWEEP_MIN_GAMES, of // 2 + 1)
-    # The emblematic one: in front of everything played so far, and that is
-    # already most of the day.
-    return [{'id': 'sweep:sample', 'uid': uid, 'n': n, 'of': of, 'clean': True}]
+    making = [{'id': 'sweep:sample', 'uid': uid, 'n': n, 'of': of, 'done': False}]
+    return (making if n < of else []) + [
+        {'id': 'sweep:sample:all', 'uid': uid, 'n': of, 'of': of, 'done': True}]
 
 
 # --- Tie for first, in a game where it can be broken ---------------------------------
@@ -790,12 +874,7 @@ def detect_tie(tick):
     for g in tick.scored:
         if g.metric not in TIE_METRICS:
             continue
-        scores = {u: s for u, s in (tick.results.get(g.key) or {}).items()
-                  if not is_poop(g.metric, s, g.total)}
-        if len(scores) < 2:
-            continue
-        best = min(scores.values(), key=lambda s: score_sort_key(g.metric, s))
-        tied = sorted(u for u, s in scores.items() if s == best)
+        best, tied = top_of(tick, g)
         if len(tied) < 2 or not beatable(g, best):
             continue
         events.append({'id': f'tie:{g.key}:{short_score(g, best)}', 'game': g.key,
@@ -862,9 +941,11 @@ TRIGGERS = [
             default=False, waits=OWN, headings=NUDGE_HEADINGS),
     Trigger('first_play', 'First result', "A welcome under someone's first ever result",
             FLAVOR, STICKY, detect_first_play, render_first_play, sample_first_play),
-    Trigger('lead', 'Lead changes', 'When the top of the standings changes hands',
+    Trigger('lead', 'Lead changes',
+            'Who leads once 2nd place has caught up on games, then each change',
             FLAVOR, STICKY, detect_lead, render_lead, sample_lead),
-    Trigger('sweep', 'Clean sweep', "One player alone in 1st in most of the day's scored games",
+    Trigger('sweep', 'Clean sweep',
+            'A clean sweep in the making (1st in most games, none lost), then the sweep',
             FLAVOR, STICKY, detect_sweep, render_sweep, sample_sweep),
     Trigger('tie', 'Beatable ties', 'A tie for first that one better result would break',
             FLAVOR, HOURLY, detect_tie, render_tie, sample_tie, notify=NOTIFY),
