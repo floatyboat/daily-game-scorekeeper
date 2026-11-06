@@ -108,9 +108,6 @@ NUDGE_CUTOFF = timedelta(hours=1)
 LAST_CALL_MAX_NAMES = 10
 LAST_CALL_MAX_PLAYERS = 40
 
-# Lead change: a "lead" of one point is noise.
-LEAD_MIN_POINTS = 2
-
 # Clean sweep: how much of the day it takes. The bar is a share of the day's
 # scored games, not a count of results, so a five-game rotation asks for three
 # and a sixteen-game board asks for nine; SWEEP_MIN_GAMES is the floor under
@@ -322,14 +319,6 @@ def on_offer(tick, game):
     if mode == SCORING_PLACEMENT:
         return max(tick.pool, 1)
     return len(tick.results.get(game.key) or {}) + 1
-
-
-def one_win(tick):
-    """The most a single first place pays right now -- the yardstick a lead has
-    to clear before it is worth announcing."""
-    if tick.cfg['scoring'] == SCORING_PLACEMENT:
-        return max(tick.pool, 1)
-    return max([len(tick.results.get(g.key) or {}) for g in tick.scored] or [1])
 
 
 def short_score(game, score):
@@ -601,8 +590,14 @@ def sample_last_call(tick):
 
 # --- Midday: the standings so far, as a board -------------------------------------
 
+def before_midday(tick):
+    """Is the midday standings hour still to come? The hour the midday board
+    waits for, and the line between an early lead and a plain one."""
+    return tick.hour < tick.cfg['commentary_midday_hour']
+
+
 def detect_midday(tick):
-    if tick.hour < tick.cfg['commentary_midday_hour']:
+    if before_midday(tick):
         return []
     # Standings, so somebody has to be standing: this is exactly what
     # format_points_summary prints, so the kind stays quiet on the days the
@@ -704,21 +699,21 @@ def announced_leads(state):
 
 
 def detect_lead(tick):
-    """Someone takes sole control of the lead: one player alone on top, on
-    more than a single first place pays, no further into the day's games than
-    the player in second, and not already the leader the day's latest lead
-    announcement named.
+    """Someone takes sole control of the lead: one player alone on top, with
+    somebody behind them, who is not the leader the day's latest lead
+    announcement named. There is no points floor: every change at the top is
+    news, however small the margin.
 
-    No further into the day, because points pile up with every game played:
-    early on, the standings rank who has played most, not who is playing best.
-    Someone who posts four results before anyone else "takes the lead" the
-    moment a second player posts one, and a replay of five weeks found every
-    day's first lead line landing exactly there. So a lead counts once the
-    player in second (one of them, when second is shared) has played at least
-    as many of the day's games as the leader: won, not banked. A leader on
-    FEWER games than second is ahead on merit and counts at once. Waiting for
-    a third player, or for most of the slate to be played, only moved the
-    line later: the newcomer usually arrives with one game too.
+    The day's first leader has one more bar to clear. Points pile up with
+    every game played, so early on the standings rank who has played most,
+    not who is playing best: someone who posts four results before anyone
+    else would lead the moment a second player posts one. So until a lead has
+    been announced, the lead must be contested: everyone else, between them,
+    has played at least as many of today's scored games as the leader (a
+    leader on 3 is contested by one player on 1 and another on 2). Someone
+    who passes the early leader on fewer games clears that at once, since the
+    player they passed has already played more. Once the day has a leader,
+    every change is announced as it happens.
 
     The yardstick is the last ANNOUNCEMENT, not the last pass. Compared with
     the previous pass's standings, a tie at the top resolving in one player's
@@ -727,56 +722,54 @@ def detect_lead(tick):
     of a tie was the one lead change the bot could not see. Judged against the
     last announcement, a leader who is briefly caught and pulls clear again is
     not announced twice, and a change that could not post when it happened
-    (before the board, say) is said once it can rather than lost. No rate
-    limit: the one-win floor is what keeps the early flip-flops quiet."""
+    (before the board, say) is said once it can rather than lost."""
     now = standings(tick)
-    if len(now) < 2:
+    if len(now) < 2 or now[1][1] == now[0][1]:
         return []
-    top = now[0][1]
-    leaders = [uid for uid, p in now if p == top]
-    if len(leaders) != 1 or top <= one_win(tick) or top < LEAD_MIN_POINTS:
-        return []
-    leader = leaders[0]
-    chasers = [[uid, p] for uid, p in now[1:] if p == now[1][1]]
-    played = tick.games_played
-    if played[leader] > max(played[uid] for uid, _ in chasers):
-        return []
+    leader, points = now[0]
     leads = announced_leads(tick.state)
     if leads and leads[-1][1] == leader:
         return []
+    chasers = [[uid, p] for uid, p in now[1:] if p == now[1][1]]
+    played = tick.games_played
+    if not leads and played[leader] > sum(played.values()) - played[leader]:
+        return []
     n = len(leads) + 1
-    return [{'id': lead_id(n, leader), 'n': n, 'leader': leader, 'points': top,
-             'chasers': chasers}]
+    return [{'id': lead_id(n, leader), 'n': n, 'leader': leader, 'points': points,
+             'chasers': chasers, 'early': n == 1 and before_midday(tick)}]
 
 
 def render_lead(events, tick):
-    """The day's first line says who leads: once the race is even, that is
-    often someone who was in front all along, so nothing has changed hands.
-    Every later line names someone new (detect_lead skips the last leader
-    announced), so it says they took it."""
+    """The day's first line says who is in front, since nothing has changed
+    hands yet: an early lead before the midday standings, a plain one after
+    them, because the games check can hold the first lead back until late in
+    the day. Every later line names someone new (detect_lead skips the last
+    leader announced), so it says they took it."""
     lines = []
     for e in events:
         who, points = mention(e['leader']), pts(e['points'])
-        if e['n'] == 1:
-            line = pick(tick, e['id'], [
-                f"\U0001F451 {who} leads with {points}",
-                f"\U0001F451 {who} is out in front with {points}",
-            ])
+        if e['early']:
+            options = [f"\U0001F451 {who} is out to an early lead with {points}",
+                       f"\U0001F451 {who} jumps out to an early lead with {points}"]
+        elif e['n'] == 1:
+            options = [f"\U0001F451 {who} leads with {points}",
+                       f"\U0001F451 {who} is out in front with {points}"]
         else:
-            line = pick(tick, e['id'], [
-                f"\U0001F451 {who} takes the lead with {points}",
-                f"\U0001F451 New leader: {who} on {points}",
-            ])
+            options = [f"\U0001F451 {who} takes the lead with {points}",
+                       f"\U0001F451 New leader: {who} on {points}"]
+        line = pick(tick, e['id'], options)
         chasers = ', '.join(f'{mention(uid)} {p}' for uid, p in e['chasers'])
         lines.append(f'{line} ({chasers})' if chasers else line)
     return Rendered(lines=lines)
 
 
 def sample_lead(tick):
-    """Both lines: the day's first lead, then the lead changing hands."""
+    """Two lines: the day's early lead, then the lead changing hands."""
     a, b = sample_players(tick, 2)
-    return [{'id': lead_id(1, a), 'n': 1, 'leader': a, 'points': 9, 'chasers': [[b, 7]]},
-            {'id': lead_id(2, b), 'n': 2, 'leader': b, 'points': 14, 'chasers': [[a, 12]]}]
+    return [{'id': lead_id(1, a), 'n': 1, 'leader': a, 'points': 9, 'chasers': [[b, 7]],
+             'early': True},
+            {'id': lead_id(2, b), 'n': 2, 'leader': b, 'points': 14, 'chasers': [[a, 12]],
+             'early': False}]
 
 
 # --- Clean sweep: alone in 1st in every game, or still on course for it ---------
@@ -942,7 +935,7 @@ TRIGGERS = [
     Trigger('first_play', 'First result', "A welcome under someone's first ever result",
             FLAVOR, STICKY, detect_first_play, render_first_play, sample_first_play),
     Trigger('lead', 'Lead changes',
-            'Who leads once 2nd place has caught up on games, then each change',
+            'The first leader once the rest have played as many games between them, then every change',
             FLAVOR, STICKY, detect_lead, render_lead, sample_lead),
     Trigger('sweep', 'Clean sweep',
             'A clean sweep in the making (1st in most games, none lost), then the sweep',

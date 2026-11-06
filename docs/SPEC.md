@@ -505,28 +505,30 @@ players are (the test channel on a test run).
   button, so the line is dropped rather than pointed at nothing. *First
   result*: a player in today's results who is in no game's all-time `players` set —
   checked only once yesterday is finalized, since the sets fold at post hour. *Lead
-  change*: someone takes **sole** control of the lead — one player alone on top, clear of
-  one win's worth of points (`one_win`: the pool under `placement`, the biggest game's
-  field under `per_game`), on no more of today's scoring games than the player in second
-  (`Tick.games_played`; one of them, when second is shared), who is not the leader the
-  day's latest lead line already named. The games-played check is there because points
-  pile up with every game played, so early in the day the standings rank who has played
-  most: a player who posted four results before anyone else "took the lead" the moment a
-  second player posted one, and a replay of five weeks found every day's first lead line
-  landing exactly there. Waiting for a third player, or for most of the slate to be
-  played, only moved that line later, since the newcomer usually arrives with one game
-  too. A leader on fewer games than second is ahead on merit and is announced at once.
-  The day's first line reads “leads” — once the race is even it often names someone who
-  was in front all along — and every later one “takes the lead”, since it always names
-  someone other than the last line did.
+  change*: someone takes **sole** control of the lead — one player alone on top with
+  somebody behind them, who is not the leader the day's latest lead line already named.
+  There is no points floor: every change at the top is announced, however small the
+  margin. Only the day's first leader has a further check: the lead must be contested,
+  meaning everyone else, between them, has played at least as many of today's scoring
+  games as the leader (`Tick.games_played`; a leader on 3 is contested by one player on 1
+  and another on 2). Points pile up with every game played, so early in the day the
+  standings rank who has played most: without that check, a player who posted four
+  results before anyone else would lead the moment a second player posted one. Someone
+  who passes the early leader on fewer games clears the check at once, since the player
+  they passed has already played more, and once the day has a leader, every change is
+  said as it happens. The day's first line says who is in front, since
+  nothing has changed hands yet: “out to an early lead” before the midday standings hour
+  (`commentary_midday_hour`, the same `before_midday` the midday board waits on), plain
+  “leads” after it, because the games check can hold the first lead back until late in
+  the day. Every later line reads “takes the lead”, since it always names someone other
+  than the last line did.
   The comparison is with the last announcement, not the previous pass's standings:
   measured pass to pass, a tie at the top resolving in one player's favour read as no
   change (they were already among the leaders), and since a shared lead is never
   announced, taking the lead out of a tie went unsaid. The event id (`lead:<n>:<uid>`)
   names the leader, which is how the trigger knows who it last announced without a second
   state attribute; a leader briefly caught who pulls clear again is not announced twice.
-  No rate limit: replays showed the early flip-flops happen at 2 to 6 points, under the
-  one-win floor. *Clean sweep*: one player sole first in
+  *Clean sweep*: one player sole first in
   most of the day's scored games — a strict majority of the slate (`tick.scored`, so the
   rotation when there is one) and never fewer than `SWEEP_MIN_GAMES` (3) — who can still
   be sole first in all of them (`can_still_sweep`). That means nothing lost yet: they
