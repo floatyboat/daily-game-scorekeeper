@@ -232,8 +232,7 @@ def replay(session, cfg, day, archive, history, overrides, nudge_after, midday_h
             if post:
                 posts.append((minute, cadence, post))
                 if post.board:
-                    log(minute, cadence.upper(),
-                        f"{post.kind}: standings board, {loudness(post, names)}")
+                    log(minute, cadence.upper(), f"{post.kind}: board, {loudness(post, names)}")
                     for comp in post.components:
                         for child in [comp] + list(comp.get('components') or []):
                             if child.get('type') == 10:

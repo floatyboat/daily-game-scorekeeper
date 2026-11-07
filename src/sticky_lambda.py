@@ -17,7 +17,7 @@ from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
     make_session, fetch_messages, reference_date, is_scoreboard_message,
     is_sticky_message, is_wordle_recap, build_avatar_pool, safe_guild_id,
-    gather_streaks, guild_aggs, send_commentary,
+    gather_streaks, guild_aggs, player_aggs_loader, send_commentary,
     PLAY_BUTTON_CUSTOM_ID, SCORES_BUTTON_CUSTOM_ID,
     STICKY_HEADING,
 )
@@ -303,7 +303,8 @@ def run_commentary(cfg, now_local, day, messages, results, puzzle_numbers, posts
     gid = cfg['guild_id']
     state = store.get_commentary(gid, day)
     tick = commentary.make_tick(cfg, now_local, messages, results, puzzle_numbers, posts,
-                                streaks, guild_aggs(gid), None, state, DISCORD_BOT_ID)
+                                streaks, guild_aggs(gid), player_aggs_loader(gid), state,
+                                DISCORD_BOT_ID)
     post = commentary.evaluate(tick, commentary.STICKY)
     if not post:
         return f"commentary: {commentary.blocked(tick) or 'quiet'}"

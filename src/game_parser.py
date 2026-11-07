@@ -1445,7 +1445,8 @@ BOARD_HEADING_EMOJI = '\U0001F9EE'
 
 def board_heading(title, reference_date=None):
     """The heading line every board opens with. Without a date it is the
-    prefix scoreboard.is_midday_board matches, so the two can't drift."""
+    prefix scoreboard.is_commentary_board matches for the midday board, so
+    the two can't drift."""
     head = f'### {BOARD_HEADING_EMOJI} {title}'
     if reference_date is None:
         return head

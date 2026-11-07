@@ -20,23 +20,28 @@ Cadences:
           so waits for the hour rather than answering the result that made it.
   STICKY  the sticky pass, every minute (sticky_lambda.run_guild): the kinds
           that answer a result the moment it lands -- a first result, a lead
-          change, a clean sweep. They post within a minute of the message
-          that caused them, and the sticky reposts beneath them in the same
-          pass. How a single result went is not commentary at all: the same
-          pass reacts to the result itself (sticky_lambda.react_to_results).
+          change, a clean sweep, a streak milestone. They post within a minute
+          of the message that caused them, and the sticky reposts beneath them
+          in the same pass. How a single result went is not commentary at all:
+          the same pass reacts to the result itself
+          (sticky_lambda.react_to_results).
 
 Kinds:
-  BODY    the message itself (nudge, last call). At most one body per tick:
-          the first in registry order wins, the rest wait for a quieter hour.
-  BOARD   a Components V2 board as the body (midday standings). Any flavor
-          lines of the same tick go beneath it as one more text display.
-  FLAVOR  one-liners (first result, lead change, clean sweep, ties). They ride
-          under whatever body posts, or post on their own when no body is due.
+  BODY    the message itself (the nudge). At most one body (or board) per
+          tick: the first in registry order wins, the rest wait for a quieter
+          hour.
+  BOARD   a Components V2 board as the body (the last call, the midday
+          standings). Any flavor lines of the same tick go beneath it as one
+          more text display.
+  FLAVOR  one-liners (first result, lead change, clean sweep, streak
+          milestones, ties). They ride under whatever body posts, or post on
+          their own when no body is due.
 
 Replies: an event can name the message it answers (`reply_to`), and its post
 then goes out as a Discord reply to that message: a welcome answers the
 newcomer's first result, a lead line the leader's own result that put them on
-top (and nothing, when somebody else's result did).
+top (and nothing, when somebody else's result did), a streak milestone the
+result that reached it.
 A message replies to one other at most, so the first event naming a message
 picks it and an event naming a different one waits for a later pass (compose).
 
@@ -56,11 +61,13 @@ sticky aside. How much of that holds a kind back is its `waits`: ANY (the
 default) waits while there is any of it, so the bot never stacks two messages
 in a row; OWN (the nudge) waits only while one of them is its own kind, so no
 other post holds a nudge back but two nudges never stack; NEVER (the midday
-board, the last call) waits on nothing -- a scheduled post is not the bot
-talking twice, and a one-liner an hour earlier must not push it back. The last
-call needs that twice over: a day nobody has played puts every server streak on
-the line, and that is exactly the day no one clears the morning board out of
-`unanswered`, so ANY would hold it back on the day it has the most to say.
+board, the last call, the streak milestones) waits on nothing -- a scheduled
+post is not the bot talking twice, and a one-liner an hour earlier must not
+push it back. The last call needs that twice over: a day nobody has played puts
+every server streak on the line, and that is exactly the day no one clears the
+morning board out of `unanswered`, so ANY would hold it back on the day it has
+the most to say. A streak milestone answers one result, so it must land beside
+it rather than wait behind the reply to someone else's.
 
 Events are plain dicts with an `id`. The state, shared by both passes, is the
 set of ids announced today: nothing is said twice, and a kind that has to
@@ -87,12 +94,12 @@ from dateutil import parser as dateutil_parser
 from game_parser import (
     build_games, format_scoreboard_components, format_travle_score, game_link_button,
     game_sort_key, is_poop, over_budget, rotation_points_base, score_sort_key,
-    scoring_players, shown_streak, total_points, HIGHER_IS_BETTER, SCORING_OFF,
-    SCORING_PLACEMENT,
+    scoring_players, shown_streak, total_points, HEADER_COLOR, HIGHER_IS_BETTER,
+    SCORES_COLOR, SCORING_OFF, SCORING_PLACEMENT,
 )
 from scoreboard import (
-    LOUDNESS, MAX_ACTION_ROWS, MAX_BUTTONS_PER_ROW, MIDDAY_TITLE, NOTIFY, PING,
-    SILENT, build_name_map, is_sticky_message, reference_date,
+    LAST_CALL_HEADING, LOUDNESS, MAX_ACTION_ROWS, MAX_BUTTONS_PER_ROW, MIDDAY_TITLE,
+    NOTIFY, PING, SILENT, build_name_map, is_sticky_message, reference_date,
 )
 import store
 
@@ -116,6 +123,13 @@ NUDGE_CUTOFF = timedelta(hours=1)
 # names at most this many people (and reads at most this many partitions).
 LAST_CALL_MAX_NAMES = 10
 LAST_CALL_MAX_PLAYERS = 40
+
+# Streak milestones: the lengths a result is congratulated for, then every
+# STREAK_MILESTONE_EVERY days past the last of them. From STREAK_WOW days on
+# the line opens with "Wow!".
+STREAK_MILESTONES = (3, 7, 14, 30, 50)
+STREAK_MILESTONE_EVERY = 25
+STREAK_WOW = 7
 
 # Clean sweep: how much of the day it takes. The bar is a share of the day's
 # scored games, not a count of results, so a five-game rotation asks for three
@@ -444,6 +458,13 @@ def sample_games(tick, n, metrics=None):
     return pool[:n]
 
 
+def folded_through_yesterday(tick):
+    """Is yesterday in the aggregates yet? It folds at finalize, which runs at
+    post hour; until then the all-time player sets miss yesterday's newcomers
+    and every streak reads a day short."""
+    return store.prev_day_str(tick.day) <= (tick.cfg['last_finalized_day'] or '')
+
+
 # --- Nudge: points still on the table ---------------------------------------------
 
 # Every opening a nudge can have. pick() chooses one a day, and blocked() tells a
@@ -504,11 +525,11 @@ def sample_nudge(tick):
 # --- Last call: streaks on the line ---------------------------------------------
 
 def _stake(overall, games):
-    """What one line of the last call names, or None when nothing is on the
-    line: {overall, games: [(key, streak)]} holding the game streaks, longest
-    first, or else the overall day streak. Never both: one result in a game
-    saves that game's streak and the day streak alike, so naming the two
-    would say the same thing twice."""
+    """What the last call names for one player or for the server, or None
+    when nothing is on the line: {overall, games: [(key, streak)]} holding
+    the game streaks, longest first, or else the overall day streak. Never
+    both: one result in a game saves that game's streak and the day streak
+    alike, so naming the two would say the same thing twice."""
     if games:
         return {'overall': 0, 'games': sorted(games, key=lambda kn: (-kn[1], kn[0]))}
     return {'overall': overall, 'games': []} if overall else None
@@ -583,36 +604,66 @@ def detect_last_call(tick):
     return [{'id': 'last_call', 'server': server, 'players': players}]
 
 
-def stake_text(tick, stake):
-    """A _stake as the line reads it: `📗 Wordle 🔥8 · 🔗 Connections 🔥3`,
-    or `🔥 12-day streak` when no game streak is at stake."""
-    if not stake['games']:
-        return f"\U0001F525 {stake['overall']}-day streak"
-    games = [(tick.by_key[key], n) for key, n in stake['games'] if key in tick.by_key]
-    return ' · '.join(f'{g.emoji} {g.title} \U0001F525{n}' for g, n in games)
-
-
 def render_last_call(events, tick):
-    """One fixed heading with no countdown: when it posts is the guild's
-    commentary_last_call_hours, so the post only says what is at stake. The
-    server's streaks lead, since anyone can save those; each player line
-    pings its player."""
+    """The last call as a board in two blocks, like the daily one: the fixed
+    heading with the day streak, then the game streaks, those with no player
+    tied to them first and then the games players are named in, each longest
+    first. No countdown: when it posts is the guild's
+    commentary_last_call_hours, so the post only says what is at stake.
+
+    One line per streak. The fire after a game's name is the server's streak,
+    as on the board's game titles, there only while that streak is on the
+    line. After it come the players whose own streak there is on the line,
+    each pinged: a bare name when theirs is as long as the server's, since
+    they scored on every day of it and the number is already on the line, and
+    their own number when it is shorter."""
     e = events[0]
-    lines = ['⏰ **Last call!**']
-    if e['server']:
-        lines.append(f"**Server streaks:** {stake_text(tick, e['server'])}")
-    lines += [f"{mention(p['uid'])}: {stake_text(tick, p)}" for p in e['players']]
-    return Rendered(content='\n'.join(lines), mentions=[p['uid'] for p in e['players']])
+    server = e['server'] or {'overall': 0, 'games': []}
+    fires = dict(server['games'])           # game key: the server's streak
+    if server['overall']:
+        fires[None] = server['overall']     # None: the day streak
+    named = {}                              # the same keys: [(uid, their streak)]
+    for p in e['players']:
+        for key, n in p['games'] or [(None, p['overall'])]:
+            named.setdefault(key, []).append((p['uid'], n))
+
+    def line(key):
+        tag = '\U0001F4C5 **Day streak**' if key is None else game_tag(tick.by_key[key])
+        fire = fires.get(key, 0)
+        if fire:
+            tag += f' \U0001F525{fire}'
+        who = ' · '.join(mention(uid) if n == fire else f'{mention(uid)} \U0001F525{n}'
+                         for uid, n in sorted(named.get(key, ()), key=lambda un: -un[1]))
+        return f'{tag}: {who}' if who else tag
+
+    def order(key):
+        longest = max([fires.get(key, 0)] + [n for _, n in named.get(key, ())])
+        return key in named, -longest, tick.by_key[key].title.lower()
+
+    def block(color, lines):
+        return {'type': 17, 'accent_color': color,
+                'components': [{'type': 10, 'content': '\n'.join(lines)}]}
+
+    keys = fires.keys() | named.keys()
+    heading = [LAST_CALL_HEADING] + ([line(None)] if None in keys else [])
+    games = [line(key) for key in sorted(keys - {None}, key=order)]
+    components = [block(HEADER_COLOR, heading)]
+    if games:
+        components.append(block(SCORES_COLOR, games))
+    return Rendered(components=components, mentions=[p['uid'] for p in e['players']])
 
 
 def sample_last_call(tick):
-    a, b = sample_players(tick, 2)
-    games = sample_games(tick, 2)
-    # Both kinds of player line: a game streak (which hides a's day streak,
-    # as _stake does) and b's day streak alone.
-    players = [{'uid': a, **_stake(12, [(games[0].key, 8)] if games else [])},
-               {'uid': b, **_stake(5, [])}]
-    server = _stake(0, [(games[-1].key, 21)]) if games else None
+    """Every kind of line: a day streak, a server streak with no player tied
+    to it, and a server streak one player has carried all along (a bare name)
+    with a shorter streak behind theirs."""
+    a, b, c = sample_players(tick, 3)
+    keys = [g.key for g in sample_games(tick, 2)]
+    # With no game to put them on, a and b fall back to day streaks (_stake).
+    players = [{'uid': a, **_stake(15, [(key, 15) for key in keys[:1]])},
+               {'uid': b, **_stake(4, [(key, 4) for key in keys[:1]])},
+               {'uid': c, **_stake(5, [])}]
+    server = _stake(0, list(zip(keys, (15, 12))))
     return [{'id': 'last_call', 'server': server, 'players': players}]
 
 
@@ -689,9 +740,8 @@ def sample_midday(tick):
 def detect_first_play(tick):
     """Everyone with a result today and none ever finalized here, in the order
     they first posted, each answering that first result."""
-    # known_players is folded at finalize, which runs at post hour: until
-    # yesterday is folded, someone who started yesterday still looks new.
-    if store.prev_day_str(tick.day) > (tick.cfg['last_finalized_day'] or ''):
+    # Until yesterday is folded, someone who started yesterday still looks new.
+    if not folded_through_yesterday(tick):
         return []
     return [{'id': f'first:{uid}', 'uid': uid, 'reply_to': msg_id}
             for uid, msg_id in tick.first_posts.items() if uid not in tick.known_players]
@@ -922,6 +972,101 @@ def sample_sweep(tick):
         {'id': 'sweep:sample:all', 'uid': uid, 'n': of, 'of': of, 'done': True}]
 
 
+# --- Streak milestones: a reply to the result that reached one ------------------
+
+def is_milestone(n):
+    """Is an n-day streak one to congratulate? 3, 7, 14, 30, 50, then every 25
+    days, and never a streak the board would not print (shown_streak)."""
+    if not shown_streak(n):
+        return False
+    return n in STREAK_MILESTONES or (
+        n > STREAK_MILESTONES[-1] and n % STREAK_MILESTONE_EVERY == 0)
+
+
+def detect_streak(tick):
+    """Every streak today's results carry to a milestone (is_milestone): a
+    player's day streak, at their first scoring result of the day, and their
+    streak in each game they scored, at the result that counts there. Each
+    event answers that result.
+
+    Streaks advance on SCORING, as they fold at finalize, so a poop extends
+    nothing and neither does a game still short of minimum_players. Until
+    yesterday is folded every streak reads a day short, so nothing is said
+    before then (folded_through_yesterday)."""
+    if not folded_through_yesterday(tick):
+        return []
+    holders = {}                            # message id: whose results it holds
+    for msg, _, uid, _ in tick.posts:
+        holders.setdefault(msg['id'], set()).add(uid)
+    events, seen = [], set()
+    for msg, key, uid, _ in tick.posts:     # oldest first
+        if uid not in tick.scorers.get(key, ()):
+            continue
+        aggs = tick.player_aggs(uid) or {}
+        for streak in (None, key):          # None: the day streak
+            if (uid, streak) in seen:
+                continue
+            seen.add((uid, streak))
+            sk = store.SERVER_AGG_SK if streak is None else store.game_agg_sk(streak)
+            n = store.display_streak(aggs.get(sk), tick.day, True)
+            if is_milestone(n):
+                events.append({'id': f"streak:{uid}:{streak or 'day'}", 'uid': uid,
+                               'game': streak, 'n': n, 'reply_to': msg['id'],
+                               'shared': len(holders[msg['id']]) > 1})
+    return events
+
+
+def article(n):
+    """The article before a number read aloud: an 800-day streak, a 75-day
+    one. Of the milestones, only those starting with 8 open on a vowel."""
+    return 'an' if str(n).startswith('8') else 'a'
+
+
+def and_list(items):
+    """`a`, `a and b`, `a, b and c`."""
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def streak_phrase(tick, e):
+    """A milestone as the line names it: `a 14-day streak`, or
+    `a 7-day 📗 **Wordle** streak` for a game's."""
+    game = f"{game_tag(tick.by_key[e['game']])} " if e['game'] else ''
+    return f"{article(e['n'])} {e['n']}-day {game}streak"
+
+
+def render_streak(events, tick):
+    """One line per player, naming every milestone their result reached, the
+    day streak first, then a gray pointer at /stats. "You're" when the message
+    answered is theirs alone, their name when it is a shared grid, where "you"
+    could be anyone in it. From STREAK_WOW days on, the line opens with "Wow!".
+
+    A day streak as long as a game streak the same result reached is left
+    out: they played that game on every day of it, so it would say the same
+    thing twice (on a one-game server, it always would)."""
+    reached = {}
+    for e in events:
+        reached.setdefault(e['uid'], []).append(e)
+    lines = []
+    for uid, streaks in reached.items():
+        game_lengths = {e['n'] for e in streaks if e['game']}
+        streaks = sorted((e for e in streaks if e['game'] or e['n'] not in game_lengths),
+                         key=lambda e: (e['game'] is not None, -e['n']))
+        wow = 'Wow! ' if max(e['n'] for e in streaks) >= STREAK_WOW else ''
+        who = f'{mention(uid)} is' if any(e.get('shared') for e in streaks) else "You're"
+        phrases = and_list([streak_phrase(tick, e) for e in streaks])
+        lines.append(f'{wow}{who} on {phrases}! Keep it up!')
+    lines.append('-# `/stats` shows all your streaks')
+    return Rendered(lines=lines)
+
+
+def sample_streak(tick):
+    """A day streak and a game streak reaching milestones on the same result."""
+    uid = sample_players(tick, 1)[0]
+    return [{'id': 'streak:sample:day', 'uid': uid, 'game': None, 'n': 14}] + [
+        {'id': f'streak:sample:{g.key}', 'uid': uid, 'game': g.key, 'n': 7}
+        for g in sample_games(tick, 1)]
+
+
 # --- Tie for first, in a game where it can be broken ---------------------------------
 
 def detect_tie(tick):
@@ -983,7 +1128,7 @@ TRIGGERS = [
     # precisely when this kind has the most to say -- every server streak is
     # on the line.
     Trigger('last_call', 'Last call', 'Streaks about to break, a few hours before the close',
-            BODY, HOURLY, detect_last_call, render_last_call, sample_last_call,
+            BOARD, HOURLY, detect_last_call, render_last_call, sample_last_call,
             notify=PING, once=True, waits=NEVER),
     Trigger('midday', 'Midday standings', 'The points standings so far, once, at the midday hour',
             BOARD, HOURLY, detect_midday, render_midday, sample_midday, once=True,
@@ -1006,6 +1151,13 @@ TRIGGERS = [
     Trigger('sweep', 'Clean sweep',
             'A clean sweep in the making (1st in most games, none lost), then the sweep',
             FLAVOR, STICKY, detect_sweep, render_sweep, sample_sweep),
+    # waits=NEVER: each line answers one result and has to land beside it. Two
+    # players reaching milestones in one pass answer different results, and
+    # under ANY the second would wait behind the first reply until somebody
+    # else spoke, which can be hours after the result it congratulates.
+    Trigger('streak', 'Streak milestones',
+            'A reply to a result that reaches a 3, 7, 14, 30 or 50-day streak, then every 25',
+            FLAVOR, STICKY, detect_streak, render_streak, sample_streak, waits=NEVER),
     Trigger('tie', 'Beatable ties', 'A tie for first that one better result would break',
             FLAVOR, HOURLY, detect_tie, render_tie, sample_tie, notify=NOTIFY),
 ]

@@ -408,8 +408,9 @@ highlights the Basics button.
 ## Commentary
 
 The posts between boards: a nudge to whoever left today's games half-played, a midday
-standings board, a last call for streaks about to break, and one-line callouts — lead
-changes, beatable ties, a clean sweep, a first-ever result. On by default; unticking
+standings board, a last call board for streaks about to break, and one-line callouts —
+lead changes, beatable ties, a clean sweep, a first-ever result, a streak milestone. On
+by default; unticking
 Commentary under Basics in `/setup` stops it. The nudge is the one kind that ships **off**
 (`Trigger.default`), until its own cadence is settled; every other kind is on.
 Posts go to the **input** channel, where the
@@ -429,13 +430,15 @@ players are (the test channel on a test run).
   nudge — and the beatable-tie line, a nudge in spirit that waits for the hour and reads
   beneath the nudge when both fire. `STICKY` kinds run on the sticky's every-minute pass
   (`sticky_lambda.run_commentary`), which already holds the parse: the ones that answer a
-  result the moment it lands — first result, lead change, clean sweep — so they post within a
-  minute of the message that caused them, and the sticky reposts beneath them in the same
+  result the moment it lands — first result, lead change, clean sweep, streak milestone —
+  so they post within a minute of the message that caused them, and the sticky reposts
+  beneath them in the same
   pass (the post is put at the head of the working list before `update_sticky` runs).
   Each pass evaluates only its own cadence, and both persist to the same state item.
-- **Three kinds.** `BODY` is the message itself (last call, nudge): at most one body per
+- **Three kinds.** `BODY` is the message itself (the nudge): at most one body or board per
   pass, the first in registry order wins and the rest re-detect next time. `BOARD` is a
-  Components V2 board as the body (midday standings). `FLAVOR` lines ride beneath whatever
+  Components V2 board as the body (the last call, the midday standings). `FLAVOR` lines
+  ride beneath whatever
   body posts in the same pass — under a board as one more Text Display, unless that breaks
   the board's budget, in which case they wait — or post on their own. **One post per guild
   per pass**, whatever fired.
@@ -450,7 +453,8 @@ players are (the test channel on a test run).
   pays, so somebody else's post can be what lifts them clear. A reply to that post would
   read as being about its author, so the line then answers nothing and goes out on its
   own. A message holding several players' results (a shared grid) counts as the leader's
-  when one of the results is theirs. A message replies to one
+  when one of the results is theirs. A streak milestone answers the result that reached
+  it. A message replies to one
   other at most, so the first event naming a message picks it (registry order) and an
   event naming a different message is left out, to fire on a later pass as a losing body
   does. `send_commentary` sends the reference with `fail_if_not_exists` off, so a result
@@ -463,8 +467,10 @@ players are (the test channel on a test run).
   its reactions), the built games, today's
   rotation, the streak bundle, the guild's aggregate partition (`scoreboard.guild_aggs`,
   the cached Query the board already makes — its `players` sets are the roster), a
-  memoized per-player aggregate loader that only the last call spends (the daily lambda
-  supplies it; the sticky passes none), the day's state, and the two gate flags below.
+  memoized per-player aggregate loader (`scoreboard.player_aggs_loader`, built once per
+  pass by both lambdas) that the last call and the streak milestones spend, each player
+  read at most once and only when a trigger asks, the day's state, and the two gate
+  flags below.
   Derived views (`scored`, `scorers`, `pool`, `totals`, and off the matched results each
   player's latest result time and first message) are cached properties, so a trigger
   never repeats a fold.
@@ -483,7 +489,10 @@ players are (the test channel on a test run).
   day showed exactly that). The last call needs it for a second reason: a day nobody has
   played puts every server streak on the line, and on exactly such a day nothing ever
   clears the morning board out of `unanswered`, so `ANY` would hold it back on the day it
-  has the most to say. Bodies then gate
+  has the most to say. The streak milestones (`NEVER` too) answer one result each, so they
+  must land beside it: two players reaching milestones in one pass answer different
+  results, and under `ANY` the second would wait behind the first reply until somebody
+  else spoke, hours after the result it congratulates. Bodies then gate
   themselves: the last call fires on the first pass within
   `commentary_last_call_hours` of the close, the midday board on the first pass at or
   after `commentary_midday_hour` with somebody actually on the standings (exactly what
@@ -497,25 +506,34 @@ players are (the test channel on a test run).
   with the games still open and what first place there pays right now (`placement`: the
   day's pool, `per_game`: one more than the players already in it, `off`: no number), plus
   one row of link buttons for the union; pings. *Last call*: the streaks that die at the
-  close, under a heading that is only `⏰ Last call!` — no countdown, since
-  `commentary_last_call_hours` decides when it posts, not what it says. First a
-  `Server streaks:` line with the server's own: its day streak while nobody has scored
-  today, and each game streak (the board's `🔥N`) that nobody has scored today,
-  off-rotation included, longest first. A poop never spends a server streak, since anyone
-  who hasn't posted can still carry it. Then one line per player whose overall streak
-  (alive through yesterday, nothing scored today, a game still left to post) or per-game
-  streak (same, that game not yet posted today, off-rotation included — streaks survive
-  off-rotation) dies at the close. Each line names its game streaks when any are on the
-  line, and the overall day streak only when none are (`_stake`): one result in that game
-  saves both, so naming the two said the same thing twice. Every number goes through the
+  close, as a board in two blocks like the daily one. A gold block opens with a heading
+  that is only `### ⏰ Last call!` (`LAST_CALL_HEADING`) — no countdown, since
+  `commentary_last_call_hours` decides when it posts, not what it says — and holds the day
+  streak line (`📅 Day streak`); a teal block under it holds one line per game with a
+  streak on the line, so each streak is named once: the server's game streaks with no
+  player tied to them first, then the games players are named in, each group longest
+  first. The `🔥N` after a
+  game's name is the server's streak, as on the board's game titles, there only while
+  nobody has scored that game today (off-rotation included); the day streak line carries
+  the server's day streak while nobody has scored anything. A poop never spends a server
+  streak, since anyone who hasn't posted can still carry it. After the name come the
+  players whose own overall streak (alive through yesterday, nothing scored today, a game
+  still left to post) or per-game streak (same, that game not yet posted today,
+  off-rotation included — streaks survive off-rotation) dies at the close: a bare name
+  when theirs is as long as the server's (they scored on every day of it, so the number
+  is already on the line) and their own `🔥N` when it is shorter. A player, like the
+  server, is named in the game lines when any of their game streaks are on the line, and
+  in the day streak line only when none are (`_stake`): one result in that game saves
+  both, so naming the two said the same thing twice. Every number goes through the
   same `shown_streak()` floor (`MINIMUM_STREAK`) every other surface spends, so the post
   never names a streak the board wouldn't print. For a player, POSTING closes a game, where
   SCORING is what keeps a streak alive everywhere else: a poop keeps nothing alive, but it
   spends the puzzle, so that per-game streak is already gone rather than on the line, and
   naming it would ask for a result the player can no longer produce (the overall streak
   survives a poop — another game can still carry it — so it stays at risk until every game
-  is posted); longest first, at most 10 names; pings the players it names. Either line
-  alone is enough to post. *Midday*: **the standings so far and nothing else**
+  is posted); at most 10 players, longest streaks first; pings the players it names. A
+  server streak or a player's alone is enough to post. *Midday*: **the standings so far
+  and nothing else**
   (`format_scoreboard_components` with `MIDDAY_TITLE` and `standings_only`), so the post is
   the header container alone — heading, server streak, points summary — with no games
   section under it and `rotation_off_mode` therefore moot; `NOTIFY`. Points still come from
@@ -570,7 +588,23 @@ players are (the test channel on a test run).
   clean sweep in the making” with how many games are still open (`sweep:<uid>`), then
   the clean sweep itself once they lead every game on the slate (`sweep:<uid>:all`); a
   slate whose bar is all of it only ever gets the second. How a single result went is no
-  line at all: it is that result's own reaction (see Reactions). *Tie*: a scored
+  line at all: it is that result's own reaction (see Reactions). *Streak milestones*: a
+  silent reply to the result that carries a player's streak to a milestone — 3, 7, 14, 30
+  or 50 days, then every 25 (`STREAK_MILESTONES`, `STREAK_MILESTONE_EVERY`), never one
+  `shown_streak` would hide. The day streak is reached at the player's first scoring
+  result of the day, a game streak at the result that counts in that game. Both advance on
+  scoring, as they fold at finalize, so a poop or a game short of `minimum_players`
+  reaches nothing, and nothing is said until yesterday is folded
+  (`folded_through_yesterday`, the welcome's check too), since until then every streak
+  reads a day short. One line per player: “You're on a 3-day streak! Keep it up!”, naming
+  the game for a game streak (“a 3-day 📗 **Wordle** streak”), every milestone one result
+  reached in one sentence with the day streak first, and opening with “Wow!” from 7 days
+  (`STREAK_WOW`). A day streak as long as a game streak the same result reached is left
+  out, since the player scored that game on every day of it; on a one-game server it
+  always would be. A shared grid holding several players' results names each player
+  instead of “You're”, which could be anyone in it. A gray line under it points at
+  `/stats`. Event ids are `streak:<uid>:<game key or day>`, one per streak per day.
+  *Tie*: a scored
   `guesses`/`connections`/`cryptic`/`travle`/`score`/`golf` game whose best non-poop score
   is shared and beatable (anything short of one guess, no mistakes, no hints, a Travle
   Perfect, a score game's ceiling, its `total`: 5 greens in Quizl, 100% in Enclose, or a
@@ -578,13 +612,13 @@ players are (the test channel on a test run).
   lines, in-order checks included (`+0 (3✓)`), since the checks are what break a tie at
   the same `+N`.
   Every line has two or three phrasings, picked by a hash of the day and the event, so a
-  retried pass repeats itself rather than rewording. The last call's heading is the one
-  fixed line.
+  retried pass repeats itself rather than rewording. The last call's heading and the
+  streak milestone's sentence are the fixed lines.
   House style: no em dashes in any line except the per-player nudge lines.
 - **How loudly a post lands** (`Trigger.notify`, three levels defined in `scoreboard.py`
   beside the flag they map to, spent by `scoreboard.send_commentary`, shared by both
   passes). `SILENT` adds `FLAG_SUPPRESS_NOTIFICATIONS`, so nobody gets a push: the sticky
-  one-liners (lead change, clean sweep). `NOTIFY` drops that flag but names
+  one-liners (lead change, clean sweep, streak milestones). `NOTIFY` drops that flag but names
   nobody, so it reaches whoever has the channel on All Messages and no one else: the
   midday board and the tie line, both once-a-day-ish and worth noticing. `PING` also puts
   the users the render lists as mentions into `allowed_mentions`: the nudge, the last call
@@ -606,12 +640,15 @@ players are (the test channel on a test run).
   (last call, midday) have their key as their one id and are not even asked again after
   it: that is what keeps the last call from re-reading every player's partition on the
   hours after it fired. Never written on a test run.
-- **The midday board is not a scoreboard.** `is_scoreboard_message` matches any Components
-  V2 message, which would make a midday board in the input channel the sticky's Yesterday
-  link and satisfy the posted-today check — so it excludes a board whose first Text Display
-  starts with `board_heading(MIDDAY_TITLE)` (`is_midday_board`). The daily board, the Scores
-  button and the midday board all open with `game_parser.board_heading`, so the title is the
-  only thing that tells them apart and nothing else can drift.
+- **Commentary boards are not scoreboards.** `is_scoreboard_message` matches any
+  Components V2 message, which would make a midday board or a last call in the input
+  channel the sticky's Yesterday link and satisfy the posted-today check (a last call
+  lands on the same calendar date as the next board wherever the day closes after
+  midnight), so it excludes a post whose first Text Display starts with
+  `board_heading(MIDDAY_TITLE)` or `LAST_CALL_HEADING` (`is_commentary_board`). The daily
+  board, the Scores button and the midday board all open with `game_parser.board_heading`,
+  so the title is the only thing that tells those apart and nothing else can drift; the
+  last call's heading is its own constant, beside `MIDDAY_TITLE` in `scoreboard.py`.
 - **Previewing.** `{'test': true, 'commentary': true}` on the daily lambda runs its stage
   alone for every guild, switched on or not, to the test channel — the real hour's
   evaluation against the real channel and state, writing nothing. `{'test': true,

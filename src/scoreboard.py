@@ -39,11 +39,12 @@ LOUDNESS = {SILENT: 0, NOTIFY: 1, PING: 2}
 PLAY_BUTTON_CUSTOM_ID = 'sticky_play'
 SCORES_BUTTON_CUSTOM_ID = 'sticky_scores'
 STICKY_HEADING = "\U0001F47E **Now Playing**"
-# The commentary's midday board is a Components V2 board like the daily one,
-# and this title is what tells them apart: is_scoreboard_message leaves a
-# board headed with it alone, so it can never become the sticky's Yesterday
-# link or satisfy the posted-today check.
+# The commentary's midday board and last call are Components V2 posts like the
+# daily board, and their headings are what tell them apart: is_scoreboard_message
+# leaves a post opening with either alone (is_commentary_board), so neither can
+# become the sticky's Yesterday link or satisfy the posted-today check.
 MIDDAY_TITLE = 'Midday Standings'
+LAST_CALL_HEADING = '### ⏰ Last call!'
 
 # The "Play now!" button the Wordle app puts on its daily recap message, and
 # only there -- its live-game message (the one whose finished grid the parser
@@ -175,6 +176,25 @@ def guild_aggs(guild_id):
     aggs = store.query_aggs(gpk)
     _aggs_cache[gpk] = (time.monotonic() + AGGS_TTL_SECONDS, aggs)
     return aggs
+
+
+def player_aggs_loader(guild_id):
+    """The per-player reader a commentary Tick takes: callable(uid) -> that
+    player's aggregate partition as {SK: item}, or {} when the read fails, so
+    a store problem costs a line rather than the pass. Memoized, and built
+    once per pass, so each player is read at most once and only when a
+    trigger asks (the last call, the streak milestones)."""
+    cache = {}
+
+    def load(uid):
+        if uid not in cache:
+            try:
+                cache[uid] = store.query_aggs(store.player_pk(guild_id, uid))
+            except Exception as e:
+                print(f'commentary: player read failed for {uid} -- {type(e).__name__}: {e}')
+                cache[uid] = {}
+        return cache[uid]
+    return load
 
 
 def gather_streaks(guild_id, ref_date, results, games, minimum_players=1):
@@ -460,7 +480,7 @@ def is_scoreboard_message(msg, bot_id=None):
     flags = msg.get('flags') or 0
     if not flags & FLAG_IS_COMPONENTS_V2:
         return False
-    if is_midday_board(msg):
+    if is_commentary_board(msg):
         return False
     if bot_id:
         return (msg.get('author') or {}).get('id') == str(bot_id)
@@ -511,12 +531,13 @@ def _first_text(msg):
     return ''
 
 
-def is_midday_board(msg):
-    """True for the commentary's midday standings board, told from the daily
-    board by its heading (game_parser.board_heading with MIDDAY_TITLE)."""
+def is_commentary_board(msg):
+    """True for a Components V2 post of the commentary's own, the midday
+    standings or the last call, told from the daily board by its heading
+    (game_parser.board_heading with MIDDAY_TITLE, or LAST_CALL_HEADING)."""
     if not (msg.get('flags') or 0) & FLAG_IS_COMPONENTS_V2:
         return False
-    return _first_text(msg).startswith(board_heading(MIDDAY_TITLE))
+    return _first_text(msg).startswith((board_heading(MIDDAY_TITLE), LAST_CALL_HEADING))
 
 
 def is_sticky_message(msg, bot_id=None):

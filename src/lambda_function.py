@@ -13,7 +13,7 @@ from game_parser import (format_scoreboard_components, make_timestamp_checker,
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, fetch_bot_guild_ids,
     reference_date, parse_results, build_avatar_pool, build_name_map,
-    is_scoreboard_message, gather_streaks, guild_aggs, send_commentary,
+    is_scoreboard_message, gather_streaks, guild_aggs, player_aggs_loader, send_commentary,
     FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS, FLAG_IS_COMPONENTS_V2,
     MAX_BUTTONS_PER_ROW, MAX_ACTION_ROWS,
 )
@@ -556,7 +556,8 @@ def build_tick(cfg, now_local):
     """Everything commentary.evaluate needs about this guild's day: one fetch
     of the input channel, its parse, the streak bundle, the aggregate
     partition, the day's state. Per-player aggregates are fetched lazily and
-    memoized: only the last call reads them, and only on the ticks it is due."""
+    memoized: of this cadence's kinds only the last call reads them, and only
+    on the ticks it is due."""
     gid = cfg['guild_id']
     tz = now_local.tzinfo
     today = reference_date(now_local, tz, cfg['hours_after_midnight'])
@@ -576,25 +577,13 @@ def build_tick(cfg, now_local):
     except Exception as e:
         print(f'commentary: aggregate read failed, no roster -- {type(e).__name__}: {e}')
         aggs = {}
-
-    cache = {}
-
-    def player_aggs(uid):
-        if uid not in cache:
-            try:
-                cache[uid] = store.query_aggs(store.player_pk(gid, uid))
-            except Exception as e:
-                print(f'commentary: player read failed for {uid} -- {type(e).__name__}: {e}')
-                cache[uid] = {}
-        return cache[uid]
-
     try:
         state = store.get_commentary(gid, store.day_str(today))
     except Exception as e:
         print(f'commentary: state read failed, starting blank -- {type(e).__name__}: {e}')
         state = {}
     return commentary.make_tick(cfg, now_local, messages, results, puzzle_numbers, posts,
-                                streaks, aggs, player_aggs, state, DISCORD_BOT_ID)
+                                streaks, aggs, player_aggs_loader(gid), state, DISCORD_BOT_ID)
 
 
 def commentary_tick(cfg, is_test, test_channel_id, samples=False):
