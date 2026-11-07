@@ -33,13 +33,21 @@ Kinds:
   FLAVOR  one-liners (first result, lead change, clean sweep, ties). They ride
           under whatever body posts, or post on their own when no body is due.
 
+Replies: an event can name the message it answers (`reply_to`), and its post
+then goes out as a Discord reply to that message: a welcome answers the
+newcomer's first result, a lead line the leader's own result that put them on
+top (and nothing, when somebody else's result did).
+A message replies to one other at most, so the first event naming a message
+picks it and an event naming a different one waits for a later pass (compose).
+
 How loud (Trigger.notify), quietest first: SILENT carries Discord's
 suppress-notifications flag, so it lands without a push for anyone; NOTIFY
 drops the flag but mentions nobody, so it notifies on each member's own channel
 setting (the midday board and the tie line, which are once-a-day-ish and worth
 noticing); PING also puts the people the render names into allowed_mentions
-(the last call and the nudge). A composed post takes the LOUDEST of the kinds
-that fired into it (see loudest), since one message carries one flag.
+(the last call, the nudge and the welcome). A composed post takes the LOUDEST
+of the kinds that fired into it (see loudest), since one message carries one
+flag.
 
 Two rules gate every kind, whatever its cadence (see blocked): nothing posts
 before the day's board has (the morning board opens the conversation), and a
@@ -72,6 +80,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import cached_property
+from itertools import groupby
 
 from dateutil import parser as dateutil_parser
 
@@ -132,7 +141,7 @@ class Tick:
     start: object        # aware datetime: when the scoring day opened
     close: object        # aware datetime: when results stop counting
     results: dict        # {game_key: {uid: score}} today so far
-    last_post: dict      # {uid: aware datetime of their latest counted result}
+    posts: list          # (msg, game_key, uid, score) per result matched, oldest first
     games: list          # built Game list, enabled games only
     puzzle_numbers: dict
     rotation: object     # today's key list, or None when unrestricted
@@ -147,6 +156,25 @@ class Tick:
     @property
     def hour(self):
         return self.now.hour
+
+    @cached_property
+    def last_post(self):
+        """{uid: aware datetime of their latest result}. Discord's timestamps
+        share one format, so the newest is simply the greatest string."""
+        latest = {}
+        for msg, _, uid, _ in self.posts:
+            latest[uid] = max(latest.get(uid, ''), msg['timestamp'])
+        return {uid: dateutil_parser.isoparse(ts).astimezone(self.now.tzinfo)
+                for uid, ts in latest.items()}
+
+    @cached_property
+    def first_posts(self):
+        """{uid: id of the message holding their first result today}, in the
+        order they first posted."""
+        first = {}
+        for msg, _, uid, _ in self.posts:
+            first.setdefault(uid, msg['id'])
+        return first
 
     @cached_property
     def scored(self):
@@ -201,11 +229,12 @@ def unanswered_posts(messages, bot_id):
     return run
 
 
-def make_tick(cfg, now, messages, results, puzzle_numbers, times, streaks, aggs,
+def make_tick(cfg, now, messages, results, puzzle_numbers, posts, streaks, aggs,
               player_aggs, state, bot_id):
     """Assemble a Tick from what a pass has already fetched and parsed. Pure:
     the day arithmetic, the roster off the aggregate partition, and the two
-    gate flags, so both passes build exactly the same view of the day."""
+    gate flags, so both passes build exactly the same view of the day. posts
+    arrive newest first, as parse_results fills them."""
     tz = now.tzinfo
     today = reference_date(now, tz, cfg['hours_after_midnight'])
     day = store.day_str(today)
@@ -218,9 +247,7 @@ def make_tick(cfg, now, messages, results, puzzle_numbers, times, streaks, aggs,
                     or (cfg['last_posted_day'] or '') >= store.prev_day_str(day))
     return Tick(
         cfg=cfg, now=now, today=today, day=day, start=start, close=close,
-        results=results,
-        last_post={uid: dateutil_parser.isoparse(ts).astimezone(tz)
-                   for uid, ts in (times or {}).items()},
+        results=results, posts=list(reversed(posts or ())),
         games=build_games(puzzle_numbers, cfg['game_overrides']),
         puzzle_numbers=puzzle_numbers,
         rotation=store.current_rotation(cfg, day), streaks=streaks,
@@ -235,7 +262,7 @@ class Rendered:
     content: str = ''                               # BODY text
     lines: list = field(default_factory=list)       # FLAVOR one-liners
     buttons: list = field(default_factory=list)     # BODY link buttons
-    mentions: list = field(default_factory=list)    # BODY: who this is for
+    mentions: list = field(default_factory=list)    # who a PING kind notifies
     components: list = None                         # BOARD components
 
 
@@ -249,6 +276,7 @@ class Post:
     event_ids: list = field(default_factory=list)   # marked announced once sent
     board: bool = False
     notify: str = SILENT                            # SILENT, NOTIFY or PING
+    reply_to: str = None                            # the message it answers, if any
 
 
 @dataclass(frozen=True)
@@ -264,8 +292,8 @@ class Trigger:
         render    callable(events, tick) -> Rendered
         sample    callable(tick) -> [event]; fabricated, for the preview
         notify    how loudly it arrives: SILENT (no push), NOTIFY (no mention,
-                  but no suppress flag either) or PING (BODY only, which also
-                  notifies the users the render names as mentions)
+                  but no suppress flag either) or PING (which also notifies
+                  the users its render lists as mentions)
         default   the coded state before any /setup choice, like GameSpec.disabled:
                   every kind ships on except the nudge
         once      one event per day, id == key; not re-detected once announced
@@ -659,19 +687,21 @@ def sample_midday(tick):
 # --- First result ever ------------------------------------------------------------
 
 def detect_first_play(tick):
+    """Everyone with a result today and none ever finalized here, in the order
+    they first posted, each answering that first result."""
     # known_players is folded at finalize, which runs at post hour: until
     # yesterday is folded, someone who started yesterday still looks new.
     if store.prev_day_str(tick.day) > (tick.cfg['last_finalized_day'] or ''):
         return []
-    seen = {uid for scores in tick.results.values() for uid in scores}
-    return [{'id': f'first:{uid}', 'uid': uid} for uid in sorted(seen - tick.known_players)]
+    return [{'id': f'first:{uid}', 'uid': uid, 'reply_to': msg_id}
+            for uid, msg_id in tick.first_posts.items() if uid not in tick.known_players]
 
 
 def render_first_play(events, tick):
     return Rendered(lines=[pick(tick, f"first:{e['uid']}", [
         f"\U0001F389 First result from {mention(e['uid'])}, welcome to the board!",
         f"\U0001F389 {mention(e['uid'])} is on the board for the first time!",
-    ]) for e in events])
+    ]) for e in events], mentions=[e['uid'] for e in events])
 
 
 def sample_first_play(tick):
@@ -698,6 +728,33 @@ def announced_leads(state):
     return sorted(leads)
 
 
+def lead_post(tick, leader):
+    """The id of the leader's own result that put them on top, or None when
+    somebody else's did. Replaying today's results one message at a time, that
+    is the first message after which they have stood alone at the top ever
+    since. Alone at the top is all it asks, with or without anyone behind yet,
+    so the day's first leader answers their own opening result rather than
+    whoever happened to post second. Usually the message is theirs, but not
+    always: on the placement scale every newcomer raises what each place pays,
+    and a result moves the places below it in its game, so somebody else's
+    post can be what lifts them clear. A reply to that post would read as
+    being about its author, so the line goes out on its own instead."""
+    cfg, results, since = tick.cfg, {}, None
+    for msg_id, group in groupby(tick.posts, key=lambda post: post[0]['id']):
+        for _, key, uid, score in group:
+            # A player's first result in a game is the one that counts, as on the board.
+            results.setdefault(key, {}).setdefault(uid, score)
+        totals = total_points(results, tick.games, cfg['minimum_players'], tick.rotation,
+                              cfg['scoring'])
+        best = max(totals.values(), default=0)
+        on_top = [uid for uid, points in totals.items() if points == best]
+        since = (since or msg_id) if on_top == [leader] else None
+    # A shared grid holds several players' results, so theirs means any message
+    # holding one of their results, not one they authored.
+    theirs = {msg['id'] for msg, _, uid, _ in tick.posts if uid == leader}
+    return since if since in theirs else None
+
+
 def detect_lead(tick):
     """Someone takes sole control of the lead: one player alone on top, with
     somebody behind them, who is not the leader the day's latest lead
@@ -722,7 +779,11 @@ def detect_lead(tick):
     of a tie was the one lead change the bot could not see. Judged against the
     last announcement, a leader who is briefly caught and pulls clear again is
     not announced twice, and a change that could not post when it happened
-    (before the board, say) is said once it can rather than lost."""
+    (before the board, say) is said once it can rather than lost.
+
+    The line answers the leader's own result that put them on top (lead_post),
+    even when it goes out later than that result did. When somebody else's
+    result put them there, it answers nothing."""
     now = standings(tick)
     if len(now) < 2 or now[1][1] == now[0][1]:
         return []
@@ -736,7 +797,8 @@ def detect_lead(tick):
         return []
     n = len(leads) + 1
     return [{'id': lead_id(n, leader), 'n': n, 'leader': leader, 'points': points,
-             'chasers': chasers, 'early': n == 1 and before_midday(tick)}]
+             'chasers': chasers, 'early': n == 1 and before_midday(tick),
+             'reply_to': lead_post(tick, leader)}]
 
 
 def render_lead(events, tick):
@@ -932,8 +994,12 @@ TRIGGERS = [
     Trigger('nudge', 'Points nudge', 'Ask someone back for the games they left open',
             BODY, HOURLY, detect_nudge, render_nudge, sample_nudge, notify=PING,
             default=False, waits=OWN, headings=NUDGE_HEADINGS),
-    Trigger('first_play', 'First result', "A welcome under someone's first ever result",
-            FLAVOR, STICKY, detect_first_play, render_first_play, sample_first_play),
+    # The one flavor line that pings: it is written to one person, who has no
+    # reason yet to be watching the channel.
+    Trigger('first_play', 'First result',
+            "A welcome under someone's first ever result, pinging them",
+            FLAVOR, STICKY, detect_first_play, render_first_play, sample_first_play,
+            notify=PING),
     Trigger('lead', 'Lead changes',
             'The first leader once the rest have played as many games between them, then every change',
             FLAVOR, STICKY, detect_lead, render_lead, sample_lead),
@@ -1008,8 +1074,9 @@ def loudest(triggers):
     rather than the body's alone.
 
     Only the parts that landed count. A losing body (the second BODY of a tick,
-    or flavor lines dropped for the board's budget) is left out of the post
-    entirely and waits for a later pass, so it must not raise the level of a
+    flavor lines dropped for the board's budget, or a line answering a
+    different message than the post) is left out of the post entirely and
+    waits for a later pass, so it must not raise the level of a
     message it contributed nothing to -- which is how the midday board briefly
     went out as a ping on an hour the nudge also fired."""
     return max((t.notify for t in triggers), key=LOUDNESS.get, default=SILENT)
@@ -1017,21 +1084,24 @@ def loudest(triggers):
 
 def compose(found, tick):
     """One post out of everything that fired: the first body (or board) plus
-    every flavor line. Shared with the preview, which composes one kind at a time."""
+    every flavor line. Shared with the preview, which composes one kind at a time.
+
+    A post answers one message at most. The first event naming one
+    (`reply_to`) picks it, and an event naming a different message is left
+    out, to fire again on a later pass as a losing body does, rather than go
+    out as a reply to somebody else's result."""
+    reply_to = next((e['reply_to'] for _, events in found for e in events
+                     if e.get('reply_to')), None)
+    found = [(t, [e for e in events if e.get('reply_to') in (None, reply_to)])
+             for t, events in found]
+    found = [(t, events) for t, events in found if events]
     body = next(((t, ev) for t, ev in found if t.kind != FLAVOR), None)
-    lines, ids, flavors = [], [], []
-    for trigger, events in found:
-        if trigger.kind != FLAVOR:
-            continue
-        lines += trigger.render(events, tick).lines
-        ids += [e['id'] for e in events]
-        flavors.append(trigger)
+    flavors = [(t, ev, t.render(ev, tick)) for t, ev in found if t.kind == FLAVOR]
+    lines = [line for _, _, rendered in flavors for line in rendered.lines]
     if body is None:
-        return Post(kind='flavor', content='\n'.join(lines), event_ids=ids,
-                    notify=loudest(flavors))
+        return make_post('flavor', flavors, content='\n'.join(lines))
     trigger, events = body
     rendered = trigger.render(events, tick)
-    body_ids = [e['id'] for e in events]
     if trigger.kind == BOARD:
         components = list(rendered.components)
         if lines:
@@ -1040,15 +1110,27 @@ def compose(found, tick):
             # the board's own id is announced, so they fire again next pass.
             with_lines = components + [{'type': 10, 'content': '\n'.join(lines)}]
             if over_budget(with_lines):
-                ids, flavors = [], []
+                flavors = []
             else:
                 components = with_lines
-        return Post(kind=trigger.key, components=components, event_ids=body_ids + ids,
-                    board=True, notify=loudest([trigger] + flavors))
+        return make_post(trigger.key, [(trigger, events, rendered)] + flavors,
+                         components=components, board=True)
     content = rendered.content + ('\n' + '\n'.join(lines) if lines else '')
-    return Post(kind=trigger.key, content=content, components=button_rows(rendered.buttons),
-                mentions=list(rendered.mentions) if trigger.notify == PING else [],
-                event_ids=body_ids + ids, notify=loudest([trigger] + flavors))
+    return make_post(trigger.key, [(trigger, events, rendered)] + flavors,
+                     content=content, components=button_rows(rendered.buttons))
+
+
+def make_post(kind, parts, **fields):
+    """The Post for the kinds that made it into one message -- `parts`, as
+    (trigger, events, rendered) -- with everything that follows from which
+    ones did: the ids it announces, how loudly it lands, who it pings (the
+    mentions of its PING kinds) and the message it answers."""
+    events = [e for _, evs, _ in parts for e in evs]
+    return Post(kind=kind, event_ids=[e['id'] for e in events],
+                notify=loudest([t for t, _, _ in parts]),
+                mentions=[uid for t, _, r in parts if t.notify == PING for uid in r.mentions],
+                reply_to=next((e['reply_to'] for e in events if e.get('reply_to')), None),
+                **fields)
 
 
 def samples(tick):

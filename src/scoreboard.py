@@ -383,13 +383,12 @@ def reference_date(now, tz, hours_after_midnight, days_back=0):
 
 
 def parse_results(messages, ref_date, tz, hours_after_midnight, time_window_hours,
-                  *, avatar_hashes=None, game_overrides=None, times=None):
+                  *, avatar_hashes=None, game_overrides=None, posts=None):
     """Parse one day's results out of `messages`: (results, puzzle_numbers).
 
-    times, when given, is filled with {user_id: ISO timestamp} of each player's
-    latest counted result -- what the commentary's nudge measures its "two
-    hours since" from. Discord's timestamps share one format, so the newest
-    is simply the greatest string.
+    posts, when given, is filled with (msg, game_key, user_id, score) for every
+    result matched, newest first as fetched: who posted what, where and when,
+    which the commentary's tick reads (commentary.make_tick).
     """
     puzzle_numbers = compute_puzzle_numbers(ref_date)
     games = build_games(puzzle_numbers, game_overrides)
@@ -403,8 +402,8 @@ def parse_results(messages, ref_date, tz, hours_after_midnight, time_window_hour
                        or msg['author']['id'])
             results[game_key][user_id] = score
             puzzle_numbers.update(metadata)
-            if times is not None:
-                times[user_id] = max(times.get(user_id, ''), msg['timestamp'])
+            if posts is not None:
+                posts.append((msg, game_key, user_id, score))
     return results, puzzle_numbers
 
 
@@ -475,21 +474,28 @@ def send_commentary(session, channel_id, post):
     SILENT adds the suppress-notifications flag, so a NOTIFY kind reaches
     whoever has the channel on All Messages without naming anyone. Only the
     users the post lists as mentions are notified (a PING kind); every other
-    mention renders as text. Shared by both passes that post commentary (the
-    daily lambda's hour, the sticky's minute). Returns the message."""
+    mention renders as text. A post that answers a message (reply_to) goes out
+    as a reply to it, and the reply alone pings nobody (replied_user is off):
+    a silent line stays silent, whoever's result it answers. Shared by both
+    passes that post commentary (the daily lambda's hour, the sticky's
+    minute). Returns the message."""
     flags = FLAG_IS_COMPONENTS_V2 if post.board else FLAG_SUPPRESS_EMBEDS
     if post.notify == SILENT:
         flags |= FLAG_SUPPRESS_NOTIFICATIONS
+    payload = {'flags': flags,
+               'allowed_mentions': {'parse': [], 'replied_user': False,
+                                    'users': [str(u) for u in post.mentions][:100]}}
     if post.board:
-        payload = {'components': post.components, 'flags': flags,
-                   'allowed_mentions': {'parse': []}}
+        payload['components'] = post.components
     else:
-        payload = {'content': post.content, 'flags': flags,
-                   'allowed_mentions': {'parse': []}}
-        if post.mentions:
-            payload['allowed_mentions'] = {'users': [str(u) for u in post.mentions][:100]}
+        payload['content'] = post.content
         if post.components:
             payload['components'] = post.components
+    if post.reply_to:
+        # A result deleted before this lands costs the post its reply, not
+        # the post: left on, Discord would refuse the whole message.
+        payload['message_reference'] = {'message_id': post.reply_to,
+                                        'fail_if_not_exists': False}
     response = session.post(f'{DISCORD_API_BASE}/channels/{channel_id}/messages', json=payload)
     response.raise_for_status()
     return response.json()

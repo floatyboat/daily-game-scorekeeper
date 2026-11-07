@@ -565,10 +565,10 @@ def build_tick(cfg, now_local):
     checker = make_timestamp_checker(today, tz, cfg['hours_after_midnight'],
                                      cfg['time_window_hours'])
     avatar_pool = build_avatar_pool(_session, messages, checker, gid)
-    times = {}
+    posts = []
     results, puzzle_numbers = parse_results(
         messages, today, tz, cfg['hours_after_midnight'], cfg['time_window_hours'],
-        avatar_hashes=avatar_pool, game_overrides=cfg['game_overrides'], times=times)
+        avatar_hashes=avatar_pool, game_overrides=cfg['game_overrides'], posts=posts)
     games = build_games(puzzle_numbers, cfg['game_overrides'])
     streaks = gather_streaks(gid, today, results, games, cfg['minimum_players'])
     try:
@@ -593,7 +593,7 @@ def build_tick(cfg, now_local):
     except Exception as e:
         print(f'commentary: state read failed, starting blank -- {type(e).__name__}: {e}')
         state = {}
-    return commentary.make_tick(cfg, now_local, messages, results, puzzle_numbers, times,
+    return commentary.make_tick(cfg, now_local, messages, results, puzzle_numbers, posts,
                                 streaks, aggs, player_aggs, state, DISCORD_BOT_ID)
 
 

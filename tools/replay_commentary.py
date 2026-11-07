@@ -210,14 +210,14 @@ def replay(session, cfg, day, archive, history, overrides, nudge_after, midday_h
                    'last_posted_day': prev_day if board_posted else store.prev_day_str(prev_day)}
         for cadence in ([commentary.HOURLY, commentary.STICKY] if minute.minute == 0
                         else [commentary.STICKY]):
-            times = {}
+            matched = []
             results, pn = parse_results(
                 visible, today, tz, cfg['hours_after_midnight'], cfg['time_window_hours'],
-                avatar_hashes=pool, game_overrides=cfg['game_overrides'], times=times)
+                avatar_hashes=pool, game_overrides=cfg['game_overrides'], posts=matched)
             games = build_games(pn, cfg['game_overrides'])
             streaks = streak_bundle(aggs, day, results, games, cfg['minimum_players'],
                                     players_30d)
-            tick = commentary.make_tick(cfg_now, minute, visible, results, pn, times, streaks,
+            tick = commentary.make_tick(cfg_now, minute, visible, results, pn, matched, streaks,
                                         aggs, lambda u: per_player.get(u, {}), state, BOT_ID)
             post = commentary.evaluate(tick, cadence)
             if post:
@@ -241,7 +241,8 @@ def replay(session, cfg, day, archive, history, overrides, nudge_after, midday_h
                                     print(f"                  {pretty(line, names)}")
                     visible.insert(0, bot_message(minute, '', post.components))
                 else:
-                    log(minute, cadence.upper(), f"{post.kind} ({loudness(post, names)})")
+                    log(minute, cadence.upper(), f"{post.kind} ({loudness(post, names)})"
+                                                 f"{replying(post, visible, names, tz)}")
                     for line in post.content.split('\n'):
                         print(f"                  {pretty(line, names)}")
                     buttons = [b['label'] for row in post.components
@@ -272,6 +273,16 @@ def loudness(post, names):
     if post.notify == commentary.PING and post.mentions:
         return f"pings {', '.join(names.get(u, u) for u in post.mentions)}"
     return post.notify
+
+
+def replying(post, visible, names, tz):
+    """', replying to <who>'s <HH:MM> result' for a post that answers one."""
+    msg = next((m for m in visible if m['id'] == post.reply_to), None)
+    if msg is None:
+        return ''
+    uid = (((msg.get('interaction_metadata') or {}).get('user') or {}).get('id')
+           or msg['author']['id'])
+    return f", replying to {names.get(uid, uid)}'s {ts(msg).astimezone(tz):%H:%M} result"
 
 
 def busiest_day(archive):

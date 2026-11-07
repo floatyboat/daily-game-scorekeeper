@@ -293,7 +293,7 @@ def update_sticky(channel_id, channel_messages, results, server_streak=0,
     return 'collapsed' if len(stickies) > 1 else 'reposted'
 
 
-def run_commentary(cfg, now_local, day, messages, results, puzzle_numbers, times,
+def run_commentary(cfg, now_local, day, messages, results, puzzle_numbers, posts,
                    streaks, force):
     """One STICKY-cadence commentary pass over what run_guild has already
     parsed (commentary.py decides; this is the I/O around it). A post it makes
@@ -302,7 +302,7 @@ def run_commentary(cfg, now_local, day, messages, results, puzzle_numbers, times
     runs (force) read the real state but record nothing. Returns a note."""
     gid = cfg['guild_id']
     state = store.get_commentary(gid, day)
-    tick = commentary.make_tick(cfg, now_local, messages, results, puzzle_numbers, times,
+    tick = commentary.make_tick(cfg, now_local, messages, results, puzzle_numbers, posts,
                                 streaks, guild_aggs(gid), None, state, DISCORD_BOT_ID)
     post = commentary.evaluate(tick, commentary.STICKY)
     if not post:
@@ -396,8 +396,7 @@ def run_guild(cfg, force=False):
     avatar_pool = build_avatar_pool(_session, messages, checker, cfg['guild_id'])
 
     results = defaultdict(dict)
-    times = {}      # uid -> ISO timestamp of their latest counted result
-    posts = []      # (msg, game_key, uid, score) per entry, for the reactions
+    posts = []      # (msg, game_key, uid, score) per entry, for reactions and commentary
     suppressed = 0
     for msg in messages:
         entries = match_message(msg, games, checker, avatar_hashes=avatar_pool)
@@ -409,7 +408,6 @@ def run_guild(cfg, force=False):
             user_id = uid_override or msg.get('interaction_metadata', {}).get('user', {}).get('id') or msg['author']['id']
             results[game_key][user_id] = score
             puzzle_numbers.update(metadata)
-            times[user_id] = max(times.get(user_id, ''), msg['timestamp'])
             posts.append((msg, game_key, user_id, score))
 
     # Server-wide streak flair, bare fire+number at the end of the content
@@ -440,7 +438,7 @@ def run_guild(cfg, force=False):
     if cfg['commentary_enabled'] and commentary.enabled_triggers(cfg, commentary.STICKY):
         try:
             notes.append(run_commentary(cfg, now_local, today_day, messages, results,
-                                        puzzle_numbers, times, streaks, force))
+                                        puzzle_numbers, posts, streaks, force))
         except Exception as e:
             traceback.print_exc()
             notes.append(f'commentary FAILED {type(e).__name__}: {e}')

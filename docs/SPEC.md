@@ -439,15 +439,35 @@ players are (the test channel on a test run).
   body posts in the same pass — under a board as one more Text Display, unless that breaks
   the board's budget, in which case they wait — or post on their own. **One post per guild
   per pass**, whatever fired.
+- **Replies.** An event can name the message it answers (`reply_to`), and its post then
+  goes out as a Discord reply to that message. The first-result welcome answers the
+  newcomer's first result of the day. A lead line answers the leader's own result that put
+  them on top (`lead_post`): the day's results replayed one message at a time, and the
+  first message after which the leader has stood alone at the top ever since. Alone at the
+  top is all it asks, with or without anyone behind yet, so the day's first leader answers
+  their own opening result rather than whoever posted second. That message is usually the
+  leader's, but not always: on the placement scale every newcomer raises what each place
+  pays, so somebody else's post can be what lifts them clear. A reply to that post would
+  read as being about its author, so the line then answers nothing and goes out on its
+  own. A message holding several players' results (a shared grid) counts as the leader's
+  when one of the results is theirs. A message replies to one
+  other at most, so the first event naming a message picks it (registry order) and an
+  event naming a different message is left out, to fire on a later pass as a losing body
+  does. `send_commentary` sends the reference with `fail_if_not_exists` off, so a result
+  deleted in the meantime costs the post its reply, not the post. It also turns
+  `replied_user` off, so a reply never pings the author it answers: who hears about a post
+  is still decided by its `notify` level alone.
 - **The tick.** `commentary.make_tick` assembles one `Tick` from what a pass has already
-  fetched and parsed: today's results with each player's latest result time
-  (`parse_results(times=...)`, or the sticky's own loop), the built games, today's
+  fetched and parsed: today's results, and every result matched with the message it came
+  in (`parse_results(posts=...)`, or the sticky's own loop, which keeps the same list for
+  its reactions), the built games, today's
   rotation, the streak bundle, the guild's aggregate partition (`scoreboard.guild_aggs`,
   the cached Query the board already makes — its `players` sets are the roster), a
   memoized per-player aggregate loader that only the last call spends (the daily lambda
   supplies it; the sticky passes none), the day's state, and the two gate flags below.
-  Derived views (`scored`, `scorers`, `pool`, `totals`) are cached properties, so a
-  trigger never repeats a fold.
+  Derived views (`scored`, `scorers`, `pool`, `totals`, and off the matched results each
+  player's latest result time and first message) are cached properties, so a trigger
+  never repeats a fold.
 - **Gates** (`commentary.blocked`, every kind, both cadences): nothing before one hour
   after day start or after the window closes; nothing until the board covering yesterday
   has posted (`last_posted_day`, the same gate the sticky's Yesterday link uses — the
@@ -504,7 +524,10 @@ players are (the test channel on a test run).
   where `rotation_off_mode` is `shown`) and points at the button; no sticky means no
   button, so the line is dropped rather than pointed at nothing. *First
   result*: a player in today's results who is in no game's all-time `players` set —
-  checked only once yesterday is finalized, since the sets fold at post hour. *Lead
+  checked only once yesterday is finalized, since the sets fold at post hour. It pings
+  the newcomer, as a reply to their first result of the day; two newcomers in one pass
+  answer different results, so they are welcomed one post at a time, in the order they
+  first posted. *Lead
   change*: someone takes **sole** control of the lead — one player alone on top with
   somebody behind them, who is not the leader the day's latest lead line already named.
   There is no points floor: every change at the top is announced, however small the
@@ -528,7 +551,9 @@ players are (the test channel on a test run).
   announced, taking the lead out of a tie went unsaid. The event id (`lead:<n>:<uid>`)
   names the leader, which is how the trigger knows who it last announced without a second
   state attribute; a leader briefly caught who pulls clear again is not announced twice.
-  *Clean sweep*: one player sole first in
+  The line replies to the leader's own result that put them on top (see Replies), even
+  when it goes out later than that result did; when somebody else's result put them there,
+  it is a plain message. *Clean sweep*: one player sole first in
   most of the day's scored games — a strict majority of the slate (`tick.scored`, so the
   rotation when there is one) and never fewer than `SWEEP_MIN_GAMES` (3) — who can still
   be sole first in all of them (`can_still_sweep`). That means nothing lost yet: they
@@ -559,10 +584,12 @@ players are (the test channel on a test run).
 - **How loudly a post lands** (`Trigger.notify`, three levels defined in `scoreboard.py`
   beside the flag they map to, spent by `scoreboard.send_commentary`, shared by both
   passes). `SILENT` adds `FLAG_SUPPRESS_NOTIFICATIONS`, so nobody gets a push: the sticky
-  one-liners (first result, lead change, clean sweep). `NOTIFY` drops that flag but names
+  one-liners (lead change, clean sweep). `NOTIFY` drops that flag but names
   nobody, so it reaches whoever has the channel on All Messages and no one else: the
   midday board and the tie line, both once-a-day-ish and worth noticing. `PING` also puts
-  the users the render names into `allowed_mentions`: the nudge and the last call. Discord
+  the users the render lists as mentions into `allowed_mentions`: the nudge, the last call
+  and the first-result welcome, the one flavor line that pings, since it is written to one
+  person who has no reason yet to be watching the channel. Discord
   marks the channel unread either way, so `NOTIFY` differs from `SILENT` only for members
   who opted into All Messages. Every other mention renders as text without notifying.
   A composed post takes the loudest level of the parts that are actually IN it
