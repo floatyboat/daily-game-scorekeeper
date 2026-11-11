@@ -26,7 +26,7 @@ class Game:
     Produced by build_games() from a GameSpec: display metadata plus the
     compiled regex and the score extractor. Consumed by both the scoreboard
     (emoji/title/metric/total/puzzle/url) and the parser (pattern/parse/
-    needs_timestamp/search_pattern).
+    needs_timestamp).
     """
     key: str
     emoji: str
@@ -37,7 +37,6 @@ class Game:
     url: str
     pattern: re.Pattern
     needs_timestamp: bool = False
-    search_pattern: re.Pattern = None   # optional cheap pre-check before the full pattern
     parse: object = None                # callable(match, content) -> (score, metadata)
     breakpoints: tuple = None           # (great, good); see GameSpec
 
@@ -488,8 +487,6 @@ class GameSpec:
                                          return (None, {}) to decline and let other
                                          games try the same message
     Optional:
-      search    cheap pre-filter regex builder (same signature as pattern); if set,
-                it must match before the full pattern is attempted
       total_key puzzle_numbers slot whose value overrides `total` (bandle and
                 minute cryptic read their total off the message); parse must
                 emit it in its metadata
@@ -525,7 +522,6 @@ class GameSpec:
     pattern: object             # callable(reference_date, puzzle) -> re.Pattern
     parse: object               # callable(match, content) -> (score, metadata)
     needs_timestamp: bool = False
-    search: object = None       # callable(reference_date, puzzle) -> re.Pattern
     total_key: str = None       # puzzle_numbers key that overrides `total`
     disabled: bool = False
     breakpoints: tuple = None   # (great, good), see performance_tier
@@ -714,6 +710,30 @@ def _parse_maptap(m, content):
     return (weighted_score, raw_score), {}
 
 
+def _chronophoto_date(ref):
+    """Regex source for day `ref` as a Chronophoto share writes it.
+
+    The share dates itself with the player's own calendar day. Until
+    2026-11-10 it read '11/7/2026'; since then the browser writes it in its own
+    style, with the month as a word. In English that is 'Nov 7, 2026' or
+    '7 Nov 2026', in a few regions with the day zero-padded or a comma before
+    the year, and some browsers spell out 'Sept', 'June' and 'July' where
+    others write 'Sep', 'Jun' and 'Jul'. The old form stays, since it is what a
+    replay of channel history (tools/backfill.py) finds. The month names are
+    English, so a browser in another language is read only where it happens to
+    write the date the same way (Spanish '11 nov 2026', but not '11 dic 2026').
+
+    The date is all that ties a share to its day -- the board reads the
+    channel's latest messages, which reach back months in a quiet channel --
+    so the day, the month and the year must all be the board's.
+    """
+    month = rf'{ref.strftime("%b")}[a-z]*'
+    day = rf'0?{ref.day}'
+    return (rf'(?:{ref.month}/{ref.day}/{ref.year}'
+            rf'|{month}\s{day},\s{ref.year}'
+            rf'|{day}\s{month},?\s{ref.year})')
+
+
 def _parse_quizl(m, content):
     return len(re.findall('\U0001F7E9', content)), {}   # count green squares
 
@@ -885,11 +905,12 @@ GAME_SPECS = [
         key='chronophoto', emoji='📷', title='Chronophoto', metric='score',
         # The daily five photos make a ceiling of 5000, carried for the ace;
         # no score game's line prints its total.
-        total=5000, url='https://www.chronophoto.app/daily.html',
+        total=5000, url='https://www.chronophoto.app/?mode=daily',
         breakpoints=(4000, 2500),
         puzzle=lambda ref: f'{ref.month}/{ref.day}/{ref.year}',
-        pattern=lambda ref, n: re.compile(rf"I got a score of (\d+) on today's Chronophoto: {re.escape(n)}", re.IGNORECASE),
-        search=lambda ref, n: re.compile(re.escape(n), re.IGNORECASE),
+        pattern=lambda ref, n: re.compile(
+            rf"I got a score of (\d+) on today's Chronophoto: {_chronophoto_date(ref)}",
+            re.IGNORECASE),
         parse=lambda m, c: (int(m.group(1)), {}),
     ),
     GameSpec(
@@ -1318,9 +1339,9 @@ def match_suggestion(name='', url='', text=''):
     return None
 
 
-# Compiled patterns per (game, reference date). The pattern/search lambdas are
-# pure functions of (ref, puzzle) and puzzle itself derives from ref, so the
-# compiled pair can be reused across the several build_games calls one render
+# Compiled patterns per (game, reference date). The pattern lambdas are pure
+# functions of (ref, puzzle) and puzzle itself derives from ref, so a compiled
+# pattern can be reused across the several build_games calls one render
 # makes. Totals are deliberately not cached: total_key values are discovered
 # during parsing and must be re-resolved on every call. reference_date is
 # midnight-aligned, so a warm container gains one small batch per calendar day.
@@ -1342,17 +1363,14 @@ def build_games(puzzle_numbers, game_overrides=None):
             continue
         puzzle = spec.puzzle(ref)
         total = puzzle_numbers.get(spec.total_key, spec.total) if spec.total_key else spec.total
-        patterns = _pattern_cache.get((spec.key, ref))
-        if patterns is None:
-            patterns = _pattern_cache[(spec.key, ref)] = (
-                spec.pattern(ref, puzzle),
-                spec.search(ref, puzzle) if spec.search else None)
+        pattern = _pattern_cache.get((spec.key, ref))
+        if pattern is None:
+            pattern = _pattern_cache[(spec.key, ref)] = spec.pattern(ref, puzzle)
         games.append(Game(
             key=spec.key, emoji=spec.emoji, title=spec.title, metric=spec.metric,
             total=total, puzzle=puzzle, url=spec.url,
-            pattern=patterns[0],
+            pattern=pattern,
             needs_timestamp=spec.needs_timestamp,
-            search_pattern=patterns[1],
             parse=spec.parse,
             breakpoints=spec.breakpoints,
         ))
@@ -1372,9 +1390,6 @@ def match_message(msg, games, timestamp_checker, avatar_hashes=None):
     timestamp = msg['timestamp']
 
     for game in games:
-        # Optional cheap pre-filter before the full pattern (chronophoto).
-        if game.search_pattern is not None and not game.search_pattern.search(content):
-            continue
         match = game.pattern.search(content)
         if not match:
             continue

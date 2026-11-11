@@ -35,7 +35,7 @@ and the bot picks it up.
 |---|---|---|
 | Bandle | https://bandle.app/daily | yes |
 | Chainle | https://chainle.io | yes |
-| Chronophoto | https://www.chronophoto.app/daily.html | yes |
+| Chronophoto | https://www.chronophoto.app/?mode=daily | yes |
 | Color | https://dialed.gg/color?d=1 | yes |
 | Color-Toon | https://dialed.gg/color2?d=1 | yes |
 | Connections | https://www.nytimes.com/games/connections | yes |
