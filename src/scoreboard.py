@@ -496,7 +496,8 @@ def send_commentary(session, channel_id, post):
     users the post lists as mentions are notified (a PING kind); every other
     mention renders as text. A post that answers a message (reply_to) goes out
     as a reply to it, and the reply alone pings nobody (replied_user is off):
-    a silent line stays silent, whoever's result it answers. Shared by both
+    its author hears it by the post's level like everyone else, a level that
+    is never SILENT for a reply (commentary.loudest). Shared by both
     passes that post commentary (the daily lambda's hour, the sticky's
     minute). Returns the message."""
     flags = FLAG_IS_COMPONENTS_V2 if post.board else FLAG_SUPPRESS_EMBEDS

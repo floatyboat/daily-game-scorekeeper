@@ -39,11 +39,10 @@ Kinds:
 
 Replies: an event can name the message it answers (`reply_to`), and its post
 then goes out as a Discord reply to that message: a welcome answers the
-newcomer's first result, a lead line the leader's own result that put them on
-top (and nothing, when somebody else's result did), a streak milestone the
-result that reached it.
-A message replies to one other at most, so the first event naming a message
-picks it and an event naming a different one waits for a later pass (compose).
+newcomer's first result, a streak milestone the result that reached it. A lead
+line answers nothing (see detect_lead).
+A post replies to one message or to none, and the first event decides which:
+an event that does not fit waits for a later pass (compose).
 
 How loud (Trigger.notify), quietest first: SILENT carries Discord's
 suppress-notifications flag, so it lands without a push for anyone; NOTIFY
@@ -52,7 +51,8 @@ setting (the midday board and the tie line, which are once-a-day-ish and worth
 noticing); PING also puts the people the render names into allowed_mentions
 (the last call, the nudge and the welcome). A composed post takes the LOUDEST
 of the kinds that fired into it (see loudest), since one message carries one
-flag.
+flag, and a reply lands at NOTIFY at least: it answers somebody's result, so
+it never goes out silent.
 
 Two rules gate every kind, whatever its cadence (see blocked): nothing posts
 before the day's board has (the morning board opens the conversation), and a
@@ -87,7 +87,6 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import cached_property
-from itertools import groupby
 
 from dateutil import parser as dateutil_parser
 
@@ -307,7 +306,8 @@ class Trigger:
         sample    callable(tick) -> [event]; fabricated, for the preview
         notify    how loudly it arrives: SILENT (no push), NOTIFY (no mention,
                   but no suppress flag either) or PING (which also notifies
-                  the users its render lists as mentions)
+                  the users its render lists as mentions). A post that
+                  replies to a result lands at NOTIFY at least (loudest).
         default   the coded state before any /setup choice, like GameSpec.disabled:
                   every kind ships on except the nudge
         once      one event per day, id == key; not re-detected once announced
@@ -778,33 +778,6 @@ def announced_leads(state):
     return sorted(leads)
 
 
-def lead_post(tick, leader):
-    """The id of the leader's own result that put them on top, or None when
-    somebody else's did. Replaying today's results one message at a time, that
-    is the first message after which they have stood alone at the top ever
-    since. Alone at the top is all it asks, with or without anyone behind yet,
-    so the day's first leader answers their own opening result rather than
-    whoever happened to post second. Usually the message is theirs, but not
-    always: on the placement scale every newcomer raises what each place pays,
-    and a result moves the places below it in its game, so somebody else's
-    post can be what lifts them clear. A reply to that post would read as
-    being about its author, so the line goes out on its own instead."""
-    cfg, results, since = tick.cfg, {}, None
-    for msg_id, group in groupby(tick.posts, key=lambda post: post[0]['id']):
-        for _, key, uid, score in group:
-            # A player's first result in a game is the one that counts, as on the board.
-            results.setdefault(key, {}).setdefault(uid, score)
-        totals = total_points(results, tick.games, cfg['minimum_players'], tick.rotation,
-                              cfg['scoring'])
-        best = max(totals.values(), default=0)
-        on_top = [uid for uid, points in totals.items() if points == best]
-        since = (since or msg_id) if on_top == [leader] else None
-    # A shared grid holds several players' results, so theirs means any message
-    # holding one of their results, not one they authored.
-    theirs = {msg['id'] for msg, _, uid, _ in tick.posts if uid == leader}
-    return since if since in theirs else None
-
-
 def detect_lead(tick):
     """Someone takes sole control of the lead: one player alone on top, with
     somebody behind them, who is not the leader the day's latest lead
@@ -831,9 +804,10 @@ def detect_lead(tick):
     not announced twice, and a change that could not post when it happened
     (before the board, say) is said once it can rather than lost.
 
-    The line answers the leader's own result that put them on top (lead_post),
-    even when it goes out later than that result did. When somebody else's
-    result put them there, it answers nothing."""
+    The line replies to no result and goes out silent: a lead is news about
+    the standings, not about one result, and the result that changes it is
+    not always the leader's (on the placement scale every newcomer raises
+    what each place pays)."""
     now = standings(tick)
     if len(now) < 2 or now[1][1] == now[0][1]:
         return []
@@ -847,8 +821,7 @@ def detect_lead(tick):
         return []
     n = len(leads) + 1
     return [{'id': lead_id(n, leader), 'n': n, 'leader': leader, 'points': points,
-             'chasers': chasers, 'early': n == 1 and before_midday(tick),
-             'reply_to': lead_post(tick, leader)}]
+             'chasers': chasers, 'early': n == 1 and before_midday(tick)}]
 
 
 def render_lead(events, tick):
@@ -1218,7 +1191,7 @@ def evaluate(tick, cadence):
     return compose(found, tick)
 
 
-def loudest(triggers):
+def loudest(triggers, reply=False):
     """The level a composed post goes out at: the loudest of the kinds whose
     words are actually IN it. A quiet flavor line riding under a pinging body is
     already part of a message that pings, and a NOTIFY line under a SILENT body
@@ -1226,25 +1199,33 @@ def loudest(triggers):
     rather than the body's alone.
 
     Only the parts that landed count. A losing body (the second BODY of a tick,
-    flavor lines dropped for the board's budget, or a line answering a
-    different message than the post) is left out of the post entirely and
+    flavor lines dropped for the board's budget, or a line that does not
+    answer the same message as the post) is left out of the post entirely and
     waits for a later pass, so it must not raise the level of a
     message it contributed nothing to -- which is how the midday board briefly
-    went out as a ping on an hour the nudge also fired."""
-    return max((t.notify for t in triggers), key=LOUDNESS.get, default=SILENT)
+    went out as a ping on an hour the nudge also fired.
+
+    A reply is never silent: it answers somebody's result, so it lands at
+    NOTIFY at least, whatever its kinds would say on their own. It still pings
+    nobody by itself (send_commentary turns replied_user off), so the player
+    it answers hears it on their own channel setting, like everyone else."""
+    levels = [t.notify for t in triggers] + ([NOTIFY] if reply else [])
+    return max(levels, key=LOUDNESS.get, default=SILENT)
 
 
 def compose(found, tick):
     """One post out of everything that fired: the first body (or board) plus
     every flavor line. Shared with the preview, which composes one kind at a time.
 
-    A post answers one message at most. The first event naming one
-    (`reply_to`) picks it, and an event naming a different message is left
-    out, to fire again on a later pass as a losing body does, rather than go
-    out as a reply to somebody else's result."""
-    reply_to = next((e['reply_to'] for _, events in found for e in events
-                     if e.get('reply_to')), None)
-    found = [(t, [e for e in events if e.get('reply_to') in (None, reply_to)])
+    A post is a reply to one message or a plain post, and the first event, in
+    registry order, decides which (`reply_to`). Only the events that answer
+    the same message, or for a plain post none, go in it. The rest are left
+    out, to fire again on a later pass as a losing body does. So a reply
+    carries nothing but what answers its message: a line about somebody else
+    (the lead, a sweep) riding in it would read as being about the player it
+    answers, and would land as loudly as the reply."""
+    reply_to = found[0][1][0].get('reply_to')
+    found = [(t, [e for e in events if e.get('reply_to') == reply_to])
              for t, events in found]
     found = [(t, events) for t, events in found if events]
     body = next(((t, ev) for t, ev in found if t.kind != FLAVOR), None)
@@ -1275,13 +1256,15 @@ def compose(found, tick):
 def make_post(kind, parts, **fields):
     """The Post for the kinds that made it into one message -- `parts`, as
     (trigger, events, rendered) -- with everything that follows from which
-    ones did: the ids it announces, how loudly it lands, who it pings (the
-    mentions of its PING kinds) and the message it answers."""
+    ones did: the ids it announces, the message it answers, how loudly it
+    lands (never silent when it answers one) and who it pings (the mentions
+    of its PING kinds)."""
     events = [e for _, evs, _ in parts for e in evs]
+    reply_to = next((e['reply_to'] for e in events if e.get('reply_to')), None)
     return Post(kind=kind, event_ids=[e['id'] for e in events],
-                notify=loudest([t for t, _, _ in parts]),
+                notify=loudest([t for t, _, _ in parts], reply=bool(reply_to)),
                 mentions=[uid for t, _, r in parts if t.notify == PING for uid in r.mentions],
-                reply_to=next((e['reply_to'] for e in events if e.get('reply_to')), None),
+                reply_to=reply_to,
                 **fields)
 
 

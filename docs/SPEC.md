@@ -444,23 +444,20 @@ players are (the test channel on a test run).
   per pass**, whatever fired.
 - **Replies.** An event can name the message it answers (`reply_to`), and its post then
   goes out as a Discord reply to that message. The first-result welcome answers the
-  newcomer's first result of the day. A lead line answers the leader's own result that put
-  them on top (`lead_post`): the day's results replayed one message at a time, and the
-  first message after which the leader has stood alone at the top ever since. Alone at the
-  top is all it asks, with or without anyone behind yet, so the day's first leader answers
-  their own opening result rather than whoever posted second. That message is usually the
-  leader's, but not always: on the placement scale every newcomer raises what each place
-  pays, so somebody else's post can be what lifts them clear. A reply to that post would
-  read as being about its author, so the line then answers nothing and goes out on its
-  own. A message holding several players' results (a shared grid) counts as the leader's
-  when one of the results is theirs. A streak milestone answers the result that reached
-  it. A message replies to one
-  other at most, so the first event naming a message picks it (registry order) and an
-  event naming a different message is left out, to fire on a later pass as a losing body
-  does. `send_commentary` sends the reference with `fail_if_not_exists` off, so a result
-  deleted in the meantime costs the post its reply, not the post. It also turns
+  newcomer's first result of the day, and a streak milestone the result that reached it.
+  A lead line answers nothing (see Lead change). A post is a reply to one message or a
+  plain post, and the first event in registry order decides which: only the events that
+  answer the same message (or, for a plain post, none) go in it, and the rest are left
+  out, to fire on a later pass as a losing body does. So a reply carries nothing but what
+  answers its message. A lead line riding in a streak milestone's reply to somebody else
+  would read as being about them ("You're on a 7-day streak" under a line naming the
+  leader) and would land as loudly as the reply. Instead the lead line, ahead of the
+  milestones in registry order, goes out on its own, and the milestone follows on the
+  next pass. `send_commentary` sends the reference with `fail_if_not_exists` off, so a
+  result deleted in the meantime costs the post its reply, not the post. It also turns
   `replied_user` off, so a reply never pings the author it answers: who hears about a post
-  is still decided by its `notify` level alone.
+  is still decided by its `notify` level alone, and a reply's is never `SILENT` (see How
+  loudly a post lands).
 - **The tick.** `commentary.make_tick` assembles one `Tick` from what a pass has already
   fetched and parsed: today's results, and every result matched with the message it came
   in (`parse_results(posts=...)`, or the sticky's own loop, which keeps the same list for
@@ -569,9 +566,10 @@ players are (the test channel on a test run).
   announced, taking the lead out of a tie went unsaid. The event id (`lead:<n>:<uid>`)
   names the leader, which is how the trigger knows who it last announced without a second
   state attribute; a leader briefly caught who pulls clear again is not announced twice.
-  The line replies to the leader's own result that put them on top (see Replies), even
-  when it goes out later than that result did; when somebody else's result put them there,
-  it is a plain message. *Clean sweep*: one player sole first in
+  The line replies to no result and goes out silent: a lead is news about the standings,
+  not about one result, and the result that changes it is not always the leader's (on the
+  placement scale every newcomer raises what each place pays). *Clean sweep*: one player
+  sole first in
   most of the day's scored games — a strict majority of the slate (`tick.scored`, so the
   rotation when there is one) and never fewer than `SWEEP_MIN_GAMES` (3) — who can still
   be sole first in all of them (`can_still_sweep`). That means nothing lost yet: they
@@ -589,7 +587,7 @@ players are (the test channel on a test run).
   the clean sweep itself once they lead every game on the slate (`sweep:<uid>:all`); a
   slate whose bar is all of it only ever gets the second. How a single result went is no
   line at all: it is that result's own reaction (see Reactions). *Streak milestones*: a
-  silent reply to the result that carries a player's streak to a milestone — 3, 7, 14, 30
+  reply to the result that carries a player's streak to a milestone — 3, 7, 14, 30
   or 50 days, then every 25 (`STREAK_MILESTONES`, `STREAK_MILESTONE_EVERY`), never one
   `shown_streak` would hide. The day streak is reached at the player's first scoring
   result of the day, a game streak at the result that counts in that game. Both advance on
@@ -617,8 +615,8 @@ players are (the test channel on a test run).
   House style: no em dashes in any line except the per-player nudge lines.
 - **How loudly a post lands** (`Trigger.notify`, three levels defined in `scoreboard.py`
   beside the flag they map to, spent by `scoreboard.send_commentary`, shared by both
-  passes). `SILENT` adds `FLAG_SUPPRESS_NOTIFICATIONS`, so nobody gets a push: the sticky
-  one-liners (lead change, clean sweep, streak milestones). `NOTIFY` drops that flag but names
+  passes). `SILENT` adds `FLAG_SUPPRESS_NOTIFICATIONS`, so nobody gets a push: the lead
+  change and clean sweep one-liners, which reply to nothing. `NOTIFY` drops that flag but names
   nobody, so it reaches whoever has the channel on All Messages and no one else: the
   midday board and the tie line, both once-a-day-ish and worth noticing. `PING` also puts
   the users the render lists as mentions into `allowed_mentions`: the nudge, the last call
@@ -628,7 +626,11 @@ players are (the test channel on a test run).
   who opted into All Messages. Every other mention renders as text without notifying.
   A composed post takes the loudest level of the parts that are actually IN it
   (`commentary.loudest`) — a losing body waits for a later pass and must not raise the
-  level of a message it contributed nothing to.
+  level of a message it contributed nothing to. A post that replies to a result is never
+  `SILENT`: it answers somebody, so it lands at `NOTIFY` at least. That makes every
+  streak milestone `NOTIFY` (the welcome, which also replies, is `PING` anyway). The reply
+  still pings nobody, so the player it answers hears it on their own channel setting, like
+  everyone else.
 - **State** (`COMMENTARY#<day>`, one attribute): `announced`, a string set of every event
   id that has gone out — nothing is said twice, and a body that lost a pass to a
   higher-priority one is simply re-detected next time. A kind that has to remember more
