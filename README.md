@@ -41,6 +41,7 @@ and the bot picks it up.
 | Connections | https://www.nytimes.com/games/connections | yes |
 | Costcodle | https://costcodle.com | no |
 | Enclose | https://enclose.horse | yes |
+| Eraly | https://eraly.io | yes |
 | Farflung | https://farflung.game | yes |
 | Fermi | https://fermi.gg | yes |
 | Flagle | https://flagle.org | no |
@@ -50,6 +51,7 @@ and the bot picks it up.
 | MapTap | https://maptap.gg | yes |
 | MapTap Challenge | https://maptap.gg/adventures?gametype=challenge | no |
 | Minute Cryptic | https://www.minutecryptic.com | yes |
+| Perceptle | https://perceptle.com | yes |
 | Pips | https://www.nytimes.com/games/pips | yes |
 | Quizl | https://quizl.io | yes |
 | Seldom | https://www.playseldom.com | no |

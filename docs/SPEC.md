@@ -155,7 +155,7 @@ few enough values is a menu, anything else a text box.
 | `pin_keep_days` | Board | `30` | Days of boards kept pinned (1–`PIN_CAP`); older ones are unpinned |
 | `hundreds_of_messages` | Board | `1` | Input-channel volume (1–8), sets the fetch depth |
 | `daily_shame` | Board | `true` | Whether the posted board lists who skipped each scored game as a 💩 DNF, on the placement scale only |
-| `rotation_count` | Rotation | `5` | Games in the daily rotation, fixed games included; the upper bound is `len(GAME_SPECS)` (currently 26), so adding a game widens it; the form offers a menu while the values fit in one (25 games or fewer) and a text box past that, as now, and reads either shape back |
+| `rotation_count` | Rotation | `5` | Games in the daily rotation, fixed games included; the upper bound is `len(GAME_SPECS)` (currently 28), so adding a game widens it; the form offers a menu while the values fit in one (25 games or fewer) and a text box past that, as now, and reads either shape back |
 | `rotation_mode` | Rotation | `swap` | `swap` replaces under-played members, `random` re-draws daily |
 | `rotation_keep_players` | Rotation | `5` | Swap threshold to hold a seat: a scored game under it rotates out |
 | `rotation_promote_players` | Rotation | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
@@ -211,10 +211,13 @@ highlights the Basics button.
   multiple it ranks on, whose scale belongs to the day's puzzle and not to the player. Lower
   is better, except for the metrics that count upward (`HIGHER_IS_BETTER`: `score`,
   `maptap`), which read the same way round as they rank. A score game still carries its
-  real ceiling in `total` (Chronophoto and Chainle 5000, Krillion 700, Size It Up and
-  Farflung 500, MapTap 1000), because that is what a result has to reach to be aced — no
-  score game's board line prints it, so the ceiling never reads as a fraction, while
-  guesses, connections and cryptic lines keep their "/N". `golf` is a points tally
+  real ceiling in `total` (Chronophoto and Chainle 5000, Krillion and Eraly 700, Size It Up
+  and Farflung 500, MapTap 1000, Perceptle 100), because that is what a result has to reach
+  to be aced — no score game's board line prints it, so the ceiling never reads as a
+  fraction, while guesses, connections and cryptic lines keep their "/N". Where the ceiling
+  is out of practical reach, `GameSpec.ace` sets a lower bar: Perceptle aces at its S grade,
+  95, since a 100 takes five flawless tests, and keeps 100 in `total` as the one score
+  nobody can beat. `golf` is a points tally
   counted the other way, down to a perfect 0 (Seldom), with no ceiling at all since hints
   add to it: its `total` is 0 and its line prints the bare tally. A spec without breakpoints gets no
   great, good or rough: Minute Cryptic is the one game that carries none on purpose, being
@@ -686,7 +689,8 @@ was great enough to earn one.
   each: a `guesses` game in 1, a connections grid solved vertically (the VERT, which ranks
   above a clean grid), a Travle Perfect (`+0` with every square a check — a solve that
   wasted no guess **and** strayed off the path for none of them), a cryptic with no hints at
-  all, a `score` or `maptap` result at its ceiling (`total`), a `golf` tally of 0 (Seldom's
+  all, a `score` or `maptap` result at its ceiling (`total`) or at the `ace` its spec sets
+  below a ceiling out of reach (Perceptle's S grade, 95), a `golf` tally of 0 (Seldom's
   PERFECT, five answers nobody else gave), a Fermi in the world's top 1% (`FERMI_ACE`), a
   clock inside `TIME_ACE_SECONDS` (Pips, two minutes) or, on a win,
   `TIMED_WIN_ACE_SECONDS` (Gerrymandle, one). Minute Cryptic is then tiered on the day's

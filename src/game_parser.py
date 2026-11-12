@@ -39,6 +39,7 @@ class Game:
     needs_timestamp: bool = False
     parse: object = None                # callable(match, content) -> (score, metadata)
     breakpoints: tuple = None           # (great, good); see GameSpec
+    ace: int = None                     # see GameSpec
 
 
 def compute_puzzle_numbers(reference_date):
@@ -507,10 +508,15 @@ class GameSpec:
                 same units as the board line beside it. Lower is better, except
                 for the metrics that count upward (HIGHER_IS_BETTER). A score
                 game still carries its real ceiling in `total`, which is what a
-                result has to reach to be aced. None: no great, good or rough,
-                though an aced or pooped result still reads as one -- Minute
-                Cryptic is the one game tiered on something else, the day's
-                community par.
+                result has to reach to be aced unless `ace` sets the bar lower.
+                None: no great, good or rough, though an aced or pooped result
+                still reads as one -- Minute Cryptic is the one game tiered on
+                something else, the day's community par.
+      ace       for a game that counts upward, the score that aces it when the
+                ceiling is out of practical reach -- Perceptle's top grade,
+                since a perfect 100 there takes five flawless tests. `total`
+                keeps the ceiling all the same, as the one score nobody can
+                beat (commentary.beatable). None aces at `total`.
     """
     key: str
     emoji: str
@@ -525,6 +531,7 @@ class GameSpec:
     total_key: str = None       # puzzle_numbers key that overrides `total`
     disabled: bool = False
     breakpoints: tuple = None   # (great, good), see performance_tier
+    ace: int = None             # counting-up games only; None aces at `total`
 
 
 # --- Per-game score extractors -------------------------------------------------
@@ -843,10 +850,10 @@ def _parse_costcodle(m, content):
 # Discord payload caps this list feeds (scoreboard.py holds the constants): the
 # Games form in /setup is two menus of one option per spec -- the games tracked
 # and the games always in the rotation -- 25 to a menu at most, each splitting
-# by itself into two that share the games evenly past that (as 26 games do), so
-# the form stays inside Discord's five components up to 50 games
-# (setup_panel.check_limits refuses a deploy past it); and /play is one button
-# per ENABLED game, which is why a server may switch on at most
+# by itself into two that share the games evenly past that (as they have since
+# the 26th game), so the form stays inside Discord's five components up to 50
+# games (setup_panel.check_limits refuses a deploy past it); and /play is one
+# button per ENABLED game, which is why a server may switch on at most
 # MAX_ENABLED_GAMES (20) of them. A default-on game lands in every server at
 # once, including one already at the cap; build_play_response is what copes
 # with that.
@@ -1221,6 +1228,64 @@ GAME_SPECS = [
                                           re.IGNORECASE),
         parse=lambda m, c: (int(m.group(1).replace(',', '')), {}),
     ),
+    GameSpec(
+        key='eraly', emoji='⏳', title='Eraly', metric='score',
+        total=700, url='https://eraly.io',
+        breakpoints=(470, 350),
+        puzzle=lambda ref: (ref - datetime(2026, 10, 16)).days + 1,
+        # Seven prompts from history, each answered with a year and paid by
+        # how close it came: 100 for the year itself, then 85, 60 or 30 within
+        # 5, 20 or 50 years (windows that widen the further back the prompt
+        # goes), 10 for anything further and nothing for a round left
+        # unanswered. So higher is better, with a ceiling of 700, and every
+        # total is a multiple of five. The breakpoints are the site's own: the
+        # share turns the total into the year the player travelled to, across
+        # six eras that take a sixth of the 700 each, and the results card
+        # names the era reached. The modern era (1900 on) begins two thirds of
+        # the way, which in fives is 470, and the industrial (1700 on) halfway,
+        # at 350.
+        #
+        # The heading carries the year ('Eraly #26 · I travelled to 1625 AD')
+        # and the line under it the total, after a ten-step bar ('▰▰▰▰▰▱▱▱▱▱
+        # 315/700'). The first number before a slash is the one read, so a
+        # share that lost its line breaks still counts. A day replayed from the
+        # archive marks its heading ('Eraly #12 (Archive) ·'), which the
+        # pattern refuses by wanting the dot straight after the number; the
+        # one mark let through is the pumpkin on the Halloween puzzle. Infinite
+        # mode has no share at all.
+        #
+        # The number turns over at the player's own midnight, as Wordle's does.
+        pattern=lambda ref, n: re.compile(rf'Eraly #{n}(?: 🎃)? ·[^/]*?(\d+)/',
+                                          re.IGNORECASE),
+        parse=lambda m, c: (int(m.group(1)), {}),
+    ),
+    GameSpec(
+        key='perceptle', emoji='👁️', title='Perceptle', metric='score',
+        total=100, url='https://perceptle.com',
+        breakpoints=(85, 70), ace=95,
+        puzzle=lambda ref: (ref - datetime(2026, 7, 18)).days + 1,
+        # Five tests of perception -- counting dots flashed for two seconds,
+        # calling where a ball will land, swinging a line to an angle, keeping
+        # a beat, marking a fraction of a line -- each scored out of 100 on a
+        # bell curve around the exact answer, and the day's result is their
+        # average, rounded. So higher is better, out of 100. The tiers are the
+        # site's own grades: S from 95, A from 85, B from 70. A perfect 100
+        # takes five flawless tests, so the S is the ace (`ace`), and a C or
+        # below reads rough.
+        #
+        # The heading carries the whole result, the grade and then the score
+        # in brackets ('Perceptle #118 - B (72)'); the line under it gives each
+        # test's own score and is never read. Fridays play a harder variant,
+        # scored more loosely, whose heading carries a joker ('Perceptle #119
+        # 🃏 - A (88)'), so the pattern takes whatever stands between the
+        # number and the bracket. A day replayed from the archive shares under
+        # its own day's number, which alone keeps it off today's board, and a
+        # practice round has no share at all. The number turns over at the
+        # player's own midnight.
+        pattern=lambda ref, n: re.compile(rf'Perceptle #{n}\b[^\n(]*\((\d+)\)',
+                                          re.IGNORECASE),
+        parse=lambda m, c: (int(m.group(1)), {}),
+    ),
 ]
 
 
@@ -1373,6 +1438,7 @@ def build_games(puzzle_numbers, game_overrides=None):
             needs_timestamp=spec.needs_timestamp,
             parse=spec.parse,
             breakpoints=spec.breakpoints,
+            ace=spec.ace,
         ))
     return games
 
@@ -1591,9 +1657,9 @@ def performance_tier(game, score):
     ACED is the best a game has to offer, which is a different thing in each:
     a guesses game in one, a connections grid solved vertically, a travle
     Perfect, a cryptic with no hints at all, a score or maptap result at its
-    ceiling (`total`), a golf tally of 0, a fermi in the world's top 1%
-    (FERMI_ACE), a clock under TIME_ACE_SECONDS or, on a win,
-    TIMED_WIN_ACE_SECONDS.
+    ceiling (`total`) or at the `ace` its spec sets below a ceiling out of
+    reach, a golf tally of 0, a fermi in the world's top 1% (FERMI_ACE), a
+    clock under TIME_ACE_SECONDS or, on a win, TIMED_WIN_ACE_SECONDS.
 
     Minute Cryptic is then tiered on the day's community par -- under it GREAT,
     level GOOD, over it ROUGH -- since a puzzle that sets its own hint count
@@ -1607,11 +1673,12 @@ def performance_tier(game, score):
     metric, total = game.metric, game.total
     if is_poop(metric, score, total):
         return POOP
+    ace_at = total if game.ace is None else game.ace
     if ((metric == 'guesses' and score == 1)
             or (metric in ('connections', 'travle') and score[0] < 0)
             or (metric == 'cryptic' and score[1] == 0)
-            or (metric in HIGHER_IS_BETTER and total
-                and (score if metric == 'score' else score[0]) >= total)
+            or (metric in HIGHER_IS_BETTER and ace_at
+                and (score if metric == 'score' else score[0]) >= ace_at)
             or (metric == 'golf' and score == 0)
             or (metric == 'fermi' and score[1] is not None and score[1] <= FERMI_ACE)
             or (metric == 'time' and score <= TIME_ACE_SECONDS)
