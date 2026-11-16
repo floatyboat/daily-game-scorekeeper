@@ -24,7 +24,8 @@ from zoneinfo import ZoneInfo
 
 import commentary
 import store
-from game_parser import GAME_SPECS, NO_SHOW_SCORE, POOP_MEDAL, SCORING_PLACEMENT, spec_enabled
+from game_parser import (GAME_SPECS, MEDALS, NO_SHOW_SCORE, POOP_MEDAL, SCORING_OFF,
+                         SCORING_PLACEMENT, spec_enabled)
 from scoreboard import MAX_ENABLED_GAMES, MAX_SELECT_OPTIONS, TEXT_CHANNEL_TYPES, reference_date
 
 # Every custom_id /setup puts on a control starts with this, the menus older
@@ -241,11 +242,23 @@ def _summarize_rotation(cfg):
     return lines
 
 
+def _crown_phrase(cfg):
+    """The sticky's champion, said plainly when it is moot: the crown is the
+    board's to give, so with the board paused or scoring off nobody holds it."""
+    crown = f'the {MEDALS[0]} champion'
+    if not cfg['daily_enabled']:
+        return f'{crown} (unused while the board is off)'
+    if cfg['scoring'] == SCORING_OFF:
+        return f'{crown} (unused while scoring is off)'
+    return crown
+
+
 def _summarize_sticky(cfg):
     if cfg['sticky_enabled']:
         n = cfg['sticky_games']
-        state = (f"On, with {n} game button{'' if n == 1 else 's'}" if n
-                 else 'On, with no game buttons')
+        shows = [_crown_phrase(cfg)] if cfg['sticky_crown'] else []
+        shows.append(f"{n} game button{'' if n == 1 else 's'}" if n else 'no game buttons')
+        state = f"On, with {' and '.join(shows)}"
     else:
         state = _off_in_basics('none of the below happens')
     reactions = 'off'

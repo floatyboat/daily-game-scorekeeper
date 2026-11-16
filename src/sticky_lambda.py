@@ -11,7 +11,7 @@ from collections import defaultdict
 from game_parser import (
     compute_puzzle_numbers, build_games, top_game_buttons,
     match_message, make_timestamp_checker, shown_streak,
-    performance_tier, place_at_post, result_reactions, WORDLE_BOT_ID,
+    performance_tier, place_at_post, result_reactions, MEDALS, WORDLE_BOT_ID,
 )
 from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
@@ -212,13 +212,48 @@ def _sticky_is_current(sticky, content, components):
     return _button_identity(sticky.get('components')) == _button_identity(components)
 
 
-def build_sticky_content(results, server_streak=0):
+# A champion's run shows from two boards in a row: one win is the crown alone,
+# and a second is already a title defended. Lower than the MINIMUM_STREAK floor
+# the flames keep (shown_streak) on purpose: a run of crowns is far rarer than a
+# run of plays.
+CROWN_RUN_SHOWN = 2
+
+
+def crown_line(holders):
+    """The champion under the counts: '👑 @A (3 in a row)'. holders is
+    store.display_crown's [(uid, boards in a row)], and a shared crown names
+    everyone on it. The crown is the board's own, and the mentions notify
+    nobody (send_sticky allows no mentions)."""
+    return f'{MEDALS[0]} ' + ' & '.join(
+        f'<@{uid}>' + (f' ({run} in a row)' if run >= CROWN_RUN_SHOWN else '')
+        for uid, run in holders)
+
+
+def current_crown(cfg, today_day):
+    """[(uid, boards in a row)] for the champion line, or [] for no line: the
+    setting is off, the board is paused so nobody is being crowned (the rule
+    that drops the Yesterday link too), or the store can't say -- fail-open,
+    like the streak flair."""
+    if not (cfg['sticky_crown'] and cfg['daily_enabled'] and cfg['guild_id']):
+        return []
+    try:
+        item = store.get_crown(cfg['guild_id'])
+    except Exception as e:
+        print(f'store: crown read failed, rendering without it -- {type(e).__name__}: {e}')
+        return []
+    return store.display_crown(item, cfg['last_posted_day'], today_day)
+
+
+def build_sticky_content(results, server_streak=0, crown=()):
     """The heading, carrying the server-wide streak inline, over the day's
-    counts -- how much the server has played, under what to play it on.
+    counts -- how much the server has played, under what to play it on -- and
+    the champion under those, while someone holds the crown (crown_line).
 
     The streak rides on the heading rather than the counts line because it is a
     property of the server, not of today: it survives a day the counts reset,
-    and reading `Now Playing · \U0001F525 17` as one line is the nudge.
+    and reading `Now Playing · \U0001F525 17` as one line is the nudge. The
+    champion outlasts the day too, but names a player, so it takes a line of
+    its own rather than crowding the heading.
     """
     flair = f' · \U0001F525{server_streak}' if shown_streak(server_streak) else ''
 
@@ -232,17 +267,19 @@ def build_sticky_content(results, server_streak=0):
         g = 'game' if game_count == 1 else 'games'
         p = 'play' if play_count == 1 else 'plays'
         counts = f'{game_count} {g} · {play_count} {p} today'
-    return f'{STICKY_HEADING}{flair}\n{counts}'
+    content = f'{STICKY_HEADING}{flair}\n{counts}'
+    return f'{content}\n{crown_line(crown)}' if crown else content
 
 
 def update_sticky(channel_id, channel_messages, results, server_streak=0,
-                  link_yesterday=True, game_buttons=()):
+                  link_yesterday=True, game_buttons=(), crown=()):
     """Maintain exactly one sticky at the bottom of channel_id.
 
     No-op only when a single sticky is already the most recent message AND both
     its content and its buttons match what we'd render now — content comparison
     catches the day-transition case where the sticky is still at the bottom but
-    shows yesterday's stats, and button comparison catches a Yesterday link gone
+    shows yesterday's stats, or a champion a board posted elsewhere has since
+    replaced, and button comparison catches a Yesterday link gone
     stale behind a freshly posted scoreboard, or a shortcut row the day's plays
     have since reordered (or an admin has resized in /setup).
 
@@ -259,7 +296,7 @@ def update_sticky(channel_id, channel_messages, results, server_streak=0,
     duplicates back to one.
     """
     stickies = find_stickies(channel_messages)
-    content = build_sticky_content(results, server_streak)
+    content = build_sticky_content(results, server_streak, crown)
 
     yesterday_url = None
     if link_yesterday:
@@ -454,7 +491,8 @@ def run_guild(cfg, force=False):
     link_yesterday = cfg['daily_enabled'] and (force or posted_yesterday)
     action = update_sticky(channel_id, messages, results, server_streak,
                            link_yesterday=link_yesterday,
-                           game_buttons=game_buttons)
+                           game_buttons=game_buttons,
+                           crown=current_crown(cfg, today_day))
     if action == 'unchanged' and not force:
         # 'unchanged' guarantees messages[0] is the single, settled sticky.
         _probe_state[gid] = {'fingerprint': fingerprint,

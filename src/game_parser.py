@@ -1920,21 +1920,41 @@ def points_per_game(results, games, minimum_players=1, rotation=None,
             for g in games}
 
 
-def total_points(results, games, minimum_players=1, rotation=None,
-                 scoring=SCORING_PLACEMENT):
-    """{user_id: points} summed over the day's SCORED games -- the board's
-    points summary, and the live standings the commentary compares hour to
-    hour. Off-rotation games are left out entirely: their per-game points are
-    frozen for the archive, never counted toward the day.
+def scored_totals(points_by_game, rotation=None):
+    """{user_id: points} summed over a day's SCORED games, from per-game points
+    in points_per_game's shape -- fresh, or as the archive froze them.
+    Off-rotation games are left out entirely: their per-game points are frozen
+    for the archive, never counted toward the day. The one step from a game's
+    points to the day's, so the board and the crown store.finalize_day folds
+    can never add a day up differently.
     """
     rot = set(rotation) if rotation else None
-    scored = games if rot is None else [g for g in games if g.key in rot]
     totals = defaultdict(int)
-    for pts in points_per_game(results, scored, minimum_players, rotation,
-                               scoring).values():
-        for uid, p in pts.items():
-            totals[uid] += p
+    for game_key, pts in points_by_game.items():
+        if rot is None or game_key in rot:
+            for uid, p in pts.items():
+                totals[uid] += p
     return dict(totals)
+
+
+def total_points(results, games, minimum_players=1, rotation=None,
+                 scoring=SCORING_PLACEMENT):
+    """{user_id: points} for the day -- the board's points summary, and the
+    live standings the commentary compares hour to hour. Only the scored games
+    are scored at all, since scored_totals would drop the rest anyway."""
+    rot = set(rotation) if rotation else None
+    scored = games if rot is None else [g for g in games if g.key in rot]
+    return scored_totals(points_per_game(results, scored, minimum_players, rotation,
+                                         scoring), rotation)
+
+
+def crowned(totals):
+    """Who takes the day's crown (MEDALS[0]): everyone on the top total, as
+    long as it is above 0 -- the first rank format_points_summary prints, so a
+    tie shares the crown and a day nobody scored on crowns nobody. Sorted, so
+    the order is stable wherever it is stored or shown."""
+    top = max(totals.values(), default=0)
+    return sorted(uid for uid, p in totals.items() if p == top) if top > 0 else []
 
 
 def scoring_players(results, games, minimum_players=1):

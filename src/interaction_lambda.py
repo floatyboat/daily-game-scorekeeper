@@ -261,8 +261,10 @@ def build_stats_response(channel_id, user_id=None, guild_id=None, cfg=None):
 HELP_HEADING = "### ❓ How the scoreboard works"
 
 
-def _scoring_blurb(mode, board, rotation, shame=True):
+def _scoring_blurb(mode, board, rotation, shame=True, crown_on_sticky=False):
     crown = 'takes the \U0001F451 on the morning board' if board else 'takes the \U0001F451'
+    if crown_on_sticky:
+        crown += ', and keeps it on the sticky until the next one'
     if mode == SCORING_PER_GAME:
         return ("each game pays **1 point plus one for every player you beat**; the "
                 f"most points across the day {crown}.")
@@ -317,12 +319,14 @@ def build_help_text(cfg):
     streaks = ("\U0001F525 **Streaks**: a scoring result a day keeps yours alive. "
                + (f"The fire on {_listing(fire)} is the server's; `/stats` shows yours."
                   if fire else "`/stats` shows yours."))
+    points = _scoring_blurb(cfg['scoring'], board, cfg['rotation_enabled'], cfg['daily_shame'],
+                            crown_on_sticky=board and sticky and cfg['sticky_crown'])
     lines = [
         HELP_HEADING,
         f"\U0001F3AE **Play**: pick a game from {'the sticky or ' if sticky else ''}`/play`, "
         f"then paste the share text it gives you into {channel}. That's it: the bot "
         "reads it from there.",
-        f"\U0001F3C6 **Points**: {_scoring_blurb(cfg['scoring'], board, cfg['rotation_enabled'], cfg['daily_shame'])}",
+        f"\U0001F3C6 **Points**: {points}",
         f"\U0001F504 **Today's games**: {rotation}",
         day,
         streaks,

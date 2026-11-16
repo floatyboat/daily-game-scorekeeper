@@ -121,6 +121,8 @@ def print_summary(summary):
           f"{summary['players']} player streaks)")
     print(f"  server streak: {server['current_streak']} (best {server['best_streak']}, "
           f"{server['total_plays']} active days)")
+    crown = ', '.join(f'{uid} ({run} in a row)' for uid, run in sorted(summary['crown'].items()))
+    print(f"  crown: {crown or 'nobody'}")
     ranked = sorted(summary['games'].items(),
                     key=lambda kv: (-kv[1]['agg']['current_streak'], kv[0]))
     for key, g in ranked:

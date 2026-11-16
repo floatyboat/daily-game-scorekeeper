@@ -7,6 +7,7 @@ One table, generic PK/SK string keys, no GSIs. Item catalog (see SPEC.md):
     GUILD#<gid>               DAY#<YYYY-MM-DD>  the day's parsed results, JSON-frozen
     GUILD#<gid>               AGG#SERVER        overall server streak (any game played)
     GUILD#<gid>               AGG#GAME#<key>    per-game server streak + player sets
+    GUILD#<gid>               AGG#CROWN         who holds the crown + boards in a row
     GUILD#<gid>#PLAYER#<uid>  AGG#SERVER        per-player overall streak (any game)
     GUILD#<gid>#PLAYER#<uid>  AGG#GAME#<key>    per-player-per-game streak + totals
     SUGGESTIONS               <gid>#<uid>#<name> a forwarded /suggest, kept to thank its sender
@@ -44,9 +45,10 @@ from botocore.exceptions import ClientError
 # game_parser imports nothing local, so this stays a leaf-ward dependency --
 # scoreboard already pulls in both. The game table is needed here to bound the
 # rotation size against the games that actually exist, and to tell which of a
-# server's always-in games it tracks (fixed_games).
+# server's always-in games it tracks (fixed_games); the points fold, to crown
+# each day exactly as its board did.
 from game_parser import (GAME_SPECS, SCORING_PLACEMENT, SCORING_PER_GAME, SCORING_OFF,
-                         spec_enabled)
+                         crowned, scored_totals, spec_enabled)
 
 TABLE_NAME = os.getenv('TABLE_NAME') or 'daily-game-tracker'
 AWS_REGION = os.getenv('AWS_REGION') or 'us-east-1'
@@ -55,6 +57,7 @@ DAY_FMT = '%Y-%m-%d'
 GUILDS_PK = 'GUILDS'
 SERVER_AGG_SK = 'AGG#SERVER'
 GAME_AGG_PREFIX = 'AGG#GAME#'
+CROWN_AGG_SK = 'AGG#CROWN'
 
 # --- Per-server configuration schema -------------------------------------------
 # The table is the ONLY source of per-server config -- env vars configure
@@ -316,6 +319,13 @@ CONFIG_FIELDS = [
                 label='Game buttons on the sticky', unit='button', minimum=0,
                 maximum=MAX_BUTTONS_PER_ROW,
                 describe="Today's top games as Play buttons; /play lists the rest"),
+    # Whoever took the crown on the last board, and how many boards running,
+    # under the sticky's counts (display_crown). On by default like the rest of
+    # what the sticky shows; it needs a board to crown anyone, so pausing the
+    # board, or scoring nothing, leaves it with nobody to name.
+    ConfigField('sticky_crown', default=True, coerce=bool, section='sticky',
+                label='Show the champion',
+                describe="\U0001F451 the last board's winner, and how many boards in a row"),
     # Link stripping, the recap cleanup and the reactions all happen on the
     # sticky pass as it counts each result, so they share its section: with
     # the sticky off, none of them runs.
@@ -581,6 +591,60 @@ def close_out_streak(agg, through_day):
         agg['current_streak'] = 0
 
 
+# --- Crown core -----------------------------------------------------------------
+# Who took the crown on each board (game_parser.crowned) and how many boards in
+# a row they have held it. Like the streaks, one pure fold drives both the daily
+# finalize and the rebuild.
+
+def advance_crown(holders, folded_day, day, crowned_uids):
+    """The crown once `day` is folded in: {uid: boards in a row} for everyone
+    the day crowned. holders is that map as it stood after folded_day, and a
+    run carries over only from the day straight before -- so a day that
+    crowned nobody (no plays, no points, no board) ends every run by itself.
+    """
+    carried = holders if folded_day == prev_day_str(day) else {}
+    return {uid: carried.get(uid, 0) + 1 for uid in crowned_uids}
+
+
+def day_crowned(day_item):
+    """game_parser.crowned for one decoded DAY# item (see fetch_days): the
+    points it froze, totalled over the day's scored games as its board did."""
+    points = {game_key: {uid: int(rec.get('points') or 0) for uid, rec in scores.items()}
+              for game_key, scores in day_item['games'].items()}
+    return crowned(scored_totals(points, day_item.get('rotation')))
+
+
+def replay_crown(days, through_day):
+    """The crown as it stood once through_day was folded, replayed from
+    decoded DAY# items oldest first; any after through_day are ignored. A day
+    with no plays has no item, so a crown not won on through_day itself has
+    lapsed -- the same empty crown the daily fold records on such a day."""
+    holders, folded = {}, None
+    for d in days:
+        if d['day'] > through_day:
+            break
+        holders, folded = advance_crown(holders, folded, d['day'], day_crowned(d)), d['day']
+    return holders if folded == through_day else {}
+
+
+def display_crown(item, last_posted_day, today):
+    """[(uid, boards in a row)] for whoever holds the crown, longest run first,
+    or [] for nobody. `today` is the day still open, last_posted_day the
+    guild's marker of its last board.
+
+    The crown changes hands when a board posts, so the stored one stands only
+    while it is the latest word: folded through the last board that went out
+    (a fold behind that board is one that failed), and no older than the day
+    before yesterday, which the last board covers until yesterday's posts.
+    Older still, the boards have stopped coming, and a champion of a board
+    nobody has seen in days is not news.
+    """
+    folded = (item or {}).get('finalized_through') or ''
+    if not folded or folded < max(last_posted_day or '', prev_day_str(prev_day_str(today))):
+        return []
+    return sorted(_crown_holders(item).items(), key=lambda kv: (-kv[1], kv[0]))
+
+
 # --- Item marshalling -----------------------------------------------------------
 
 def _agg_to_item(pk, sk, agg, finalized_through, players=None, extra=None):
@@ -616,6 +680,17 @@ def _agg_from_item(item):
         agg['total_plays'] = int(item.get('total_plays', 0))
         players = set(item.get('players') or [])
     return agg, players
+
+
+def _crown_to_item(pk, holders, finalized_through):
+    return {'PK': pk, 'SK': CROWN_AGG_SK, 'holders': holders,
+            'finalized_through': finalized_through}
+
+
+def _crown_holders(item):
+    """{uid: boards in a row} off a stored crown item; DynamoDB hands the
+    counts back as Decimal."""
+    return {uid: int(run) for uid, run in ((item or {}).get('holders') or {}).items()}
 
 
 # --- Reads ----------------------------------------------------------------------
@@ -669,6 +744,13 @@ def fetch_days(guild_id, start_day, end_day):
     items = _query_all(KeyConditionExpression=Key('PK').eq(guild_pk(guild_id)) &
                        Key('SK').between(day_sk(start_day), day_sk(end_day)))
     return [{'day': it['day'], **json.loads(it['data'])} for it in items]
+
+
+def get_crown(guild_id):
+    """The guild's crown item, or None before its first fold. One small
+    GetItem rather than the cached aggregate partition (scoreboard.guild_aggs),
+    so the sticky hands the crown on as soon as the board has."""
+    return table().get_item(Key={'PK': guild_pk(guild_id), 'SK': CROWN_AGG_SK}).get('Item')
 
 
 def _effective_config(item):
@@ -815,7 +897,7 @@ def _put_guarded(item, day, stats):
         stats['skipped'] += 1
 
 
-def finalize_day(guild_id, day, results, points_by_game, game_keys):
+def finalize_day(guild_id, day, results, points_by_game, game_keys, rotation=None):
     """Fold one finalized day into every aggregate. Safe to re-run.
 
     game_keys is the enabled-game universe for the guild: games in it with no
@@ -827,6 +909,9 @@ def finalize_day(guild_id, day, results, points_by_game, game_keys):
     is the play signal. A game everybody failed keeps no streak alive -- neither
     its own nor any of its players'. All-time player sets still count everyone
     who posted; participation is a different question from scoring.
+
+    rotation is the day's, as archived: it picks the games whose points count
+    toward the day's crown, exactly as they did on the board.
     """
     prev_day = prev_day_str(day)
     stats = {'updated': 0, 'skipped': 0}
@@ -899,6 +984,21 @@ def finalize_day(guild_id, day, results, points_by_game, game_keys):
             points_sum = int(item.get('points_sum', 0)) if item else 0
             _put_guarded(_agg_to_item(ppk, sk, agg, day,
                                       extra={'points_sum': points_sum + points}), day, stats)
+
+    # The crown: who topped the day's points, and for how many boards running.
+    # A guild without the item yet (its aggregates predate it) replays the
+    # crown from the archive once, so a reigning champion's first count is
+    # their real run rather than 1. Written every day, crowned or not, so the
+    # replay never repeats.
+    crown_item = existing.get(CROWN_AGG_SK)
+    if crown_item:
+        holders, folded = _crown_holders(crown_item), crown_item.get('finalized_through')
+    else:
+        holders = replay_crown(fetch_days(guild_id, '0000-00-00', prev_day), prev_day)
+        folded = prev_day
+    crown = advance_crown(holders, folded, day,
+                          crowned(scored_totals(points_by_game, rotation)))
+    _put_guarded(_crown_to_item(gpk, crown, day), day, stats)
 
     refresh_players_30d(guild_id, day, game_keys)
     set_last_finalized(guild_id, day)
@@ -1079,6 +1179,7 @@ def rebuild_aggregates(guild_id, through_day):
         close_out_streak(agg, through_day)
     for agg in player_server.values():
         close_out_streak(agg, through_day)
+    crown = replay_crown(days, through_day)
 
     window_start = day_str(datetime.strptime(through_day, DAY_FMT) - timedelta(days=29))
     players_30d = {}
@@ -1090,6 +1191,7 @@ def rebuild_aggregates(guild_id, through_day):
     gpk = guild_pk(guild_id)
     with table().batch_writer() as batch:
         batch.put_item(Item=_agg_to_item(gpk, SERVER_AGG_SK, server, through_day))
+        batch.put_item(Item=_crown_to_item(gpk, crown, through_day))
         for game_key, agg in game_aggs.items():
             batch.put_item(Item=_agg_to_item(
                 gpk, game_agg_sk(game_key), agg, through_day,
@@ -1106,6 +1208,7 @@ def rebuild_aggregates(guild_id, through_day):
     return {
         'days': len(days),
         'server': server,
+        'crown': crown,
         'games': {k: {'agg': game_aggs[k], 'players': len(game_players[k]),
                       'players_30d': len(players_30d.get(k, ()))}
                   for k in game_aggs},

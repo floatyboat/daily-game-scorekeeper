@@ -52,7 +52,8 @@ GUILDS                      GUILD#<guild_id>   per-server config: input_channel_
                                                time_window_hours, minimum_players,
                                                hundreds_of_messages,
                                                daily_enabled, sticky_enabled,
-                                               sticky_games, delete_wordle_recap,
+                                               sticky_games, sticky_crown,
+                                               delete_wordle_recap,
                                                suppress_embeds,
                                                rotation_enabled, rotation_count,
                                                rotation_mode, rotation_keep_players,
@@ -86,6 +87,10 @@ GUILD#<guild_id>            AGG#GAME#<key>     per-game server aggregate: curren
                                                (= days someone scored), players (string set,
                                                all-time, everyone who posted), players_30d
                                                (number, refreshed at finalize)
+GUILD#<guild_id>            AGG#CROWN          the crown as of the last day folded:
+                                               holders (map user_id -> boards in a row,
+                                               empty when that day crowned nobody),
+                                               finalized_through; the sticky's champion
 GUILD#<gid>#PLAYER#<uid>    AGG#SERVER         per-player overall streak (points scored in ANY
                                                game that day): current_streak, best_streak,
                                                last_played_day, total_plays
@@ -161,6 +166,7 @@ few enough values is a menu, anything else a text box.
 | `rotation_promote_players` | Rotation | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
 | `rotation_announce` | Rotation | `true` | Whether "Today's games" is posted; `false` draws the rotation silently and changes nothing else |
 | `sticky_games` | Sticky | `0` | Today's games as play buttons on the sticky (0–`MAX_BUTTONS_PER_ROW`, one row's worth); 0 skips the ranking pass entirely and hands Play the whole roster |
+| `sticky_crown` | Sticky | `true` | Whether the sticky names the champion: whoever took the 👑 on the last board, with how many boards in a row from two on (see Read paths and display) |
 | `suppress_embeds` | Sticky | `true` | Whether link previews are stripped off counted results |
 | `delete_wordle_recap` | Sticky | `false` | Whether the sticky pass deletes the Wordle app's daily recap of yesterday's results |
 | `reactions_rotation_only` | Sticky | `false` | While a rotation governs the day, react only to its games |
@@ -785,11 +791,17 @@ After parsing yesterday's results:
    stores for them is what the board printed — while off-rotation games freeze on the
    per-game scale, the yardstick their zero-point board section never put them on.
    `tools/backfill.py` archives no rotation and so replays every day per-game.
-2. Update `AGG#SERVER`, each `AGG#GAME#*`, and each player's `AGG#SERVER` and `AGG#GAME#*`
-   via conditional writes guarded per item on `finalized_through` (the last day folded into
-   that item). A double-fire cannot double-increment, and a run that crashes halfway resumes
-   cleanly, because the retry updates exactly the items the first attempt didn't reach.
-   `last_finalized_day` advances at the end as the run-level marker.
+2. Update `AGG#SERVER`, each `AGG#GAME#*`, `AGG#CROWN`, and each player's `AGG#SERVER` and
+   `AGG#GAME#*` via conditional writes guarded per item on `finalized_through` (the last day
+   folded into that item). A double-fire cannot double-increment, and a run that crashes
+   halfway resumes cleanly, because the retry updates exactly the items the first attempt
+   didn't reach. `last_finalized_day` advances at the end as the run-level marker.
+   `AGG#CROWN` holds whoever topped the day's points (`game_parser.crowned`, the first rank
+   of the board's summary, over the same scored games via `scored_totals`) with how many
+   days in a row each has; a run carries only from the day straight before, so a day that
+   crowned nobody ends it. A guild folding the crown for the first time replays it from its
+   `DAY#` archive once (`store.replay_crown`, which the rebuild uses too), so a reigning
+   champion's first count is their real run.
 3. Refresh `players_30d` on each game aggregate from the trailing 30 `DAY#` items.
 4. ≈50–100 writes per day per guild, paced under 5 WCU.
 
@@ -865,7 +877,16 @@ retroactively.
   are the chrome around them. Above both sits the content: the heading carrying the
   server-wide streak inline — `👾 Now Playing · 🔥17` — over the day's game and play counts.
   The streak rides on the heading rather than the counts because it is the server's, not
-  the day's; it survives a rollover the counts reset through.
+  the day's; it survives a rollover the counts reset through. Under the counts, while
+  someone holds the crown (`sticky_crown`, on by default), sits the champion —
+  `👑 @name (3 in a row)` — whoever took the 👑 on the last board, read off `AGG#CROWN`
+  with one GetItem per full pass rather than the cached aggregate partition, so it changes
+  hands with the board. The run shows from two boards in a row, under the `MINIMUM_STREAK`
+  floor on purpose: a run of crowns is far rarer than a run of plays. It stands while it
+  is the latest word (`store.display_crown`): folded through the last board that went out,
+  and no older than the day before yesterday, which the last board covers until
+  yesterday's posts. So the old champion holds on between day start and post hour, and a
+  guild whose boards have stopped, or that has paused its board, shows none.
   `sticky_games` is capped at `MAX_BUTTONS_PER_ROW` — a sixth game wraps to a second row,
   which is the screenful the sticky is trying not to be — and the cap and the config bound
   are the same constant, declared in `store` next to `PIN_CAP`.

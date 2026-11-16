@@ -165,7 +165,7 @@ def persist_results(cfg, results, puzzle_numbers, ref_date, games, rotation=None
         archived = store.write_day(cfg['guild_id'], day, results, points_by_game,
                                    puzzle_numbers, rotation, cfg['scoring'])
         stats = store.finalize_day(cfg['guild_id'], day, results, points_by_game,
-                                   [g.key for g in games])
+                                   [g.key for g in games], rotation)
         return (f'store: day={day} archived={archived} '
                 f'aggs updated={stats["updated"]} skipped={stats["skipped"]}')
     except Exception as e:
