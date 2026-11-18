@@ -1096,32 +1096,38 @@ GAME_SPECS = [
         key='sizeitup', emoji='📏', title='Size It Up', metric='score',
         total=500, url='https://magnitudle.com/size-it-up', needs_timestamp=True, disabled=True,
         breakpoints=(325, 250),
-        puzzle=lambda ref: f'{ref.strftime("%B")} {ref.day}',
+        puzzle=lambda ref: (ref - datetime(2026, 8, 10)).days + 1,
         # Five rounds of resizing a silhouette against a known reference, each
         # worth up to 100 for how close it came, so higher is better, with a
         # ceiling of 500. As with krillion, the line prints no total.
         #
-        # The share has had two layouts. Since 2026-11-03 it heads 'Magnitudle
-        # — Size It Up', then the puzzle's date on a line of its own, a blank
-        # line and 'Score: 189/500'; before that it was a bare 'Size It Up'
-        # over 'Overall Score 195'. The pattern takes either, since the old
-        # one is what a replay of channel history (tools/backfill.py) finds.
+        # The share has had three layouts, and the pattern takes all three,
+        # since the older ones are what a replay of channel history
+        # (tools/backfill.py) finds. Since 2026-11-18 it heads 'Size It Up',
+        # then the puzzle's number on a line of its own ('#101'), a blank line
+        # and 'Score: 362/500'. From 2026-11-03 the puzzle's date ('2026-11-03')
+        # stood where the number is now, under a 'Magnitudle — Size It Up'
+        # heading, and before that a bare 'Size It Up' sat over 'Overall Score
+        # 195'.
         #
-        # The date is the player's own calendar day (the site keys its puzzle
-        # on the browser's time zone), and the pattern holds it to the board's
-        # day, so yesterday's share posted today stays off today's board. A
-        # replay from the site's archive and its unlimited mode write the same
-        # lines but tag the date ('2026-10-20 · Practice', '· Unlimited'),
-        # which the pattern refuses by wanting the score line straight after
-        # it. The old layout carried no date at all, so like the dialed games
-        # the result is tied to its posting window as well, and a dated share
-        # keeps that rule: posted after the window closes, it is not counted.
-        # The first line is the variant's label, which is what keeps the
-        # sister games off this board: 'Size It Up: Pop Culture' and 'Size It
-        # Up: Geography' put a colon where this pattern needs the date or the
-        # score line.
+        # The number turns over at the player's own midnight (the site keys
+        # its puzzle on the browser's time zone), as the date did, and the
+        # pattern holds either to the board's day, so yesterday's share posted
+        # today stays off today's board. A replay from the site's archive
+        # shares under its own day's number, which alone keeps it off, and
+        # unlimited mode leaves the number line empty; the note each closes on
+        # ('Practice', 'Unlimited') is never read. The dated layout put that
+        # tag on the date line instead ('2026-10-20 · Practice'), which the
+        # pattern refuses by wanting the score line straight after the date.
+        # The first layout carried no date at all, so like the dialed games
+        # the result is tied to its posting window as well, and a numbered
+        # share keeps that rule: posted after the window closes, it is not
+        # counted. The first line is the variant's label, which is what keeps
+        # the sister games off this board: 'Size It Up: Pop Culture' and 'Size
+        # It Up: Geography' put a colon where this pattern needs the number or
+        # the score line.
         pattern=lambda ref, n: re.compile(
-            rf'Size It Up\s*(?:{ref.strftime("%Y-%m-%d")}\s*Score:|Overall Score)\s*(\d+)',
+            rf'Size It Up\s*(?:(?:#{n}|{ref.strftime("%Y-%m-%d")})\s*Score:|Overall Score)\s*(\d+)',
             re.IGNORECASE),
         parse=lambda m, c: (int(m.group(1)), {}),
     ),
