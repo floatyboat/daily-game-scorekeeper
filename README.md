@@ -19,7 +19,7 @@ By default, the app picks a rotation of games for the day for users to compete i
 |---|---|
 | **Daily scoreboard** | Posted and pinned to the output channel once a day at the server's chosen hour: every game, ranked scores, a points summary, and the server's streaks. |
 | **Today's games** | Posted at the server's day start while rotation is on (the default): the rotating subset of games that scores today, as play links. Lands right under the board when the board posts at that same hour. Servers that would rather not have a second daily message can switch just this post off. |
-| **Now Playing sticky** | One message kept at the bottom of the input channel: how much the server has played today, the champion (whoever took the 👑 on the last board, with how many in a row), today's games as play buttons, the server streak in its heading, and **Play**, **Scores** and **Yesterday** underneath. |
+| **Now Playing sticky** | One message kept at the bottom of the input channel: how much the server has played today, the 🏆 champion (whoever took the 👑 on the last board, with how many in a row), today's games as play buttons, the server streak in its heading, and **Play**, **Scores** and **Yesterday** underneath. |
 | **Reactions** | Within a minute of a result being posted, the bot reacts to it with how it went (💯 aced, 😎 great, 🙂 good, 😬 rough, 💩 poop) and where it placed in that game at that moment (🥇 🥈 🥉, 👍 below third, nothing for the first to post). Great, good and rough are set per game; untick **Reactions** in `/setup` to switch them off. |
 | **`/play`** | A private list of games as buttons, linking straight to each puzzle, ordered by what the server is actually playing. It lists everything *except* the games already on the sticky, so the two don't repeat; **`/play all:true`** puts the whole roster in one list. |
 | **`/stats`** | A private view of your own streaks — overall, then game by game. Every streak on the board belongs to the server; this is where yours are. |
@@ -187,7 +187,7 @@ one long form. Defaults in parentheses.
   games on it as play buttons: one row's worth is the cap, and whatever lands there is
   what `/play` leaves out. **Show the champion** (on) names whoever took the 👑 on the last
   board under the day's counts, with how many boards in a row once they've won two —
-  `👑 @name (3 in a row)` — until the next board crowns someone; it shows nothing while the
+  `🏆 @name (3 in a row)` — until the next board crowns someone; it shows nothing while the
   board is paused. **Strip link previews** (on) takes the preview card off each
   posted result; switching it off doesn't restore previews already stripped. **Delete the
   Wordle recap** (off) removes the Wordle app's daily "here are yesterday's results"

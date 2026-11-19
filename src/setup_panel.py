@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 
 import commentary
 import store
-from game_parser import (GAME_SPECS, MEDALS, NO_SHOW_SCORE, POOP_MEDAL, SCORING_OFF,
+from game_parser import (CHAMPION_EMOJI, GAME_SPECS, NO_SHOW_SCORE, POOP_MEDAL, SCORING_OFF,
                          SCORING_PLACEMENT, spec_enabled)
 from scoreboard import MAX_ENABLED_GAMES, MAX_SELECT_OPTIONS, TEXT_CHANNEL_TYPES, reference_date
 
@@ -245,12 +245,12 @@ def _summarize_rotation(cfg):
 def _crown_phrase(cfg):
     """The sticky's champion, said plainly when it is moot: the crown is the
     board's to give, so with the board paused or scoring off nobody holds it."""
-    crown = f'the {MEDALS[0]} champion'
+    champion = f'the {CHAMPION_EMOJI} champion'
     if not cfg['daily_enabled']:
-        return f'{crown} (unused while the board is off)'
+        return f'{champion} (unused while the board is off)'
     if cfg['scoring'] == SCORING_OFF:
-        return f'{crown} (unused while scoring is off)'
-    return crown
+        return f'{champion} (unused while scoring is off)'
+    return champion
 
 
 def _summarize_sticky(cfg):

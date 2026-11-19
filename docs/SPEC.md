@@ -166,7 +166,7 @@ few enough values is a menu, anything else a text box.
 | `rotation_promote_players` | Rotation | `5` | Swap threshold to win a seat: an off-rotation game reaching it rotates in |
 | `rotation_announce` | Rotation | `true` | Whether "Today's games" is posted; `false` draws the rotation silently and changes nothing else |
 | `sticky_games` | Sticky | `0` | Today's games as play buttons on the sticky (0–`MAX_BUTTONS_PER_ROW`, one row's worth); 0 skips the ranking pass entirely and hands Play the whole roster |
-| `sticky_crown` | Sticky | `true` | Whether the sticky names the champion: whoever took the 👑 on the last board, with how many boards in a row from two on (see Read paths and display) |
+| `sticky_crown` | Sticky | `true` | Whether the sticky names the 🏆 champion: whoever took the 👑 on the last board, with how many boards in a row from two on (see Read paths and display) |
 | `suppress_embeds` | Sticky | `true` | Whether link previews are stripped off counted results |
 | `delete_wordle_recap` | Sticky | `false` | Whether the sticky pass deletes the Wordle app's daily recap of yesterday's results |
 | `reactions_rotation_only` | Sticky | `false` | While a rotation governs the day, react only to its games |
@@ -725,13 +725,13 @@ was great enough to earn one.
 - **A flourish on top** (`FLOURISH`, `FLOURISH_COUNT`): two more emoji on an ace, one on a
   great result, nothing below that, drawn at random from a bank of fourteen so two aces in a
   row don't read the same. The bank holds no game's emoji, no place, no tier and none of
-  the app's own signs (🔥 streaks, 🏆 points, 💔 a broken streak), so a flourish can
-  only mean "nice one"; the same rules govern every `TIER_EMOJI` pool, and every entry of
-  both is a single code point needing no variation selector, so what Discord stores back is
-  exactly what was sent. **Both draws are seeded on the message id**, which is what makes
-  them safe: the pass is stateless and re-runs over the same result for as long as
-  `REACTION_WINDOW` holds it open, skipping what it already added, so an unseeded draw
-  would pile a fresh emoji on every minute. The tier draw takes `seed + tier` and the
+  the app's own signs (🔥 streaks, 🏆 points and the champion, 💔 a broken streak), so a
+  flourish can only mean "nice one"; the same rules govern every `TIER_EMOJI` pool, and
+  every entry of both is a single code point needing no variation selector, so what Discord
+  stores back is exactly what was sent. **Both draws are seeded on the message id**, which
+  is what makes them safe: the pass is stateless and re-runs over the same result for as
+  long as `REACTION_WINDOW` holds it open, skipping what it already added, so an unseeded
+  draw would pile a fresh emoji on every minute. The tier draw takes `seed + tier` and the
   flourish the bare `seed`, keeping the two independent: a result whose tier moves between
   passes (a percentage game whose ceiling shifts) re-draws its tier without disturbing the
   flourishes already on it.
@@ -879,14 +879,17 @@ retroactively.
   The streak rides on the heading rather than the counts because it is the server's, not
   the day's; it survives a rollover the counts reset through. Under the counts, while
   someone holds the crown (`sticky_crown`, on by default), sits the champion —
-  `👑 @name (3 in a row)` — whoever took the 👑 on the last board, read off `AGG#CROWN`
+  `🏆 @name (3 in a row)` — whoever took the 👑 on the last board, read off `AGG#CROWN`
   with one GetItem per full pass rather than the cached aggregate partition, so it changes
   hands with the board. The run shows from two boards in a row, under the `MINIMUM_STREAK`
   floor on purpose: a run of crowns is far rarer than a run of plays. It stands while it
   is the latest word (`store.display_crown`): folded through the last board that went out,
   and no older than the day before yesterday, which the last board covers until
   yesterday's posts. So the old champion holds on between day start and post hour, and a
-  guild whose boards have stopped, or that has paused its board, shows none.
+  guild whose boards have stopped, or that has paused its board, shows none. The champion
+  wears a trophy (`CHAMPION_EMOJI`) rather than the board's crown, because the lead
+  commentary gives the crown to whoever leads the day in progress: under today's counts,
+  a crowned name would read as today's leader.
   `sticky_games` is capped at `MAX_BUTTONS_PER_ROW` — a sixth game wraps to a second row,
   which is the screenful the sticky is trying not to be — and the cap and the config bound
   are the same constant, declared in `store` next to `PIN_CAP`.

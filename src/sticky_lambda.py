@@ -11,7 +11,7 @@ from collections import defaultdict
 from game_parser import (
     compute_puzzle_numbers, build_games, top_game_buttons,
     match_message, make_timestamp_checker, shown_streak,
-    performance_tier, place_at_post, result_reactions, MEDALS, WORDLE_BOT_ID,
+    performance_tier, place_at_post, result_reactions, CHAMPION_EMOJI, WORDLE_BOT_ID,
 )
 from scoreboard import (
     DISCORD_API_BASE, FLAG_SUPPRESS_EMBEDS, FLAG_SUPPRESS_NOTIFICATIONS,
@@ -212,7 +212,7 @@ def _sticky_is_current(sticky, content, components):
     return _button_identity(sticky.get('components')) == _button_identity(components)
 
 
-# A champion's run shows from two boards in a row: one win is the crown alone,
+# A champion's run shows from two boards in a row: one win is the name alone,
 # and a second is already a title defended. Lower than the MINIMUM_STREAK floor
 # the flames keep (shown_streak) on purpose: a run of crowns is far rarer than a
 # run of plays.
@@ -220,11 +220,11 @@ CROWN_RUN_SHOWN = 2
 
 
 def crown_line(holders):
-    """The champion under the counts: '👑 @A (3 in a row)'. holders is
+    """The champion under the counts: '🏆 @A (3 in a row)'. holders is
     store.display_crown's [(uid, boards in a row)], and a shared crown names
-    everyone on it. The crown is the board's own, and the mentions notify
-    nobody (send_sticky allows no mentions)."""
-    return f'{MEDALS[0]} ' + ' & '.join(
+    everyone on it. A trophy, not the board's crown (see CHAMPION_EMOJI), and
+    the mentions notify nobody (send_sticky allows no mentions)."""
+    return f'{CHAMPION_EMOJI} ' + ' & '.join(
         f'<@{uid}>' + (f' ({run} in a row)' if run >= CROWN_RUN_SHOWN else '')
         for uid, run in holders)
 

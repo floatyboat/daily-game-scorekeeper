@@ -1588,6 +1588,11 @@ HIGHER_IS_BETTER = ('score', 'maptap')
 
 # The board's podium: the day's winner and each game's top three.
 MEDALS = ('\U0001F451', '\U0001F948', '\U0001F949')
+# The sticky's champion: whoever took the crown on the last board, until the
+# next one. A trophy rather than the board's crown, which the lead commentary
+# also gives whoever leads the day in progress: under today's counts a crown
+# would read as today's leader, not the last board's winner.
+CHAMPION_EMOJI = '\U0001F3C6'
 # What a line takes instead of a medal when it earned no place: a failed
 # result (is_poop), and -- on the placement scale, where the day's turnout is
 # what first place is worth -- a player the scale already ranked last for not
@@ -1643,8 +1648,9 @@ TIMED_WIN_ACE_SECONDS = 60
 # The flourish a standout result picks up on top of its tier and place, drawn
 # at random so two aces in a row don't read the same. Nothing here is a game's
 # emoji, a place, a tier or one of the app's own signs (\U0001F525 streaks,
-# \U0001F3C6 points, \U0001F494 a broken streak), so a flourish can never be
-# mistaken for something that means anything -- it only means "nice one".
+# \U0001F3C6 points and the champion, \U0001F494 a broken streak), so a
+# flourish can never be mistaken for something that means anything -- it only
+# means "nice one".
 # Every entry is a single code point that needs no variation selector, so what
 # Discord stores is exactly what we sent and the pass's own dedup sees it.
 FLOURISH = ('\U0001F389', '\U0001F973', '\U0001F38A', '\U0001F64C', '\U0001F44F',

@@ -13,7 +13,7 @@ from game_parser import (
     make_timestamp_checker, game_sort_key, match_suggestion, GAME_SPECS,
     spec_enabled, game_link_button, sticky_row_games,
     SCORING_PER_GAME, SCORING_OFF, tier_examples, ACED,
-    PLACE_EMOJI, BELOW_PODIUM, POOP_MEDAL, NO_SHOW_SCORE,
+    PLACE_EMOJI, BELOW_PODIUM, POOP_MEDAL, NO_SHOW_SCORE, CHAMPION_EMOJI,
 )
 from scoreboard import (
     DISCORD_API_BASE, make_session, fetch_messages, reference_date, parse_results,
@@ -264,7 +264,7 @@ HELP_HEADING = "### ❓ How the scoreboard works"
 def _scoring_blurb(mode, board, rotation, shame=True, crown_on_sticky=False):
     crown = 'takes the \U0001F451 on the morning board' if board else 'takes the \U0001F451'
     if crown_on_sticky:
-        crown += ', and keeps it on the sticky until the next one'
+        crown += f', and the {CHAMPION_EMOJI} on the sticky until the next one'
     if mode == SCORING_PER_GAME:
         return ("each game pays **1 point plus one for every player you beat**; the "
                 f"most points across the day {crown}.")

@@ -47,8 +47,8 @@ from botocore.exceptions import ClientError
 # rotation size against the games that actually exist, and to tell which of a
 # server's always-in games it tracks (fixed_games); the points fold, to crown
 # each day exactly as its board did.
-from game_parser import (GAME_SPECS, SCORING_PLACEMENT, SCORING_PER_GAME, SCORING_OFF,
-                         crowned, scored_totals, spec_enabled)
+from game_parser import (CHAMPION_EMOJI, GAME_SPECS, SCORING_PLACEMENT, SCORING_PER_GAME,
+                         SCORING_OFF, crowned, scored_totals, spec_enabled)
 
 TABLE_NAME = os.getenv('TABLE_NAME') or 'daily-game-tracker'
 AWS_REGION = os.getenv('AWS_REGION') or 'us-east-1'
@@ -325,7 +325,7 @@ CONFIG_FIELDS = [
     # board, or scoring nothing, leaves it with nobody to name.
     ConfigField('sticky_crown', default=True, coerce=bool, section='sticky',
                 label='Show the champion',
-                describe="\U0001F451 the last board's winner, and how many boards in a row"),
+                describe=f"{CHAMPION_EMOJI} the last board's winner, and how many boards in a row"),
     # Link stripping, the recap cleanup and the reactions all happen on the
     # sticky pass as it counts each result, so they share its section: with
     # the sticky off, none of them runs.
