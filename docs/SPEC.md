@@ -171,7 +171,7 @@ few enough values is a menu, anything else a text box.
 | `delete_wordle_recap` | Sticky | `false` | Whether the sticky pass deletes the Wordle app's daily recap of yesterday's results |
 | `reactions_rotation_only` | Sticky | `false` | While a rotation governs the day, react only to its games |
 | `commentary_overrides` | Commentary | `{}` | Each message kind the guild has explicitly switched on or off, keyed by `Trigger.key`; a kind with no entry follows its default |
-| `commentary_midday_hour` | Commentary | `13` | Guild-local hour the midday standings board posts |
+| `commentary_midday_hour` | Commentary | `13` | Guild-local hour the midday standings board posts in, if anyone has scored by then; never later |
 | `commentary_last_call_hours` | Commentary | `3` | Hours before the window closes that the streak last call posts; `0` turns it off |
 | `commentary_nudge_after_hours` | Commentary | `2` | Hours since a player's last result before the nudge names them |
 | `last_finalized_day` | — | — | Written at finalize; records how far aggregates are folded |
@@ -492,20 +492,23 @@ players are (the test channel on a test run).
   morning board never hold a nudge back, but two nudges never stack. The midday board and
   the last call (`NEVER`) wait on nothing, because a scheduled post is not the bot talking
   twice and a one-liner an hour earlier must not push it back for hours (a replay of a busy
-  day showed exactly that). The last call needs it for a second reason: a day nobody has
-  played puts every server streak on the line, and on exactly such a day nothing ever
-  clears the morning board out of `unanswered`, so `ANY` would hold it back on the day it
-  has the most to say. The streak milestones (`NEVER` too) answer one result each, so they
-  must land beside it: two players reaching milestones in one pass answer different
-  results, and under `ANY` the second would wait behind the first reply until somebody
-  else spoke, hours after the result it congratulates. Bodies then gate
-  themselves: the last call fires on the first pass within
-  `commentary_last_call_hours` of the close, the midday board on the first pass at or
-  after `commentary_midday_hour` with somebody actually on the standings (exactly what
-  `format_points_summary` would print, so the kind stays quiet on a day whose board would
-  be empty: scoring `off`, or only poops so far), the nudge
-  `commentary_nudge_after_hours` after a player's last result and never inside the final
-  hour (the last call owns it).
+  day showed exactly that), or, for the midday board, which has only its hour, cancel it.
+  The last call needs it for a second reason: a day nobody has played puts every server
+  streak on the line, and on exactly such a day nothing ever clears the morning board out
+  of `unanswered`, so `ANY` would hold it back on the day it has the most to say. The
+  streak milestones (`NEVER` too) answer one result each, so they must land beside it:
+  two players reaching milestones in one pass answer different results, and under `ANY`
+  the second would wait behind the first reply until somebody else spoke, hours after
+  the result it congratulates. Bodies then gate themselves: the last call fires on the
+  first pass within `commentary_last_call_hours` of the close; the midday board only on
+  the pass in `commentary_midday_hour` itself, and only with somebody actually on the
+  standings by then (exactly what `format_points_summary` would print, so the kind stays
+  quiet on a day whose board would be empty: scoring `off`, or only poops so far). A pass
+  that cannot post it — nobody on the standings yet, the board still to come, a tick that
+  failed — costs the day its midday board rather than handing it to a later hour, where a
+  slow day's board went out whenever somebody first scored, as late as the evening. The
+  nudge fires `commentary_nudge_after_hours` after a player's last result and never
+  inside the final hour (the last call owns it).
 - **What each kind says.** *Nudge* (the kind that ships off): everyone who has a result in
   a scored game, has scored games left, and last posted at least
   `commentary_nudge_after_hours` ago — one line each
@@ -565,7 +568,7 @@ players are (the test channel on a test run).
   they passed has already played more, and once the day has a leader, every change is
   said as it happens. The day's first line says who is in front, since
   nothing has changed hands yet: “out to an early lead” before the midday standings hour
-  (`commentary_midday_hour`, the same `before_midday` the midday board waits on), plain
+  (`commentary_midday_hour`, the hour the midday board posts in; `before_midday`), plain
   “leads” after it, because the games check can hold the first lead back until late in
   the day. Every later line reads “takes the lead”, since it always names someone other
   than the last line did.

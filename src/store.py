@@ -349,7 +349,7 @@ CONFIG_FIELDS = [
                 describe='Which kinds of commentary post'),
     ConfigField('commentary_midday_hour', default=13, coerce=int, section='commentary',
                 label='Midday standings at', unit='clock', minimum=0, maximum=23,
-                describe='When the standings so far post, once a day'),
+                describe='When the standings so far post, once a day, if anyone has scored by then'),
     ConfigField('commentary_last_call_hours', default=3, coerce=int, section='commentary',
                 label='Last call', unit='hour', minimum=0, maximum=12,
                 describe='Hours before the day closes that streaks about to break are named; 0 is off'),

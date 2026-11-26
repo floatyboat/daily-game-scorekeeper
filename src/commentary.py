@@ -63,11 +63,12 @@ in a row; OWN (the nudge) waits only while one of them is its own kind, so no
 other post holds a nudge back but two nudges never stack; NEVER (the midday
 board, the last call, the streak milestones) waits on nothing -- a scheduled
 post is not the bot talking twice, and a one-liner an hour earlier must not
-push it back. The last call needs that twice over: a day nobody has played puts
-every server streak on the line, and that is exactly the day no one clears the
-morning board out of `unanswered`, so ANY would hold it back on the day it has
-the most to say. A streak milestone answers one result, so it must land beside
-it rather than wait behind the reply to someone else's.
+push it back (or, for the midday board, which has only its hour, cancel it).
+The last call needs that twice over: a day nobody has played puts every server
+streak on the line, and that is exactly the day no one clears the morning board
+out of `unanswered`, so ANY would hold it back on the day it has the most to
+say. A streak milestone answers one result, so it must land beside it rather
+than wait behind the reply to someone else's.
 
 Events are plain dicts with an `id`. The state, shared by both passes, is the
 set of ids announced today: nothing is said twice, and a kind that has to
@@ -670,13 +671,18 @@ def sample_last_call(tick):
 # --- Midday: the standings so far, as a board -------------------------------------
 
 def before_midday(tick):
-    """Is the midday standings hour still to come? The hour the midday board
-    waits for, and the line between an early lead and a plain one."""
+    """Is the midday standings hour still to come? The line between an early
+    lead and a plain one (detect_lead)."""
     return tick.hour < tick.cfg['commentary_midday_hour']
 
 
 def detect_midday(tick):
-    if before_midday(tick):
+    """The standings so far, on the midday hour's own pass or not at all: a
+    pass that cannot post them (nobody on the standings yet, the morning
+    board still to come, a tick that failed) costs the day its midday board
+    rather than handing it to a later hour. Handed on, a slow day's board
+    went out whenever somebody first scored, as late as the evening."""
+    if tick.hour != tick.cfg['commentary_midday_hour']:
         return []
     # Standings, so somebody has to be standing: this is exactly what
     # format_points_summary prints, so the kind stays quiet on the days the

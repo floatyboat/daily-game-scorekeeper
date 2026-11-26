@@ -201,8 +201,9 @@ one long form. Defaults in parentheses.
   runs while the sticky is off — and switching the sticky off deletes the one in the
   channel.
 - **Commentary** — which kinds of message post between the boards, and when: **Midday
-  standings at** (`13:00`), **Last call** (`3` hours before the day closes, `0` for none)
-  and **Nudge after** (`2` hours after a player's last result). The nudge ships off.
+  standings at** (`13:00`; a day nobody has scored by then gets none), **Last call** (`3`
+  hours before the day closes, `0` for none) and **Nudge after** (`2` hours after a
+  player's last result). The nudge ships off.
 
 ## Suggesting a game
 
